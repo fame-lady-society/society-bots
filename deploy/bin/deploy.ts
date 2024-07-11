@@ -2,7 +2,7 @@
 import "dotenv/config";
 import "source-map-support/register";
 import * as cdk from "aws-cdk-lib";
-import { DeployStack } from "../lib/deploy-stack";
+import { DeployStack } from "../lib/deploy-stack.js";
 
 const app = new cdk.App();
 new DeployStack(app, "FLSBot", {
