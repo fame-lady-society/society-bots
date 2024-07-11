@@ -209,6 +209,5 @@ $RECYCLE.BIN/
 
 
 node_modules
-lib
 .layers
 .aws-sam

@@ -1,6 +1,7 @@
 {
   "name": "deploy",
   "version": "0.1.0",
+  "type": "module",
   "bin": {
     "deploy": "bin/deploy.js"
   },

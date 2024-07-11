@@ -1,10 +1,9 @@
 {
   "compilerOptions": {
     "target": "ES2020",
-    "module": "commonjs",
+    "module": "ES2022",
     "lib": [
-      "es2020",
-      "dom"
+      "es2022",
     ],
     "declaration": true,
     "strict": true,
@@ -16,6 +15,7 @@
     "noUnusedParameters": false,
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": false,
+    "moduleResolution": "NodeNext",
     "inlineSourceMap": true,
     "inlineSources": true,
     "experimentalDecorators": true,
