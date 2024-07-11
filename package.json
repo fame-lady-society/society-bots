@@ -72,7 +72,6 @@
     "aws-lambda": "^1.0.7",
     "aws-sdk": "^2.1120.0",
     "axios": "^0.27.2",
-    "canvas": "2.9.0",
     "commander": "^9.4.0",
     "content-hash": "^2.5.2",
     "discord-api-types": "^0.37.10",
