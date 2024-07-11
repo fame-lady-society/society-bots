@@ -36,5 +36,11 @@ jobs:
           aws-region: us-west-1
 
       - name: Deploy CDK Stack
+        env:
+          ALCHEMY_WEBHOOK_SIGNING_KEY: ${{ secrets.ALCHEMY_WEBHOOK_SIGNING_KEY }}
+          BASE_RPCS_JSON: ${{ secrets.BASE_RPCS_JSON }}
+          MAINNET_RPCS_JSON: ${{ secrets.MAINNET_RPCS_JSON }}
+          SEPOLIA_RPCS_JSON: ${{ secrets.SEPOLIA_RPCS_JSON }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: cdk deploy --require-approval never
         working-directory: deploy/
