@@ -47,5 +47,6 @@ jobs:
           MAINNET_RPCS_JSON: ${{ secrets.MAINNET_RPCS_JSON }}
           SEPOLIA_RPCS_JSON: ${{ secrets.SEPOLIA_RPCS_JSON }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: cdk deploy --require-approval never
         working-directory: deploy/

@@ -37,7 +37,10 @@ export const handler: APIGatewayProxyHandler = async (event) => {
   }
   try {
     const json = JSON.parse(event.body);
-    await handleSwapEvent(json.event);
+    await handleSwapEvent({
+      event: json.event,
+      destination: Number(process.env.TELEGRAM_CHAT_ID!),
+    });
   } catch (e) {
     console.error(e);
   }

@@ -15,6 +15,7 @@ export interface Props {
   readonly baseRpcsJson: string;
   readonly telegramBotToken: string;
   readonly alchemyWebhookSigningKey: string;
+  readonly telegramChatId: string;
 }
 
 function compile(entrypoint: string, options?: BuildOptions) {
@@ -48,6 +49,7 @@ export class AlchemyWebhooks extends Construct {
       baseRpcsJson,
       alchemyWebhookSigningKey,
       telegramBotToken,
+      telegramChatId,
     } = props;
 
     const webhookSwapHandler = new lambda.Function(this, "SwapSchwing", {
@@ -64,6 +66,7 @@ export class AlchemyWebhooks extends Construct {
         BASE_RPCS_JSON: baseRpcsJson,
         TELEGRAM_BOT_TOKEN: telegramBotToken,
         ALCHEMY_WEBHOOK_SIGNING_KEY: alchemyWebhookSigningKey,
+        TELEGRAM_CHAT_ID: telegramChatId,
         LOG_LEVEL: "INFO",
       },
     });

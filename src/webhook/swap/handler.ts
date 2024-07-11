@@ -314,7 +314,13 @@ function fillGrid(amount: bigint, min: bigint, max: bigint, emojis: string[]) {
   return grids;
 }
 
-export default async function handler(input: ISwapWebhook["event"]) {
+export default async function handler({
+  destination,
+  event,
+}: {
+  destination: number;
+  event: ISwapWebhook["event"];
+}) {
   const currentUsdPrice = Number(
     formatPrice(
       await baseClient.readContract({
@@ -325,7 +331,7 @@ export default async function handler(input: ISwapWebhook["event"]) {
       8
     )
   );
-  for (const log of input.data.block.logs) {
+  for (const log of event.data.block.logs) {
     const {
       data,
       topics,
@@ -492,8 +498,7 @@ ${mintEvents.length > 0 ? `📈 Minted ${formattedMintMessage}\n` : ""}${
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              // chat_id: 5835157950,
-              chat_id: -1002124583878,
+              chat_id: destination,
               animation:
                 "https://images-ext-1.discordapp.net/external/1rMxR_ORQ4JQ4AWNkGYEHA0NvK_f6xv84tmrOU3QDz0/https/media.tenor.com/Sznlx6WCcFkAAAPo/dance-iggy-pop-iggy.mp4",
               parse_mode: "HTML",
