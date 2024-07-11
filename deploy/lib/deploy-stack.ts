@@ -12,6 +12,7 @@ export class DeployStack extends cdk.Stack {
       mainnetRpcsJson: process.env.MAINNET_RPCS_JSON!,
       sepoliaRpcsJson: process.env.SEPOLIA_RPCS_JSON!,
       telegramBotToken: process.env.TELEGRAM_BOT_TOKEN!,
+      telegramChatId: process.env.TELEGRAM_CHAT_ID!,
     });
   }
 }

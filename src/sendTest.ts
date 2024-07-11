@@ -2,6 +2,7 @@ import "dotenv/config";
 import handler from "./webhook/swap/handler.js";
 
 handler({
+  disableTelegram: true,
   destination: Number(process.env.TESTING_CHAT_ID) || 0,
   event: {
     data: {
@@ -277,6 +278,18 @@ handler({
                 address: "0x3fc91a3afd70395cd496c647d5a6cc9d4b2b7fad",
               },
               logs: [
+                {
+                  account: {
+                    address: "0x91d7950ac7ccb369589765e31d6d8996321556de",
+                  },
+                  data: "0x",
+                  topics: [
+                    "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+                    "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    "0x00000000000000000000000090348e325bc286c7b7c1ec575cbb775b4b1903f0",
+                    "0x0000000000000000000000000000000000000000000000000000000000000180",
+                  ],
+                },
                 {
                   account: {
                     address: "0x4200000000000000000000000000000000000006",

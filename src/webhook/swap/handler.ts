@@ -1,6 +1,7 @@
 import "dotenv/config";
 import {
   AbiEvent,
+  AbiEventSignatureNotFoundError,
   decodeEventLog,
   erc20Abi,
   erc721Abi,
@@ -28,6 +29,8 @@ const BASE_USDC_WETH_V3_POOL = "0xd0b53D9277642d899DF5C87A3966A349A798F224";
 const SCHWING_WETH_V3_POOL = "0x04b41Fe46e8685719Ac40101fc6478682256Bc6F";
 const MAX_AMOUNT = parseUnits("1", 18);
 const MIN_AMOUNT = parseUnits("0.00001", 18);
+const NFT_TRANSFER_TOPIC =
+  "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 
 const UniswapV3SwapEventAbi = {
   type: "event",
@@ -231,15 +234,7 @@ function fillGrid(amount: bigint, min: bigint, max: bigint, emojis: string[]) {
   const totalRange = max - min;
 
   // Apply easing formula: Adjust the amount using a quadratic progression
-  // Calculate the dynamic exponent based on the range
-  const dynamicExponent = totalRange > 100 ? 2 : 1.5; // Example threshold, adjust based on your needs
-
-  // Apply easing formula with dynamic exponent
-
   // Assuming min, max, and amount are already defined BigInts
-
-  // Assuming min, max, and amount are already defined BigInts
-
   // Convert BigInts to Numbers for the easing calculation
   const numMin = Number(min);
   const numMax = Number(max);
@@ -315,9 +310,11 @@ function fillGrid(amount: bigint, min: bigint, max: bigint, emojis: string[]) {
 }
 
 export default async function handler({
+  disableTelegram = false,
   destination,
   event,
 }: {
+  disableTelegram?: boolean;
   destination: number;
   event: ISwapWebhook["event"];
 }) {
@@ -432,25 +429,37 @@ export default async function handler({
         for (const transactionLog of log.transaction.logs) {
           if (
             transactionLog.account.address.toLowerCase() ===
-            LINKED_NFT_ADDRESS.toLowerCase()
+              LINKED_NFT_ADDRESS.toLowerCase() &&
+            transactionLog.topics[0] === NFT_TRANSFER_TOPIC
           ) {
-            const transferLog = decodeEventLog({
-              abi: erc721Abi,
-              data: transactionLog.data,
-              topics: transactionLog.topics,
-            });
-            if (transferLog.eventName === "Transfer") {
-              if (
-                transferLog.args.from === zeroAddress &&
-                transferLog.args.to.toLowerCase() === recipient.toLowerCase()
-              ) {
-                mintEvents.push(transferLog);
-              } else if (
-                transferLog.args.to.toLowerCase() === zeroAddress &&
-                transferLog.args.from === recipient.toLowerCase()
-              ) {
-                burnEvents.push(transferLog);
+            try {
+              const transferLog = decodeEventLog({
+                abi: erc721Abi,
+                data: transactionLog.data,
+                topics: transactionLog.topics,
+              });
+              if (transferLog.eventName === "Transfer") {
+                if (
+                  transferLog.args.from === zeroAddress &&
+                  transferLog.args.to.toLowerCase() === recipient.toLowerCase()
+                ) {
+                  mintEvents.push(transferLog);
+                } else if (
+                  transferLog.args.to.toLowerCase() === zeroAddress &&
+                  transferLog.args.from === recipient.toLowerCase()
+                ) {
+                  burnEvents.push(transferLog);
+                }
               }
+            } catch (e) {
+              if (e instanceof AbiEventSignatureNotFoundError) {
+                // ignore
+                continue;
+              }
+              console.error(
+                "Failed to process event log for topic: ${transactionLog.topics[0]}",
+                e
+              );
             }
           }
         }
@@ -489,64 +498,36 @@ ${mintEvents.length > 0 ? `📈 Minted ${formattedMintMessage}\n` : ""}${
 
         console.log("sending animation...");
         console.log(caption);
+        if (!disableTelegram) {
+          const response = await fetch(
+            `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendAnimation`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                chat_id: destination,
+                animation:
+                  "https://images-ext-1.discordapp.net/external/1rMxR_ORQ4JQ4AWNkGYEHA0NvK_f6xv84tmrOU3QDz0/https/media.tenor.com/Sznlx6WCcFkAAAPo/dance-iggy-pop-iggy.mp4",
+                parse_mode: "HTML",
+                caption,
+              }),
+            }
+          );
+          const responseBody = await response.json();
+          console.log(JSON.stringify(responseBody, null, 2));
 
-        const response = await fetch(
-          `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendAnimation`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              chat_id: destination,
-              animation:
-                "https://images-ext-1.discordapp.net/external/1rMxR_ORQ4JQ4AWNkGYEHA0NvK_f6xv84tmrOU3QDz0/https/media.tenor.com/Sznlx6WCcFkAAAPo/dance-iggy-pop-iggy.mp4",
-              parse_mode: "HTML",
-              caption,
-            }),
-          }
-        );
-        const responseBody = await response.json();
-        console.log(JSON.stringify(responseBody, null, 2));
-
-        console.log("Animation sent");
+          console.log("Animation sent");
+        }
       }
     } catch (e) {
+      if (e instanceof AbiEventSignatureNotFoundError) {
+        console.log(`Ignoring topic ${topics[0]}`);
+        // ignore
+        continue;
+      }
       console.error("unable to process event", e);
     }
   }
 }
-
-// const event = decodeEventLog({
-//   abi: [UniswapV3SwapEventAbi] as const,
-//   data: "0x00000000000000000000000000000000000000000000000000038d7ea4c68000fffffffffffffffffffffffffffffffffffffffffff3ed9780bf1cc6bb712e5f000000000000000000000000000000000001d880eb23d644c45b518cf153e6de000000000000000000000000000000000000000000003a5125457b98ed3c96c3000000000000000000000000000000000000000000000000000000000003925c",
-//   topics: [
-//     "0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67",
-//     "0x0000000000000000000000003bfa4769fb09eefc5a80d6e87c3b9c650f7ae48e",
-//     "0x0000000000000000000000006e76967c1a78c516b6e8c96ffe6b1b884398a937",
-//   ],
-// });
-// console.log(
-//   JSON.stringify(
-//     {
-//       amount0: event.args.amount0.toString(),
-//       amount1: event.args.amount1.toString(),
-//       sender: event.args.sender,
-//       recipient: event.args.recipient,
-//       liquidity: event.args.liquidity.toString(),
-//       sqrtPriceX96: event.args.sqrtPriceX96.toString(),
-//       tick: event.args.tick.toString(),
-//     },
-//     null,
-//     2
-//   )
-// );
-// {
-//   "amount0": "1000000000000000",
-//   "amount1": "-14594040063029545932870049",
-//   "sender": "0x3bFA4769FB09eefC5a80d6E87c3B9C650f7Ae48E",
-//   "recipient": "0x6E76967c1a78C516b6E8c96FFe6b1B884398a937",
-//   "liquidity": "275394127965059437860547",
-//   "sqrtPriceX96": "9583511310026980932841684096771806",
-//   "tick": "234076"
-// }
