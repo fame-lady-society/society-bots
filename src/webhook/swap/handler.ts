@@ -18,7 +18,6 @@ import {
 } from "../../wagmi.generated.js";
 import { Token, WETH9 } from "@uniswap/sdk-core";
 import { FeeAmount, Pool } from "@uniswap/v3-sdk";
-import fs from "fs";
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TOTAL_SUPPLY = parseUnits("888000000", 18);
@@ -335,7 +334,6 @@ export default async function handler(input: ISwapWebhook["event"]) {
         from: { address: fromAddress },
       },
     } = log;
-    fs.writeFileSync("data.json", JSON.stringify(log, null, 2));
     try {
       const swapLog = decodeEventLog({
         abi: uniswapV3PoolAbi,
