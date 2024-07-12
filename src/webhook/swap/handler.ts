@@ -21,12 +21,12 @@ import { Token, WETH9 } from "@uniswap/sdk-core";
 import { FeeAmount, Pool } from "@uniswap/v3-sdk";
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const TOTAL_SUPPLY = parseUnits("888000000", 18);
+// const TOTAL_SUPPLY = parseUnits("888000000", 18);
 const TOKEN_ADDRESS = "0xEa372c317C9965bFc06ff15D3F049B31787c550D";
-const LINKED_NFT_ADDRESS = "0x91d7950ac7ccb369589765e31d6d8996321556de";
-const TOKEN_DECIMALS = 18;
+const TOKEN_WETH_V3_POOL = "0x04b41Fe46e8685719Ac40101fc6478682256Bc6F";
+const TOKEN_LINKED_NFT_ADDRESS = "0x91d7950ac7ccb369589765e31d6d8996321556de";
+// const TOKEN_DECIMALS = 18;
 const BASE_USDC_WETH_V3_POOL = "0xd0b53D9277642d899DF5C87A3966A349A798F224";
-const SCHWING_WETH_V3_POOL = "0x04b41Fe46e8685719Ac40101fc6478682256Bc6F";
 const MAX_AMOUNT = parseUnits("1", 18);
 const MIN_AMOUNT = parseUnits("0.00001", 18);
 const NFT_TRANSFER_TOPIC =
@@ -355,15 +355,9 @@ export default async function handler({
             ),
             createPoolFromTokens(
               WETH9[base.id],
-              new Token(
-                base.id,
-                SCHWING_WETH_V3_POOL,
-                18,
-                "SCHWING",
-                "SCHWING"
-              ),
+              new Token(base.id, TOKEN_WETH_V3_POOL, 18, "SCHWING", "SCHWING"),
               FeeAmount.MEDIUM,
-              SCHWING_WETH_V3_POOL
+              TOKEN_WETH_V3_POOL
             ),
             baseClient.readContract({
               abi: erc20Abi,
@@ -433,7 +427,7 @@ export default async function handler({
         for (const transactionLog of log.transaction.logs) {
           if (
             transactionLog.account.address.toLowerCase() ===
-              LINKED_NFT_ADDRESS.toLowerCase() &&
+              TOKEN_LINKED_NFT_ADDRESS.toLowerCase() &&
             transactionLog.topics[0] === NFT_TRANSFER_TOPIC
           ) {
             try {
