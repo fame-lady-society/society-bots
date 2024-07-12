@@ -383,6 +383,12 @@ export default async function handler({
         console.log("recipient balance", formatEther(recipientBalance));
         console.log("tokens received", formatEther(swapLog.args.amount1));
 
+        const ensName = await mainnetClient.getEnsName({
+          address: recipient,
+        });
+        const shortAddress =
+          ensName ?? recipient.slice(0, 6) + "..." + recipient.slice(-4);
+
         const amount0Spent = trimToFourDecimalPlacesOrFewer(
           formatEther(swapLog.args.amount0)
         );
@@ -390,8 +396,6 @@ export default async function handler({
           Number(formatEther(swapLog.args.amount0)) * currentUsdPrice;
         const tokensReceived = -swapLog.args.amount1;
         const amount1Received = formatMoney(tokensReceived);
-        const shortAddress =
-          recipient.slice(0, 6) + "..." + recipient.slice(-4);
 
         let positionDelta = "??";
         if (recipientBalance >= tokensReceived) {
