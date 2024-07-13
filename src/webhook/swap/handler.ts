@@ -355,7 +355,7 @@ export default async function handler({
             ),
             createPoolFromTokens(
               WETH9[base.id],
-              new Token(base.id, TOKEN_WETH_V3_POOL, 18, "FAME", "Society"),
+              new Token(base.id, TOKEN_ADDRESS, 18, "FAME", "Society"),
               FeeAmount.MEDIUM,
               TOKEN_WETH_V3_POOL
             ),
