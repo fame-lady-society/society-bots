@@ -471,15 +471,19 @@ export default async function handler({
         const formattedBurnMessage = `[${generateTokenIdListString(
           burnEvents.map((b) => Number(b.args.tokenId))
         )}]`;
+        const grid = fillGrid(swapLog.args.amount0, MIN_AMOUNT, MAX_AMOUNT, [
+          "🎤",
+          "🎬",
+          "🏆",
+          "🌟",
+          "👑",
+        ]);
+        if (!grid) {
+          continue;
+        }
         const caption = `
       <b>Buy</b> $FAME
-${
-  fillGrid(swapLog.args.amount0, MIN_AMOUNT, MAX_AMOUNT, [
-    "🟩",
-    "🟨",
-    "🟥",
-  ])?.join("\n") ?? ""
-}
+${grid?.join("\n") ?? ""}
 🔀 Spent $${amount0SpentUsdc} <b>(${amount0Spent} ETH)</b>
 🔀 Got <b>${amount1Received} FAME</b>
 👤 <a href="${
