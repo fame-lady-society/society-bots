@@ -22,9 +22,9 @@ import { FeeAmount, Pool } from "@uniswap/v3-sdk";
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 // const TOTAL_SUPPLY = parseUnits("888000000", 18);
-const TOKEN_ADDRESS = "0xEa372c317C9965bFc06ff15D3F049B31787c550D";
-const TOKEN_WETH_V3_POOL = "0x04b41Fe46e8685719Ac40101fc6478682256Bc6F";
-const TOKEN_LINKED_NFT_ADDRESS = "0x91d7950ac7ccb369589765e31d6d8996321556de";
+const TOKEN_ADDRESS = "0xf307e242BfE1EC1fF01a4Cef2fdaa81b10A52418";
+const TOKEN_WETH_V3_POOL = "0xeed3eff5775865229dcd0d7e0f6e89c611841202";
+const TOKEN_LINKED_NFT_ADDRESS = "0xBB5ED04dD7B207592429eb8d599d103CCad646c4";
 // const TOKEN_DECIMALS = 18;
 const BASE_USDC_WETH_V3_POOL = "0xd0b53D9277642d899DF5C87A3966A349A798F224";
 const MAX_AMOUNT = parseUnits("1", 18);
@@ -355,7 +355,7 @@ export default async function handler({
             ),
             createPoolFromTokens(
               WETH9[base.id],
-              new Token(base.id, TOKEN_WETH_V3_POOL, 18, "SCHWING", "SCHWING"),
+              new Token(base.id, TOKEN_WETH_V3_POOL, 18, "FAME", "Society"),
               FeeAmount.MEDIUM,
               TOKEN_WETH_V3_POOL
             ),
@@ -469,14 +469,14 @@ export default async function handler({
           burnEvents.map((b) => Number(b.args.tokenId))
         )}]`;
         const caption = `
-      <b>Buy</b> $SCHWING
+      <b>Buy</b> $FAME
 ${fillGrid(swapLog.args.amount0, MIN_AMOUNT, MAX_AMOUNT, [
   "🟩",
   "🟨",
   "🟥",
 ])?.join("\n")}
 🔀 Spent $${amount0SpentUsdc} <b>(${amount0Spent} ETH)</b>
-🔀 Got <b>${amount1Received} SCHWING</b>
+🔀 Got <b>${amount1Received} FAME</b>
 👤 <a href="${
           base.blockExplorers.default.url
         }/address/${recipient}">${shortAddress}</a> <a href="${
