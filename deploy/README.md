@@ -29,7 +29,7 @@ curl --request POST \
   "webhook_type": "GRAPHQL",
   "graphql_query": {
     "skip_empty_messages": true,
-    "query": "{   block {     logs(filter: {addresses: [\"0x04b41Fe46e8685719Ac40101fc6478682256Bc6F\",\"0x6Dbf04dbFEDC9Aaf4Eba14Bab51e9a4298340c01\"], topics: []}) {       data       topics       transaction {         hash         from {           address         }         to {           address         }         logs {           account {             address           }           data           topics         }         type         status       }     }   } }"
+    "query": "{   block {     logs(filter: {addresses: [\"0xf307e242BfE1EC1fF01a4Cef2fdaa81b10A52418\",\"0xBB5ED04dD7B207592429eb8d599d103CCad646c4\"], topics: []}) {       data       topics       transaction {         hash         from {           address         }         to {           address         }         logs {           account {             address           }           data           topics         }         type         status       }     }   } }"
   },
   "webhook_url": "${WEBHOOK_ENDPOINT}"
 }
