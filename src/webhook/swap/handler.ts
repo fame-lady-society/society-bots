@@ -348,14 +348,14 @@ export default async function handler({
         const [wethUsdcPool, schwingWethPool, recipientBalance] =
           await Promise.all([
             createPoolFromTokens(
-              WETH9[base.id],
               new Token(base.id, BASE_USDC_WETH_V3_POOL, 6, "USDC", "USD Coin"),
+              WETH9[base.id],
               FeeAmount.MEDIUM,
               BASE_USDC_WETH_V3_POOL
             ),
             createPoolFromTokens(
-              WETH9[base.id],
               new Token(base.id, TOKEN_ADDRESS, 18, "FAME", "Society"),
+              WETH9[base.id],
               FeeAmount.MEDIUM,
               TOKEN_WETH_V3_POOL
             ),
@@ -377,6 +377,9 @@ export default async function handler({
         console.log("recipient balance", formatEther(recipientBalance));
         console.log("tokens received", formatEther(swapLog.args.amount1));
 
+        if (swapLog.args.amount1 > 0) {
+          continue;
+        }
         const ensName = await mainnetClient.getEnsName({
           address: recipient,
         });
@@ -384,11 +387,11 @@ export default async function handler({
           ensName ?? recipient.slice(0, 6) + "..." + recipient.slice(-4);
 
         const amount0Spent = trimToFourDecimalPlacesOrFewer(
-          formatEther(swapLog.args.amount0)
+          formatEther(-swapLog.args.amount1)
         );
         const amount0SpentUsdc =
-          Number(formatEther(swapLog.args.amount0)) * currentUsdPrice;
-        const tokensReceived = -swapLog.args.amount1;
+          Number(formatEther(-swapLog.args.amount1)) * currentUsdPrice;
+        const tokensReceived = swapLog.args.amount0;
         const amount1Received = formatMoney(tokensReceived);
 
         let positionDelta = "??";
@@ -405,7 +408,7 @@ export default async function handler({
             precisionFactor
           }%`;
         }
-        console.log(swapLog.args.amount0, MIN_AMOUNT, MAX_AMOUNT);
+        console.log(swapLog.args.amount1, MIN_AMOUNT, MAX_AMOUNT);
 
         // walk through the transaction logs looking for mint/burn events
         const mintEvents: {
@@ -470,7 +473,7 @@ export default async function handler({
         )}]`;
         const caption = `
       <b>Buy</b> $FAME
-${fillGrid(swapLog.args.amount0, MIN_AMOUNT, MAX_AMOUNT, [
+${fillGrid(swapLog.args.amount1, MIN_AMOUNT, MAX_AMOUNT, [
   "🟩",
   "🟨",
   "🟥",
@@ -528,4 +531,9 @@ ${mintEvents.length > 0 ? `📈 Minted ${formattedMintMessage}\n` : ""}${
       console.error("unable to process event", e);
     }
   }
+
+  return {
+    statusCode: 200,
+    body: JSON.stringify({ message: "ok" }),
+  };
 }
