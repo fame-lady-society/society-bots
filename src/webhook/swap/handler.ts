@@ -473,11 +473,13 @@ export default async function handler({
         )}]`;
         const caption = `
       <b>Buy</b> $FAME
-${fillGrid(-swapLog.args.amount1, MIN_AMOUNT, MAX_AMOUNT, [
-  "🟩",
-  "🟨",
-  "🟥",
-])?.join("\n")}
+${
+  fillGrid(swapLog.args.amount0, MIN_AMOUNT, MAX_AMOUNT, [
+    "🟩",
+    "🟨",
+    "🟥",
+  ])?.join("\n") ?? ""
+}
 🔀 Spent $${amount0SpentUsdc} <b>(${amount0Spent} ETH)</b>
 🔀 Got <b>${amount1Received} FAME</b>
 👤 <a href="${
