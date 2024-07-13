@@ -387,11 +387,11 @@ export default async function handler({
           ensName ?? recipient.slice(0, 6) + "..." + recipient.slice(-4);
 
         const amount0Spent = trimToFourDecimalPlacesOrFewer(
-          formatEther(-swapLog.args.amount1)
+          formatEther(swapLog.args.amount0)
         );
         const amount0SpentUsdc =
-          Number(formatEther(-swapLog.args.amount1)) * currentUsdPrice;
-        const tokensReceived = swapLog.args.amount0;
+          Number(formatEther(swapLog.args.amount0)) * currentUsdPrice;
+        const tokensReceived = -swapLog.args.amount1;
         const amount1Received = formatMoney(tokensReceived);
 
         let positionDelta = "??";
