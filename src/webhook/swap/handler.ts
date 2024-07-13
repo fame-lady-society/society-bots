@@ -375,7 +375,7 @@ export default async function handler({
         console.log("recipient", recipient);
         console.log("Market cap", priceUsd * 888_000_000);
         console.log("recipient balance", formatEther(recipientBalance));
-        console.log("tokens received", formatEther(swapLog.args.amount1));
+        console.log("tokens received", formatEther(-swapLog.args.amount1));
 
         if (swapLog.args.amount1 > 0) {
           continue;
@@ -408,7 +408,7 @@ export default async function handler({
             precisionFactor
           }%`;
         }
-        console.log(swapLog.args.amount1, MIN_AMOUNT, MAX_AMOUNT);
+        console.log(-swapLog.args.amount1, MIN_AMOUNT, MAX_AMOUNT);
 
         // walk through the transaction logs looking for mint/burn events
         const mintEvents: {
@@ -473,7 +473,7 @@ export default async function handler({
         )}]`;
         const caption = `
       <b>Buy</b> $FAME
-${fillGrid(swapLog.args.amount1, MIN_AMOUNT, MAX_AMOUNT, [
+${fillGrid(-swapLog.args.amount1, MIN_AMOUNT, MAX_AMOUNT, [
   "🟩",
   "🟨",
   "🟥",
