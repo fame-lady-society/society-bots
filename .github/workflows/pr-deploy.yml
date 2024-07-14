@@ -40,14 +40,17 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-west-1
 
-      - name: Check TELEGRAM_CHAT_ID secret
-        id: check-telegram-secret
+      - name: Set TELEGRAM_CHAT_ID secret
+        id: set-telegram-secret
         run: |
-          USER_LOGIN_UPPERCASE=$(echo "${{ github.event.pull_request.user.login }}" | tr '[:lower:]' '[:upper:]')
-          TELEGRAM_CHAT_ID_VAR="TELEGRAM_CHAT_ID_${USER_LOGIN_UPPERCASE}"
-          TELEGRAM_CHAT_ID=${!TELEGRAM_CHAT_ID_VAR}
+          USER_LOGIN="${{ github.event.pull_request.user.login }}"
+          declare -A TELEGRAM_CHAT_IDS=(
+            ["0XFLICKER"]="${{ secrets.TELEGRAM_CHAT_ID_0XFLICKER }}"
+            # Add more mappings as needed
+          )
+          TELEGRAM_CHAT_ID="${TELEGRAM_CHAT_IDS[$USER_LOGIN]}"
           if [ -z "$TELEGRAM_CHAT_ID" ]; then
-            echo "TELEGRAM_CHAT_ID secret does not exist for user: $USER_LOGIN_UPPERCASE"
+            echo "TELEGRAM_CHAT_ID secret does not exist for user: $USER_LOGIN"
             exit 1
           else
             echo "TELEGRAM_CHAT_ID=$TELEGRAM_CHAT_ID" >> $GITHUB_ENV
