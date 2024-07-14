@@ -10,17 +10,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Check TELEGRAM_CHAT_ID secret
-        id: check-telegram-secret
-        run: |
-          USER_LOGIN_UPPERCASE=$(echo "${{ github.event.pull_request.user.login }}" | tr '[:lower:]' '[:upper:]')
-          if [ -z "${{ secrets['TELEGRAM_CHAT_ID_' + USER_LOGIN_UPPERCASE] }}" ]; then
-            echo "TELEGRAM_CHAT_ID secret does not exist for user: $USER_LOGIN_UPPERCASE"
-            exit 1
-          else
-            echo "TELEGRAM_CHAT_ID=${{ secrets['TELEGRAM_CHAT_ID_' + USER_LOGIN_UPPERCASE] }}" >> $GITHUB_ENV
-          fi
-
       - name: Checkout repository
         uses: actions/checkout@v3
 
@@ -51,6 +40,19 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-west-1
 
+      - name: Check TELEGRAM_CHAT_ID secret
+        id: check-telegram-secret
+        run: |
+          USER_LOGIN_UPPERCASE=$(echo "${{ github.event.pull_request.user.login }}" | tr '[:lower:]' '[:upper:]')
+          TELEGRAM_CHAT_ID_VAR="TELEGRAM_CHAT_ID_${USER_LOGIN_UPPERCASE}"
+          TELEGRAM_CHAT_ID=${!TELEGRAM_CHAT_ID_VAR}
+          if [ -z "$TELEGRAM_CHAT_ID" ]; then
+            echo "TELEGRAM_CHAT_ID secret does not exist for user: $USER_LOGIN_UPPERCASE"
+            exit 1
+          else
+            echo "TELEGRAM_CHAT_ID=$TELEGRAM_CHAT_ID" >> $GITHUB_ENV
+          fi
+
       - name: Bootstrap CDK
         if: success()
         run: cdk bootstrap || echo "CDK bootstrap already done or failed"
@@ -65,7 +67,7 @@ jobs:
           SEPOLIA_RPCS_JSON: ${{ secrets.SEPOLIA_RPCS_JSON }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ env.TELEGRAM_CHAT_ID }}
-        run: cdk deploy --require-approval never -c stackName=society-bot-PR-${{ github.event.pull_request.number }}
+        run: cdk deploy --require-approval never -c stackName=PR-${{ github.event.pull_request.number }}
         working-directory: deploy/
 
   cleanup:
@@ -92,5 +94,5 @@ jobs:
           aws-region: us-west-1
 
       - name: Destroy CDK Stack
-        run: cdk destroy --force -c stackName=society-bot-PR-${{ github.event.pull_request.number }}
+        run: cdk destroy --force -c stackName=PR-${{ github.event.pull_request.number }}
         working-directory: deploy/
