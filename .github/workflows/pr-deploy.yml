@@ -43,7 +43,7 @@ jobs:
       - name: Set TELEGRAM_CHAT_ID secret
         id: set-telegram-secret
         run: |
-          USER_LOGIN=$( echo "${{ github.event.pull_request.user.login }}" | tr '[:lower:]' '[:upper:]'))
+          USER_LOGIN=$( echo "${{ github.event.pull_request.user.login }}" | tr '[:lower:]' '[:upper:]')
           declare -A TELEGRAM_CHAT_IDS=(
             ["0XFLICKER"]="${{ secrets.TELEGRAM_CHAT_ID_0XFLICKER }}"
             # Add more mappings as needed
