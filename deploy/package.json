@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "type": "module",
   "bin": {
-    "deploy": "bin/deploy.js"
+    "cdk": "cdk"
   },
   "scripts": {
     "build": "tsc",
@@ -21,6 +21,7 @@
     "typescript": "~5.5.3"
   },
   "dependencies": {
+    "@henrist/cdk-cross-region-params": "^2.0.0",
     "aws-cdk-lib": "2.148.0",
     "constructs": "^10.0.0",
     "source-map-support": "^0.5.21"

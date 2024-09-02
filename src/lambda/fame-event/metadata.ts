@@ -1,6 +1,6 @@
 import { erc721Abi } from "viem";
-import { baseClient, mainnetClient, sepoliaClient } from "../../viem";
-import { IMetadata } from "../../metadata";
+import { baseClient, mainnetClient, sepoliaClient } from "../../viem.js";
+import { IMetadata } from "../../metadata.js";
 
 export async function fetchMetadata({
   client,

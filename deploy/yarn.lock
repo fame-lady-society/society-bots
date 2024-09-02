@@ -328,6 +328,11 @@
   dependencies:
     "@jridgewell/trace-mapping" "0.3.9"
 
+"@henrist/cdk-cross-region-params@^2.0.0":
+  version "2.0.0"
+  resolved "https://registry.yarnpkg.com/@henrist/cdk-cross-region-params/-/cdk-cross-region-params-2.0.0.tgz#61baea4baad7f8b90f642fd138c2bc9adf6964f1"
+  integrity sha512-r/TWZt0ILAGPjUMu7ZOO4JYLuctUOQeM0hG9QKj/OyE1/hJ2dUhdXhMn2ZI95IcCldGuuyRg0uAEf4VZ36GcGQ==
+
 "@istanbuljs/load-nyc-config@^1.0.0":
   version "1.1.0"
   resolved "https://registry.yarnpkg.com/@istanbuljs/load-nyc-config/-/load-nyc-config-1.1.0.tgz#fd3db1d59ecf7cf121e80650bb86712f9b55eced"

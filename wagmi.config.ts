@@ -35,6 +35,24 @@ export default defineConfig({
             [base.id]: "0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70",
           },
         },
+        {
+          name: "FameSocietyToken",
+          address: {
+            [base.id]: "0xf307e242BfE1EC1fF01a4Cef2fdaa81b10A52418",
+          },
+        },
+        {
+          name: "FameSocietyNft",
+          address: {
+            [base.id]: "0xbb5ed04dd7b207592429eb8d599d103ccad646c4",
+          },
+        },
+        {
+          name: "FameSocietyRevealer",
+          address: {
+            [base.id]: "0xc0c81c4c0e7ba766bd07b5b34266ccc4e0b971c9",
+          },
+        },
       ],
     }),
     etherscan({

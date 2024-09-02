@@ -1,13 +1,12 @@
 import { SNS } from "@aws-sdk/client-sns";
-import { baseClient, mainnetClient, sepoliaClient } from "@/viem";
-import { fetchMetadata } from "./metadata";
+import { baseClient, mainnetClient, sepoliaClient } from "@/viem.js";
+import { fetchMetadata } from "./metadata.js";
 import { APIEmbedField } from "discord-api-types/v10";
-import { sendDiscordMessage } from "@/discord/pubsub/send";
-import { CompleteSwapEvent } from "@/webhook/swap/handler";
+import { sendDiscordMessage } from "@/discord/pubsub/send.js";
+import { CompleteSwapEvent } from "@/webhook/swap/handler.js";
 
-export async function notifyDiscordMint({
+export async function notifyDiscordSingleMint({
   tokenId,
-  wrappedCount,
   toAddress,
   channelId,
   client,
@@ -16,7 +15,6 @@ export async function notifyDiscordMint({
   sns,
 }: {
   tokenId: bigint;
-  wrappedCount: bigint;
   toAddress: `0x${string}`;
   channelId: string;
   client: typeof sepoliaClient | typeof mainnetClient | typeof baseClient;
@@ -39,16 +37,11 @@ export async function notifyDiscordMint({
   });
   if (testnet) {
     fields.push({
-      name: "sepolia",
+      name: "testnet",
       value: "true",
       inline: true,
     });
   }
-  fields.push({
-    name: "minted",
-    value: wrappedCount.toString(),
-    inline: true,
-  });
 
   await sendDiscordMessage({
     channelId,
@@ -153,6 +146,4 @@ export async function notifyDiscordSwap({
   testnet: boolean;
   discordMessageTopicArn: string;
   sns: SNS;
-}) {
-  
-}
+}) {}

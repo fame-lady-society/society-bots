@@ -40,7 +40,7 @@ jobs:
       - name: Bootstrap CDK
         run: cdk bootstrap || echo "CDK bootstrap already done or failed"
         working-directory: deploy/
-      - name: Deploy CDK Stack
+      - name: Deploy CDK Stack CERTS
         env:
           ALCHEMY_WEBHOOK_SIGNING_KEY: ${{ secrets.ALCHEMY_WEBHOOK_SIGNING_KEY }}
           BASE_RPCS_JSON: ${{ secrets.BASE_RPCS_JSON }}
@@ -48,5 +48,19 @@ jobs:
           SEPOLIA_RPCS_JSON: ${{ secrets.SEPOLIA_RPCS_JSON }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: cdk deploy --require-approval never
+          IMAGE_CORS_ALLOWED_ORIGINS_JSON: '["https://www.fameladysociety.com","http://localhost:3000"]'
+          IMAGE_BASE_HOST_JSON: '["fame.support"]'
+        run: cdk deploy --require-approval never FLSBotCert
+        working-directory: deploy/
+      - name: Deploy CDK Stack INFRA
+        env:
+          ALCHEMY_WEBHOOK_SIGNING_KEY: ${{ secrets.ALCHEMY_WEBHOOK_SIGNING_KEY }}
+          BASE_RPCS_JSON: ${{ secrets.BASE_RPCS_JSON }}
+          MAINNET_RPCS_JSON: ${{ secrets.MAINNET_RPCS_JSON }}
+          SEPOLIA_RPCS_JSON: ${{ secrets.SEPOLIA_RPCS_JSON }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          IMAGE_CORS_ALLOWED_ORIGINS_JSON: '["https://www.fameladysociety.com","http://localhost:3000"]'
+          IMAGE_BASE_HOST_JSON: '["fame.support"]'
+        run: cdk deploy --require-approval never FLSBot
         working-directory: deploy/

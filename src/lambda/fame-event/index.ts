@@ -15,14 +15,15 @@ import { SNS } from "@aws-sdk/client-sns";
 import { APIEmbedField } from "discord-api-types/v10";
 import { createLogger } from "@/utils/logging.js";
 import { zeroHash, AbiEvent } from "viem";
-import { sepoliaClient, mainnetClient, baseClient } from "@/viem";
-import { fetchMetadata } from "./metadata";
-import { sendDiscordMessage } from "@/discord/pubsub/send";
-import { getLastIndexedBlock } from "./data";
+import { sepoliaClient, mainnetClient, baseClient } from "@/viem.js";
+import { fetchMetadata } from "./metadata.js";
+import { sendDiscordMessage } from "@/discord/pubsub/send.js";
+import { getLastIndexedBlock } from "./data.js";
 import { base, sepolia } from "viem/chains";
-import { uniswapV2SwapEventAbi, transferEvent, uniswapV3SwapEventAbi } from "@/events";
+import { uniswapV2SwapEventAbi, transferEvent, uniswapV3SwapEventAbi } from "@/events.js";
 import { BASE_FAME_NFT_ADDRESS, BASE_FAME_WETH_V2_POOL, BASE_FAME_WETH_V3_POOL, SEPOLIA_EXAMPLE_NFT_ADDRESS, SEPOLIA_EXAMPLE_WETH_V2_POOL, SEPOLIA_EXAMPLE_WETH_V3_POOL } from "@/constants";
-import { DISCORD_CHANNEL_ID, DISCORD_MESSAGE_TOPIC_ARN } from "./config";
+import { DISCORD_CHANNEL_ID, DISCORD_MESSAGE_TOPIC_ARN } from "./config.js";
+import { notifyDiscordSingleMint } from "./discord.ts";
 
 type PromiseType<T extends Promise<any>> = T extends Promise<infer U>
   ? U
@@ -222,14 +223,13 @@ export const handleForClient = async ({
     for (const [to, events] of eventsMintByTo.entries()) {
       const tokenIds = events.map(({ args }) => args.tokenId);
       if (tokenIds.length === 1) {
-        await notifyDiscordSingleToken({
+        await notifyDiscordSingleMint({
           tokenId: tokenIds[0],
-          wrappedCount: 0n, // fake
           toAddress: to,
           channelId: DISCORD_CHANNEL_ID,
           client,
           discordMessageTopicArn: DISCORD_MESSAGE_TOPIC_ARN,
-          testnet: true,
+          testnet: !!client.chain.testnet,
           sns,
         });
       } else {

@@ -1,21 +1,24 @@
 import { S3 } from "@aws-sdk/client-s3";
-import { generateMosaic } from "@0xflick/assets/src/canvas/fls";
 import type { Readable } from "stream";
-import { APIGatewayProxyHandler } from "aws-lambda";
+import {
+  type APIGatewayProxyEvent,
+  type APIGatewayProxyResult,
+} from "aws-lambda";
 import { Image, loadImage } from "canvas";
+import { generateMosaic, resizeImage } from "@/canvas/fls.ts";
+import { baseClient } from "@/viem.ts";
+import { fetchFameSocietyRevealerIndex, fetchTokenImage } from "./utils.ts";
+import {
+  ASSET_BUCKET,
+  CORS_ALLOWED_ORIGINS_JSON,
+  IMAGE_HOST,
+} from "./config.ts";
 
-const s3 = new S3({
-  region: "us-east-1",
-});
+const s3 = new S3({});
 
-if (!process.env.ASSET_BUCKET) {
-  throw new Error("ASSET_BUCKET not set");
-}
-if (!process.env.IMAGE_HOST) {
-  throw new Error("IMAGE_HOST not set");
-}
-const assetBucket = process.env.ASSET_BUCKET;
-const imageHost = process.env.IMAGE_HOST;
+const assetBucket = ASSET_BUCKET;
+const imageHost = IMAGE_HOST;
+const corsAllowedOrigins: string[] = JSON.parse(CORS_ALLOWED_ORIGINS_JSON);
 
 async function s3Exists({
   key,
@@ -36,7 +39,7 @@ async function s3Exists({
   }
 }
 
-async function getImageFromS3(key: string): Promise<Buffer> {
+async function s3GetObject(key: string): Promise<Buffer> {
   const params = {
     Bucket: assetBucket,
     Key: key,
@@ -52,6 +55,25 @@ async function getImageFromS3(key: string): Promise<Buffer> {
   return buffer;
 }
 
+async function fetchOrGenerateTokenImage(
+  revealIndex: bigint,
+  tokenId: string | number | bigint
+): Promise<Buffer> {
+  const key = `assets/thumb/reveal-${revealIndex}/${tokenId}.png`;
+  if (await s3Exists({ key, bucket: assetBucket })) {
+    return await s3GetObject(key);
+  }
+  const imageArrayBuffer = await fetchTokenImage(tokenId);
+  const imageBuffer = Buffer.from(imageArrayBuffer);
+  const imageData = await resizeImage({
+    imageBuffer,
+    width: 400,
+    height: 400,
+  });
+  await s3WriteObject(key, imageData);
+  return imageBuffer;
+}
+
 /**
  *
  * @param key {string}
@@ -60,22 +82,48 @@ async function getImageFromS3(key: string): Promise<Buffer> {
  */
 async function s3WriteObject(key: string, imageData: Buffer): Promise<void> {
   console.log(`Writing to s3://${assetBucket}/${key}`);
-  const params = {
+  await s3.putObject({
     Bucket: assetBucket,
     Key: key,
     Body: imageData,
-    ACL: "public-read",
     ContentDisposition: "inline",
     ContentType: "image/png",
-  };
-  await s3.putObject(params);
+  });
 }
 
 // Handler
-export const handler: APIGatewayProxyHandler = async (event) => {
+export const handler = async (
+  event: APIGatewayProxyEvent
+): Promise<APIGatewayProxyResult> => {
   console.log("Received image request");
+  if (event.httpMethod === "OPTIONS") {
+    if (!event.headers.origin) {
+      console.log("No origin header");
+      return {
+        statusCode: 400,
+        body: "Bad Request",
+      };
+    }
+    if (!corsAllowedOrigins.includes(event.headers.origin)) {
+      console.log(`Forbidden origin: ${event.headers.origin}`);
+      return {
+        statusCode: 403,
+        body: "Forbidden",
+      };
+    }
+    console.log("Received preflight request");
+    return {
+      statusCode: 200,
+      headers: {
+        "Access-Control-Allow-Origin": event.headers.origin,
+        "Access-Control-Allow-Methods": "GET",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+      body: "",
+    };
+  }
   try {
-    if (event.httpMethod !== "GET") {
+    if (["GET", "OPTIONS", "HEAD"].includes(event.httpMethod)) {
       return {
         statusCode: 405,
         body: "Method Not Allowed",
@@ -83,15 +131,17 @@ export const handler: APIGatewayProxyHandler = async (event) => {
     }
     const { pathParameters } = event;
 
-    const tokenIdsStr = pathParameters.tokenIds;
+    const tokenIdsStr = pathParameters!.tokenId!;
     console.log(`tokenIDS: ${tokenIdsStr}`);
     // tokenIdsStr is a comma separated list of tokenIds, for each tokenID, fetch the image from S3
     const tokenIds = tokenIdsStr
       .split(",")
       .map((id) => parseInt(id, 10))
       .sort((a, b) => a - b);
-
-    const outputKey = `mosaic/${tokenIds.join("-")}.png`;
+    const index = await fetchFameSocietyRevealerIndex({ client: baseClient });
+    const outputKey = `assets/mosaic/reveal-${index.toString()}/${tokenIds.join(
+      "-"
+    )}.png`;
     const exists = await s3Exists({
       key: outputKey,
       bucket: assetBucket,
@@ -103,8 +153,7 @@ export const handler: APIGatewayProxyHandler = async (event) => {
       for (let i = 0; i < tokenIds.length; i += 10) {
         const ids = tokenIds.slice(i, i + 10);
         const promises = ids.map(async (id) => {
-          const key = `thumb/${id}.png`;
-          const buffer = await getImageFromS3(key);
+          const buffer = await fetchOrGenerateTokenImage(index, id);
           return await loadImage(buffer);
         });
         images.push(...(await Promise.all(promises)));

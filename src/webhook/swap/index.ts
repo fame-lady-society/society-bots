@@ -1,6 +1,6 @@
 import { APIGatewayProxyHandler } from "aws-lambda";
 import crypto from "node:crypto";
-import handleSwapEvent from "./handler.js";
+import {handler as handleSwapEvent} from "./handler.js";
 
 const WEBHOOK_TOKEN = process.env.ALCHEMY_WEBHOOK_SIGNING_KEY!;
 
@@ -38,8 +38,9 @@ export const handler: APIGatewayProxyHandler = async (event) => {
   try {
     const json = JSON.parse(event.body);
     await handleSwapEvent({
-      event: json.event,
-      destination: Number(process.env.TELEGRAM_CHAT_ID!),
+      // event: json.event,
+      // destination: Number(process.env.TELEGRAM_CHAT_ID!),
+      
     });
   } catch (e) {
     console.error(e);
