@@ -42,6 +42,7 @@ export class DeployCertStack extends cdk.Stack {
 
     new Certificates(this, "Certificates", {
       domains: [JSON.parse(process.env.IMAGE_BASE_HOST_JSON!).join(".")],
+      hostedZoneDomain: JSON.parse(process.env.IMAGE_BASE_HOST_JSON!)[1],
     });
   }
 }
