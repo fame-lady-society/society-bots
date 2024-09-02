@@ -22,14 +22,15 @@ export class DeployInfraStack extends cdk.Stack {
       this,
       "ImageLambdas",
       {
-        baseRpcsJson: process.env.BASE_RPCS_JSON!,
-        domain: JSON.parse(process.env.IMAGE_BASE_HOST_JSON!),
-        corsAllowedOriginsJson: process.env.IMAGE_CORS_ALLOWED_ORIGINS_JSON!,
+        baseRpcsJson: process.env.BASE_RPCS_JSON ?? "[]",
+        domain: JSON.parse(process.env.IMAGE_BASE_HOST_JSON ?? "[]"),
+        corsAllowedOriginsJson:
+          process.env.IMAGE_CORS_ALLOWED_ORIGINS_JSON ?? "[]",
       }
     );
 
     new ImageDistribution(this, "ImageDistribution", {
-      domain: JSON.parse(process.env.IMAGE_BASE_HOST_JSON!),
+      domain: JSON.parse(process.env.IMAGE_BASE_HOST_JSON ?? "[]"),
       imageHttpApi,
       assetStorageBucket,
     });
@@ -41,7 +42,7 @@ export class DeployCertStack extends cdk.Stack {
     super(scope, id, props);
 
     new Certificates(this, "Certificates", {
-      domains: [JSON.parse(process.env.IMAGE_BASE_HOST_JSON!).join(".")],
+      domains: [JSON.parse(process.env.IMAGE_BASE_HOST_JSON ?? "[]").join(".")],
     });
   }
 }
