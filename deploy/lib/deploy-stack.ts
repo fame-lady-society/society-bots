@@ -3,7 +3,6 @@ import { Construct } from "constructs";
 // import { AlchemyWebhooks } from "./alchemy-webhook.js";
 import { ImageLambdas } from "./image-lambdas.js";
 import { ImageDistribution } from "./image-distribution.js";
-import { Zones } from "./zones.js";
 import { Certificates } from "./certificates.js";
 
 export class DeployInfraStack extends cdk.Stack {
