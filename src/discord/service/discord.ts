@@ -1,5 +1,5 @@
 import axios, { AxiosError, AxiosInstance } from "axios";
-import { createLogger } from "@0xflick/backend";
+import { createLogger } from "@/utils/logging.js";
 import {
   APIInteractionResponseCallbackData,
   RESTPostAPIChannelMessageJSONBody,

@@ -4,7 +4,7 @@ import type {
 } from "discord-api-types/v10";
 import { InteractionResponseType } from "discord-api-types/v10";
 import { createSNS } from "../pubsub/sns";
-import { createLogger } from "@0xflick/backend";
+import { createLogger } from "@/utils/logging.js";
 import { deferredMessageTopicArn } from "../config";
 import {
   createDeferredInteractionMessage,

@@ -1,6 +1,6 @@
 import { SQSHandler } from "aws-lambda";
 import { parseMessage } from "../update-interaction";
-import { createLogger } from "@0xflick/backend";
+import { createLogger } from "@/utils/logging.js";
 import { handle as commandHandler } from "../update-interaction/commands";
 import { handle as messageHandler } from "../commands/message/send";
 import { InteractionType } from "discord-api-types/v10";

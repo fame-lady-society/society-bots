@@ -6,19 +6,11 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "build": "yarn nameflick-image:build && yarn nameflick:build && yarn graphql:build && yarn image:build && yarn ipfs:origin:build && yarn axolotl:origin:build && yarn discord:build",
-    "nameflick:build": "esbuild src/lambda/nameflick/rest.ts --platform=node --target=node16.14 --bundle --outfile=../../deploy/.layers/nameflick/index.cjs",
-    "faucet:build": "esbuild src/lambda/faucet/index.ts --platform=node --target=node16.14 --bundle --outfile=../../deploy/.layers/faucet/index.cjs",
-    "image:accept:build": "esbuild src/lambda/image/accept.ts --platform=node --target=node14.19 --bundle --outfile=../../deploy/.layers/image/accept/index.cjs",
-    "image:origin:build": "esbuild src/lambda/image/origin.ts --banner:js=\"import { createRequire } from 'module';const require = createRequire(import.meta.url);\" --platform=node --format=esm --target=node14.19 --bundle --external:sharp --external:ipfs-http-client --outfile=../../deploy/.layers/image/origin/index.mjs",
-    "image:build": "yarn image:origin:build && yarn image:accept:build && cd ../../deploy && yarn build:layer:sharp",
-    "ipfs:origin:build": "esbuild src/lambda/ipfs/origin.ts --banner:js=\"import { createRequire } from 'module';const require = createRequire(import.meta.url);\" --platform=node --format=esm --bundle --target=node16.14 --external:ipfs-http-client --outfile=../../deploy/.layers/ipfs/origin/index.mjs && cd ../../deploy && yarn build:layer:ipfs",
+    "test": "yarn node --experimental-vm-modules $(yarn bin jest)",
     "fls-ipfs:origin:build": "esbuild src/lambda/fls-ipfs/origin.ts --banner:js=\"import { createRequire } from 'module';const require = createRequire(import.meta.url);\" --platform=node --format=esm --bundle --target=node16.14 --external:ipfs-http-client --outfile=../../deploy/.layers/fls-ipfs/origin/index.mjs && cd ../../deploy && yarn build:layer:fls-ipfs",
-    "axolotl:origin:build": "esbuild src/lambda/axolotl/index.ts --banner:js=\"import { createRequire } from 'module';const require = createRequire(import.meta.url);\" --platform=node --format=esm --target=node16.14 --bundle --external:canvas --outfile=../../deploy/.layers/axolotl/index.mjs",
     "fls-flip:build": "esbuild src/lambda/fls/flip.ts --banner:js=\"import { createRequire } from 'module';const require = createRequire(import.meta.url);\" --platform=node --format=esm --target=node16.14 --bundle --external:canvas --external:ipfs-http-client --outfile=../../deploy/.layers/fls-flip/index.mjs",
     "fls-thumb:build": "esbuild src/lambda/fls/thumb.ts --banner:js=\"import { createRequire } from 'module';const require = createRequire(import.meta.url);\" --platform=node --format=esm --target=node16.14 --bundle --external:canvas --external:ipfs-http-client --outfile=../../deploy/.layers/fls-thumb/index.mjs",
     "fls-mosaic:build": "esbuild src/lambda/fls/mosaic.ts --banner:js=\"import { createRequire } from 'module';const require = createRequire(import.meta.url);\" --platform=node --format=esm --target=node16.14 --bundle --external:canvas --outfile=../../deploy/.layers/fls-mosaic/index.mjs",
-    "nameflick-image:build": "esbuild src/lambda/nameflick-image/index.ts --banner:js=\"import { createRequire } from 'module';const require = createRequire(import.meta.url);\" --platform=node --format=esm --target=node16.14 --bundle --external:canvas --outfile=../../deploy/.layers/nameflick-image/index.mjs && cp -r ../../packages/assets/fonts ../../deploy/.layers/nameflick-image/fonts",
     "graphql:build": "esbuild src/lambda/graphql.ts --banner:js=\"import { createRequire } from 'module';const require = createRequire(import.meta.url);\" --platform=node --format=esm --target=node16.14 --bundle --outfile=../../deploy/.layers/graphql/index.mjs",
     "discord:build": "yarn discord:interaction:build && yarn discord:deferred:build",
     "discord:interaction:build": "esbuild src/discord/lambda/discord.ts --banner:js=\"import { createRequire } from 'module';const require = createRequire(import.meta.url);\" --platform=node --format=esm --target=node16.14 --bundle --outfile=../../deploy/.layers/discord-interaction/index.mjs",
@@ -28,7 +20,8 @@
     "discord:cli:build": "esbuild src/discord/cli.ts --banner:js=\"import { createRequire } from 'module';const require = createRequire(import.meta.url);\" --platform=node --format=esm --target=node16.14 --outfile=dist/discord-cli/index.mjs",
     "generate": "yarn generate:schema && yarn generate:types",
     "generate:schema": "yarn --cwd ../../packages/graphql schema:build",
-    "generate:types": "graphql-codegen --config codegen.yml"
+    "generate:types": "graphql-codegen --config codegen.yml",
+    "nodets": "node --import 'data:text/javascript,import { register } from \"node:module\"; import { pathToFileURL } from \"node:url\"; register(\"ts-node/esm\", pathToFileURL(\"./\"));'"
   },
   "devDependencies": {
     "@esbuild-plugins/node-modules-polyfill": "^0.1.4",
@@ -38,7 +31,8 @@
     "@graphql-codegen/typescript-graphql-request": "^4.5.4",
     "@graphql-codegen/typescript-operations": "^2.5.3",
     "@types/aws-lambda": "^8.10.95",
-    "@types/jest": "^27.4.1",
+    "@types/bunyan": "^1.8.11",
+    "@types/jest": "^29.5.12",
     "@types/node": "^20.14.10",
     "@types/parquetjs": "^0.10.3",
     "@types/sharp": "^0.30.2",
@@ -47,9 +41,9 @@
     "eslint": "^8.13.0",
     "jest": "^29.7.0",
     "prettier": "^2.6.2",
-    "ts-jest": "^29.1.5",
+    "ts-jest": "^29.2.4",
     "ts-node": "^10.9.2",
-    "typescript": "^5.4.2"
+    "typescript": "^5.5.4"
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.172.0",
@@ -58,6 +52,7 @@
     "@aws-sdk/client-sns": "^3.171.0",
     "@aws-sdk/client-sqs": "^3.359.0",
     "@aws-sdk/client-ssm": "^3.171.0",
+    "@aws-sdk/lib-dynamodb": "^3.632.0",
     "@discordjs/builders": "^1.2.0",
     "@discordjs/rest": "^1.1.0",
     "@ensdomains/ens-contracts": "^0.0.12",
@@ -72,6 +67,7 @@
     "aws-lambda": "^1.0.7",
     "aws-sdk": "^2.1120.0",
     "axios": "^0.27.2",
+    "bunyan": "^1.8.15",
     "commander": "^9.4.0",
     "content-hash": "^2.5.2",
     "discord-api-types": "^0.37.10",
@@ -91,6 +87,7 @@
     "sharp": "^0.30.4",
     "tweetnacl": "^1.0.3",
     "twitter-api-v2": "^1.12.0",
-    "viem": "^2.17.2"
+    "viem": "^2.17.2",
+    "wagmi": "^2.12.8"
   }
 }

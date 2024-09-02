@@ -66,6 +66,7 @@ export class AlchemyWebhooks extends Construct {
         BASE_RPCS_JSON: baseRpcsJson,
         TELEGRAM_BOT_TOKEN: telegramBotToken,
         ALCHEMY_WEBHOOK_SIGNING_KEY: alchemyWebhookSigningKey,
+
         TELEGRAM_CHAT_ID: telegramChatId,
         LOG_LEVEL: "INFO",
       },

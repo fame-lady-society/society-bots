@@ -2,6 +2,7 @@ import "dotenv/config";
 import {
   AbiEvent,
   AbiEventSignatureNotFoundError,
+  DecodeLogTopicsMismatch,
   decodeEventLog,
   erc20Abi,
   erc721Abi,
@@ -9,21 +10,31 @@ import {
   parseUnits,
   zeroAddress,
 } from "viem";
-import { baseClient, mainnetClient, sepoliaClient } from "../../viem.js";
-import type { ISwapWebhook } from "./types";
+import { baseClient, mainnetClient, sepoliaClient } from "../../viem.ts";
+import type { ISwapWebhook } from "./types.ts";
 import { base } from "viem/chains";
 import {
   chainlinkUsdcEthAbi,
   chainlinkUsdcEthAddress,
   uniswapV3PoolAbi,
-} from "../../wagmi.generated.js";
+  uniswapV2PoolAbi,
+} from "../../wagmi.generated.ts";
 import { Token, WETH9 } from "@uniswap/sdk-core";
 import { FeeAmount, Pool } from "@uniswap/v3-sdk";
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 // const TOTAL_SUPPLY = parseUnits("888000000", 18);
 const TOKEN_ADDRESS = "0xf307e242BfE1EC1fF01a4Cef2fdaa81b10A52418";
+/* v3 Pool info:
+ * token0: WETH
+ * token1: FAME
+ * */
 const TOKEN_WETH_V3_POOL = "0xeed3eff5775865229dcd0d7e0f6e89c611841202";
+/* v3 Pool info:
+ * token0: WETH
+ * token1: FAME
+ * */
+const TOKEN_WETH_V2_POOL = "0x3e2cab55bebf41719148b4e6b63f6644b18ae49c";
 const TOKEN_LINKED_NFT_ADDRESS = "0xBB5ED04dD7B207592429eb8d599d103CCad646c4";
 // const TOKEN_DECIMALS = 18;
 const BASE_USDC_WETH_V3_POOL = "0xd0b53D9277642d899DF5C87A3966A349A798F224";
@@ -31,6 +42,20 @@ const MAX_AMOUNT = parseUnits("1", 18);
 const MIN_AMOUNT = parseUnits("0.001", 18);
 const NFT_TRANSFER_TOPIC =
   "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+
+function addressToAbi(address: `0x${string}`) {
+  switch (address.toLowerCase()) {
+    case TOKEN_WETH_V2_POOL.toLowerCase():
+      return uniswapV2PoolAbi;
+    case TOKEN_WETH_V3_POOL.toLowerCase():
+      return uniswapV3PoolAbi;
+    case TOKEN_LINKED_NFT_ADDRESS.toLowerCase():
+      return erc721Abi;
+    case TOKEN_ADDRESS.toLowerCase():
+    case WETH9[base.id].address.toLowerCase():
+      return erc20Abi;
+  }
+}
 
 const UniswapV3SwapEventAbi = {
   type: "event",
@@ -309,14 +334,260 @@ function fillGrid(amount: bigint, min: bigint, max: bigint, emojis: string[]) {
   return grids;
 }
 
-export default async function handler({
-  disableTelegram = false,
+async function sendMessage({
+  amount0SpentUsdc,
+  amount0Spent,
+  amount1Received,
+  grid,
   destination,
-  event,
+  recipient,
+  shortAddress,
+  hash,
+  positionDelta,
+  priceUsd,
+  formattedMintMessage,
+  formattedBurnMessage,
+  mintEvents,
+  burnEvents,
 }: {
-  disableTelegram?: boolean;
+  amount0SpentUsdc: number;
+  amount0Spent: string;
+  amount1Received: string;
+  grid: string[] | null;
   destination: number;
-  event: ISwapWebhook["event"];
+  recipient: `0x${string}`;
+  shortAddress: string;
+  hash: `0x${string}`;
+  positionDelta: string;
+  priceUsd: number;
+  formattedMintMessage: string;
+  formattedBurnMessage: string;
+  mintEvents: {
+    eventName: "Transfer";
+    args: {
+      from: `0x${string}`;
+      to: `0x${string}`;
+      tokenId: bigint;
+    };
+  }[];
+  burnEvents: {
+    eventName: "Transfer";
+    args: {
+      from: `0x${string}`;
+      to: `0x${string}`;
+      tokenId: bigint;
+    };
+  }[];
+}) {
+  const caption = `
+  <b>Buy</b> $FAME
+${grid?.join("\n") ?? ""}
+🔀 Spent $${amount0SpentUsdc} <b>(${amount0Spent} ETH)</b>
+🔀 Got <b>${amount1Received} FAME</b>
+👤 <a href="${
+    base.blockExplorers.default.url
+  }/address/${recipient}">${shortAddress}</a> <a href="${
+    base.blockExplorers.default.url
+  }/tx/${hash}">TX</a>
+🪙 Position ${positionDelta}
+🏷 Price $${
+    priceUsd > 0.001 ? priceUsd.toLocaleString() : priceUsd.toExponential(3)
+  }
+💸 Market Cap $${Math.floor(priceUsd * 888_000_000).toLocaleString()}
+${mintEvents.length > 0 ? `📈 Minted ${formattedMintMessage}\n` : ""}${
+    burnEvents.length > 0 ? `📉 Burned ${formattedBurnMessage}\n` : ""
+  }
+ `;
+
+  console.log("sending animation...");
+  console.log(caption);
+  const response = await fetch(
+    `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendAnimation`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        chat_id: destination,
+        animation:
+          "https://images-ext-1.discordapp.net/external/1rMxR_ORQ4JQ4AWNkGYEHA0NvK_f6xv84tmrOU3QDz0/https/media.tenor.com/Sznlx6WCcFkAAAPo/dance-iggy-pop-iggy.mp4",
+        parse_mode: "HTML",
+        caption,
+      }),
+    }
+  );
+  const responseBody = await response.json();
+  console.log("Animation sent");
+}
+
+export type CompleteSwapEvent = {
+  v3SwapEvents: {
+    sender: `0x${string}`;
+    recipient: `0x${string}`;
+    amount0: bigint;
+    amount1: bigint;
+    sqrtPriceX96: bigint;
+    liquidity: bigint;
+    tick: number;
+  }[];
+  v2SwapEvents: {
+    sender: `0x${string}`;
+    amount0In: bigint;
+    amount1In: bigint;
+    amount0Out: bigint;
+    amount1Out: bigint;
+    to: `0x${string}`;
+  }[];
+  mintEvents: {
+    from: `0x${string}`;
+    to: `0x${string}`;
+    tokenId: bigint;
+  }[];
+  burnEvents: {
+    from: `0x${string}`;
+    to: `0x${string}`;
+    tokenId: bigint;
+  }[];
+  syncEvents: {
+    reserve0: bigint;
+    reserve1: bigint;
+  }[];
+  token0TransferEvents: {
+    from: `0x${string}`;
+    to: `0x${string}`;
+    value: bigint;
+  }[];
+  token1TransferEvents: {
+    from: `0x${string}`;
+    to: `0x${string}`;
+    value: bigint;
+  }[];
+};
+
+function updateBalanceDeltaFromV2SwapEvent(
+  wethBalanceDelta: Map<`0x${string}`, bigint>,
+  tokenBalanceDelta: Map<`0x${string}`, bigint>,
+  v2SwapEvent: CompleteSwapEvent["v2SwapEvents"][0]
+) {
+  const sender = v2SwapEvent.sender.toLowerCase() as `0x${string}`;
+  const to = v2SwapEvent.to.toLowerCase() as `0x${string}`;
+  wethBalanceDelta.set(
+    v2SwapEvent.sender,
+    (wethBalanceDelta.get(sender) ?? 0n) - v2SwapEvent.amount0In
+  );
+  wethBalanceDelta.set(
+    v2SwapEvent.to,
+    (wethBalanceDelta.get(to) ?? 0n) + v2SwapEvent.amount0Out
+  );
+  tokenBalanceDelta.set(
+    v2SwapEvent.sender,
+    (tokenBalanceDelta.get(sender) ?? 0n) - v2SwapEvent.amount1In
+  );
+  tokenBalanceDelta.set(
+    v2SwapEvent.to,
+    (tokenBalanceDelta.get(to) ?? 0n) + v2SwapEvent.amount1Out
+  );
+}
+
+function updateBalanceDeltaFromV3SwapEvent(
+  wethBalanceDelta: Map<`0x${string}`, bigint>,
+  tokenBalanceDelta: Map<`0x${string}`, bigint>,
+  v3SwapEvent: CompleteSwapEvent["v3SwapEvents"][0]
+) {
+  const sender = v3SwapEvent.sender.toLowerCase() as `0x${string}`;
+  const recipient = v3SwapEvent.recipient.toLowerCase() as `0x${string}`;
+  wethBalanceDelta.set(
+    v3SwapEvent.sender,
+    (wethBalanceDelta.get(sender) ?? 0n) - v3SwapEvent.amount0
+  );
+  wethBalanceDelta.set(
+    v3SwapEvent.recipient,
+    (wethBalanceDelta.get(recipient) ?? 0n) + v3SwapEvent.amount0
+  );
+  tokenBalanceDelta.set(
+    v3SwapEvent.sender,
+    (tokenBalanceDelta.get(sender) ?? 0n) - v3SwapEvent.amount1
+  );
+  tokenBalanceDelta.set(
+    v3SwapEvent.recipient,
+    (tokenBalanceDelta.get(recipient) ?? 0n) + v3SwapEvent.amount1
+  );
+}
+
+export function aggregateSwapEvents({
+  recipientMap,
+}: {
+  recipientMap: Map<`0x${string}`, CompleteSwapEvent>;
+}) {
+  let isArb = false;
+
+  const nftsMinted: bigint[] = [];
+  const nftsBurned: bigint[] = [];
+
+  const wethBalanceDelta = new Map<`0x${string}`, bigint>();
+  const tokenBalanceDelta = new Map<`0x${string}`, bigint>();
+
+  const v2SwapEventRecipient = recipientMap.get(
+    TOKEN_WETH_V2_POOL.toLowerCase() as `0x${string}`
+  );
+  const v3SwapEventRecipient = recipientMap.get(
+    TOKEN_WETH_V3_POOL.toLowerCase() as `0x${string}`
+  );
+
+  if (v2SwapEventRecipient || v3SwapEventRecipient) {
+    isArb = true;
+  }
+
+  for (const recipient of recipientMap.values()) {
+    for (const token0TransferEvent of recipient.token0TransferEvents) {
+      const { to, value } = token0TransferEvent;
+      wethBalanceDelta.set(to, (wethBalanceDelta.get(to) ?? 0n) + value);
+      wethBalanceDelta.set(
+        token0TransferEvent.from,
+        (wethBalanceDelta.get(token0TransferEvent.from) ?? 0n) - value
+      );
+    }
+
+    for (const token1TransferEvent of recipient.token1TransferEvents) {
+      const { to, value } = token1TransferEvent;
+      tokenBalanceDelta.set(to, (tokenBalanceDelta.get(to) ?? 0n) + value);
+      tokenBalanceDelta.set(
+        token1TransferEvent.from,
+        (tokenBalanceDelta.get(token1TransferEvent.from) ?? 0n) - value
+      );
+    }
+
+    for (const mintEvent of recipient.mintEvents) {
+      nftsMinted.push(mintEvent.tokenId);
+    }
+
+    for (const burnEvent of recipient.burnEvents) {
+      nftsBurned.push(burnEvent.tokenId);
+    }
+  }
+
+  return {
+    isArb,
+    nftsMinted,
+    nftsBurned,
+    wethBalanceDelta,
+    tokenBalanceDelta,
+  };
+}
+
+export type AggregateSwapEvents = ReturnType<typeof aggregateSwapEvents>;
+
+export async function handler({
+  transactionHash,
+  logs,
+}: {
+  transactionHash: `0x${string}`;
+  logs: {
+    address: `0x${string}`; // contract address
+    data: `0x${string}`;
+    topics: [] | [signature: `0x${string}`, ...args: `0x${string}`[]];
+  }[];
 }) {
   const currentUsdPrice = Number(
     formatPrice(
@@ -328,218 +599,115 @@ export default async function handler({
       8
     )
   );
-  for (const log of event.data.block.logs) {
-    const {
-      data,
-      topics,
-      transaction: {
-        hash,
-        from: { address: fromAddress },
-      },
-    } = log;
+  const recipientMap = new Map<`0x${string}`, CompleteSwapEvent>();
+  function getOrCreateRecipient(recipient: `0x${string}`) {
+    recipient = recipient.toLowerCase() as `0x${string}`;
+    if (recipientMap.has(recipient)) {
+      return recipientMap.get(recipient)!;
+    }
+    const r = {
+      burnEvents: [],
+      mintEvents: [],
+      v2SwapEvents: [],
+      v3SwapEvents: [],
+      syncEvents: [],
+      token0TransferEvents: [],
+      token1TransferEvents: [],
+    };
+    recipientMap.set(recipient.toLowerCase() as `0x${string}`, r);
+    return r;
+  }
+  for (const log of logs) {
+    const { data, topics } = log;
+    let { address } = log;
+    address = address.toLowerCase() as `0x${string}`;
+    const abi = addressToAbi(address);
+    if (!abi) {
+      continue;
+    }
     try {
-      const swapLog = decodeEventLog({
-        abi: uniswapV3PoolAbi,
+      const decodedEvent = decodeEventLog({
+        abi,
         data,
         topics,
+        strict: true,
       });
-      if (swapLog.eventName === "Swap") {
-        const recipient = fromAddress;
-        const [wethUsdcPool, schwingWethPool, recipientBalance] =
-          await Promise.all([
-            createPoolFromTokens(
-              new Token(base.id, BASE_USDC_WETH_V3_POOL, 6, "USDC", "USD Coin"),
-              WETH9[base.id],
-              FeeAmount.MEDIUM,
-              BASE_USDC_WETH_V3_POOL
-            ),
-            createPoolFromTokens(
-              new Token(base.id, TOKEN_ADDRESS, 18, "FAME", "Society"),
-              WETH9[base.id],
-              FeeAmount.MEDIUM,
-              TOKEN_WETH_V3_POOL
-            ),
-            baseClient.readContract({
-              abi: erc20Abi,
-              address: TOKEN_ADDRESS,
-              functionName: "balanceOf",
-              args: [recipient],
-            }),
-          ]);
-        console.log(wethUsdcPool.token0Price.toSignificant(8));
-        console.log(schwingWethPool.token1Price.toSignificant(18));
-        const priceUsd =
-          Number(schwingWethPool.token1Price.toSignificant(18)) *
-          Number(wethUsdcPool.token0Price.toSignificant(12));
-        console.log(priceUsd.toExponential());
-        console.log("recipient", recipient);
-        console.log("Market cap", priceUsd * 888_000_000);
-        console.log("recipient balance", formatEther(recipientBalance));
-        console.log("tokens received", formatEther(-swapLog.args.amount1));
 
-        if (swapLog.args.amount1 > 0) {
-          continue;
-        }
-        const ensName = await mainnetClient.getEnsName({
-          address: recipient,
-        });
-        const shortAddress =
-          ensName ?? recipient.slice(0, 6) + "..." + recipient.slice(-4);
-
-        const amount0Spent = trimToFourDecimalPlacesOrFewer(
-          formatEther(swapLog.args.amount0)
-        );
-        const amount0SpentUsdc =
-          Number(formatEther(swapLog.args.amount0)) * currentUsdPrice;
-        const tokensReceived = -swapLog.args.amount1;
-        const amount1Received = formatMoney(tokensReceived);
-
-        let positionDelta = "??";
-        if (recipientBalance >= tokensReceived) {
-          // Assuming tokensReceived, recipientBalance are BigInts
-          const precisionFactor = 10000n; // Increase precision by factor of 10000
-          const percentageBase = 100n; // Base for percentage calculation
-
-          // Calculate percentage with increased precision and convert back to a percentage format
-          positionDelta = `+${
-            (((tokensReceived * precisionFactor) /
-              (recipientBalance - tokensReceived)) *
-              percentageBase) /
-            precisionFactor
-          }%`;
-        }
-        console.log(-swapLog.args.amount1, MIN_AMOUNT, MAX_AMOUNT);
-
-        // walk through the transaction logs looking for mint/burn events
-        const mintEvents: {
-          eventName: "Transfer";
-          args: {
-            from: `0x${string}`;
-            to: `0x${string}`;
-            tokenId: bigint;
-          };
-        }[] = [];
-        const burnEvents: {
-          eventName: "Transfer";
-          args: {
-            from: `0x${string}`;
-            to: `0x${string}`;
-            tokenId: bigint;
-          };
-        }[] = [];
-        for (const transactionLog of log.transaction.logs) {
+      switch (decodedEvent.eventName) {
+        case "Swap": {
           if (
-            transactionLog.account.address.toLowerCase() ===
-              TOKEN_LINKED_NFT_ADDRESS.toLowerCase() &&
-            transactionLog.topics[0] === NFT_TRANSFER_TOPIC
+            address === TOKEN_WETH_V3_POOL.toLowerCase() &&
+            "recipient" in decodedEvent.args
           ) {
-            try {
-              const transferLog = decodeEventLog({
-                abi: erc721Abi,
-                data: transactionLog.data,
-                topics: transactionLog.topics,
-              });
-              if (transferLog.eventName === "Transfer") {
-                if (
-                  transferLog.args.from === zeroAddress &&
-                  transferLog.args.to.toLowerCase() === recipient.toLowerCase()
-                ) {
-                  mintEvents.push(transferLog);
-                } else if (
-                  transferLog.args.to.toLowerCase() === zeroAddress &&
-                  transferLog.args.from === recipient.toLowerCase()
-                ) {
-                  burnEvents.push(transferLog);
-                }
-              }
-            } catch (e) {
-              if (e instanceof AbiEventSignatureNotFoundError) {
-                // ignore
-                continue;
-              }
-              console.error(
-                "Failed to process event log for topic: ${transactionLog.topics[0]}",
-                e
-              );
-            }
+            const recipient = decodedEvent.args.recipient;
+            const swapEvent = getOrCreateRecipient(recipient);
+            swapEvent.v3SwapEvents.push(decodedEvent.args);
+          } else if (
+            address === TOKEN_WETH_V2_POOL.toLowerCase() &&
+            "to" in decodedEvent.args
+          ) {
+            const recipient = decodedEvent.args.to;
+            const swapEvent = getOrCreateRecipient(recipient);
+            swapEvent.v2SwapEvents.push(decodedEvent.args);
           }
-        }
-        // mint/burn message TokenId: [0-3, 5]
-        const formattedMintMessage = `[${generateTokenIdListString(
-          mintEvents.map((m) => Number(m.args.tokenId))
-        )}]`;
-        const formattedBurnMessage = `[${generateTokenIdListString(
-          burnEvents.map((b) => Number(b.args.tokenId))
-        )}]`;
-        const grid = fillGrid(swapLog.args.amount0, MIN_AMOUNT, MAX_AMOUNT, [
-          "🎤",
-          "🎬",
-          "🏆",
-          "🌟",
-          "👑",
-        ]);
-        if (!grid) {
           continue;
         }
-        const caption = `
-      <b>Buy</b> $FAME
-${grid?.join("\n") ?? ""}
-🔀 Spent $${amount0SpentUsdc} <b>(${amount0Spent} ETH)</b>
-🔀 Got <b>${amount1Received} FAME</b>
-👤 <a href="${
-          base.blockExplorers.default.url
-        }/address/${recipient}">${shortAddress}</a> <a href="${
-          base.blockExplorers.default.url
-        }/tx/${hash}">TX</a>
-🪙 Position ${positionDelta}
-🏷 Price $${
-          priceUsd > 0.001
-            ? priceUsd.toLocaleString()
-            : priceUsd.toExponential(3)
-        }
-💸 Market Cap $${Math.floor(priceUsd * 888_000_000).toLocaleString()}
-${mintEvents.length > 0 ? `📈 Minted ${formattedMintMessage}\n` : ""}${
-          burnEvents.length > 0 ? `📉 Burned ${formattedBurnMessage}\n` : ""
-        }
-     `;
-
-        console.log("sending animation...");
-        console.log(caption);
-        if (!disableTelegram) {
-          const response = await fetch(
-            `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendAnimation`,
-            {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({
-                chat_id: destination,
-                animation:
-                  "https://images-ext-1.discordapp.net/external/1rMxR_ORQ4JQ4AWNkGYEHA0NvK_f6xv84tmrOU3QDz0/https/media.tenor.com/Sznlx6WCcFkAAAPo/dance-iggy-pop-iggy.mp4",
-                parse_mode: "HTML",
-                caption,
-              }),
+        case "Transfer": {
+          if (
+            address === TOKEN_LINKED_NFT_ADDRESS.toLowerCase() &&
+            "tokenId" in decodedEvent.args
+          ) {
+            if (decodedEvent.args.from === zeroAddress) {
+              const recipient = decodedEvent.args.to;
+              const swapEvent = getOrCreateRecipient(recipient);
+              swapEvent.mintEvents.push(decodedEvent.args);
+            } else if (decodedEvent.args.to === zeroAddress) {
+              const recipient = decodedEvent.args.from;
+              const swapEvent = getOrCreateRecipient(recipient);
+              swapEvent.burnEvents.push(decodedEvent.args);
             }
-          );
-          const responseBody = await response.json();
-          console.log(JSON.stringify(responseBody, null, 2));
-
-          console.log("Animation sent");
+          } else if (
+            address === TOKEN_ADDRESS.toLowerCase() &&
+            "value" in decodedEvent.args
+          ) {
+            const recipient = decodedEvent.args.to;
+            const swapEvent = getOrCreateRecipient(recipient);
+            swapEvent.token1TransferEvents.push(decodedEvent.args);
+          } else if (
+            address === WETH9[base.id].address.toLowerCase() &&
+            "value" in decodedEvent.args
+          ) {
+            const recipient = decodedEvent.args.to;
+            const swapEvent = getOrCreateRecipient(recipient);
+            swapEvent.token0TransferEvents.push(decodedEvent.args);
+          }
+          continue;
+        }
+        case "Sync": {
+          if (address === TOKEN_WETH_V2_POOL.toLowerCase()) {
+            const swapEvent = getOrCreateRecipient(address);
+            swapEvent.syncEvents.push(decodedEvent.args);
+          }
+          continue;
         }
       }
     } catch (e) {
-      if (e instanceof AbiEventSignatureNotFoundError) {
-        console.log(`Ignoring topic ${topics[0]}`);
-        // ignore
-        continue;
+      if (ignorableDecodeError(e)) {
+        // nothing
+      } else {
+        console.error("unable to process event", e);
       }
-      console.error("unable to process event", e);
     }
   }
-
   return {
-    statusCode: 200,
-    body: JSON.stringify({ message: "ok" }),
+    recipientMap,
+    currentUsdPrice,
   };
+}
+
+function ignorableDecodeError(e: unknown) {
+  return (
+    e instanceof AbiEventSignatureNotFoundError ||
+    e instanceof DecodeLogTopicsMismatch
+  );
 }

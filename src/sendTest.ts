@@ -409,37 +409,3 @@ handler({
 })
   .then(() => console.log("done"))
   .catch(console.error);
-
-// const event = decodeEventLog({
-//   abi: [UniswapV3SwapEventAbi] as const,
-//   data: "0x00000000000000000000000000000000000000000000000000038d7ea4c68000fffffffffffffffffffffffffffffffffffffffffff3ed9780bf1cc6bb712e5f000000000000000000000000000000000001d880eb23d644c45b518cf153e6de000000000000000000000000000000000000000000003a5125457b98ed3c96c3000000000000000000000000000000000000000000000000000000000003925c",
-//   topics: [
-//     "0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67",
-//     "0x0000000000000000000000003bfa4769fb09eefc5a80d6e87c3b9c650f7ae48e",
-//     "0x0000000000000000000000006e76967c1a78c516b6e8c96ffe6b1b884398a937",
-//   ],
-// });
-// console.log(
-//   JSON.stringify(
-//     {
-//       amount0: event.args.amount0.toString(),
-//       amount1: event.args.amount1.toString(),
-//       sender: event.args.sender,
-//       recipient: event.args.recipient,
-//       liquidity: event.args.liquidity.toString(),
-//       sqrtPriceX96: event.args.sqrtPriceX96.toString(),
-//       tick: event.args.tick.toString(),
-//     },
-//     null,
-//     2
-//   )
-// );
-// {
-//   "amount0": "1000000000000000",
-//   "amount1": "-14594040063029545932870049",
-//   "sender": "0x3bFA4769FB09eefC5a80d6E87c3B9C650f7Ae48E",
-//   "recipient": "0x6E76967c1a78C516b6E8c96FFe6b1B884398a937",
-//   "liquidity": "275394127965059437860547",
-//   "sqrtPriceX96": "9583511310026980932841684096771806",
-//   "tick": "234076"
-// }

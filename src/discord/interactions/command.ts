@@ -1,6 +1,6 @@
 import { APIGatewayProxyResult } from "aws-lambda";
 import { InferredApplicationCommandType } from "../types.js";
-import { createLogger } from "@0xflick/backend";
+import { createLogger } from "@/utils/logging.js";
 
 interface ICommandHandler {
   handler(

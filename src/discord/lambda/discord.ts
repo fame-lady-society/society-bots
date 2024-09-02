@@ -1,6 +1,6 @@
 import type { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
 import { sign } from "tweetnacl";
-import { createLogger } from "@0xflick/backend";
+import { createLogger } from "@/utils/logging.js";
 import { InferredApplicationCommandType } from "../types.js";
 import { handle as pingHandler } from "../interactions/ping.js";
 import { handle as commandHandler } from "../interactions/command.js";

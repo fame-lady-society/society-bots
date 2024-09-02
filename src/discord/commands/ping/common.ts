@@ -1,4 +1,4 @@
-import { createLogger } from "@0xflick/backend";
+import { createLogger } from "@/utils/logging.js";
 export const logger = createLogger({
   name: "discord/commands/ping/common",
 }).child({

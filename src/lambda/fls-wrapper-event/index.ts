@@ -13,7 +13,7 @@ import {
 import { SNS } from "@aws-sdk/client-sns";
 import { APIEmbedField } from "discord-api-types/v10";
 import { sendDiscordMessage } from "@0xflick/backend/discord/send";
-import { createLogger } from "@0xflick/backend";
+import { createLogger } from "@/utils/logging.js";
 import { zeroHash, AbiEvent } from "viem";
 import { sepoliaClient, mainnetClient } from "./viem";
 import { customDescription, fetchMetadata } from "./metadata";
