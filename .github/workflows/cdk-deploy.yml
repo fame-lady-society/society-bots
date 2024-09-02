@@ -37,9 +37,9 @@ jobs:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-west-1
-      - name: Deploy CDK Stack CERTS
+      - name: Deploy CDK Stack
         env:
-          AWS_REGION: us-east-1
+          STAGE: prod
           ALCHEMY_WEBHOOK_SIGNING_KEY: ${{ secrets.ALCHEMY_WEBHOOK_SIGNING_KEY }}
           BASE_RPCS_JSON: ${{ secrets.BASE_RPCS_JSON }}
           MAINNET_RPCS_JSON: ${{ secrets.MAINNET_RPCS_JSON }}
@@ -48,17 +48,5 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           IMAGE_CORS_ALLOWED_ORIGINS_JSON: '["https://www.fameladysociety.com","http://localhost:3000"]'
           IMAGE_BASE_HOST_JSON: '["fame.support"]'
-        run: cdk deploy --require-approval never -c stackName=FLSBotCert-prod FLSBotCert
-        working-directory: deploy/
-      - name: Deploy CDK Stack INFRA
-        env:
-          ALCHEMY_WEBHOOK_SIGNING_KEY: ${{ secrets.ALCHEMY_WEBHOOK_SIGNING_KEY }}
-          BASE_RPCS_JSON: ${{ secrets.BASE_RPCS_JSON }}
-          MAINNET_RPCS_JSON: ${{ secrets.MAINNET_RPCS_JSON }}
-          SEPOLIA_RPCS_JSON: ${{ secrets.SEPOLIA_RPCS_JSON }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          IMAGE_CORS_ALLOWED_ORIGINS_JSON: '["https://www.fameladysociety.com","http://localhost:3000"]'
-          IMAGE_BASE_HOST_JSON: '["fame.support"]'
-        run: cdk deploy --require-approval never -c stackName=FLSBot-prod FLSBot
+        run: cdk deploy --require-approval never --all
         working-directory: deploy/
