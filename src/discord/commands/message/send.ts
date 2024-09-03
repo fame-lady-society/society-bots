@@ -1,5 +1,5 @@
 import { RESTPostAPIChannelMessageJSONBody } from "discord-api-types/v10";
-import { sendChannelMessage } from "../../service/discord";
+import { sendChannelMessage } from "../../service/discord.ts";
 
 export async function handle(
   channelId: string,

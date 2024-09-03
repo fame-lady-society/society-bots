@@ -3,13 +3,13 @@ import type {
   APIInteractionResponseDeferredChannelMessageWithSource,
 } from "discord-api-types/v10";
 import { InteractionResponseType } from "discord-api-types/v10";
-import { createSNS } from "../pubsub/sns";
-import { createLogger } from "@/utils/logging.js";
-import { deferredMessageTopicArn } from "../config";
+import { createSNS } from "../pubsub/sns.ts";
+import { createLogger } from "@/utils/logging.ts";
+import { deferredMessageTopicArn } from "../config.ts";
 import {
-  createDeferredInteractionMessage,
   TMessageQueue,
-} from "@0xflick/backend/discord/messages";
+  createDeferredInteractionMessage,
+} from "../pubsub/messages.ts";
 
 const logger = createLogger({
   name: "discord/update-interaction",

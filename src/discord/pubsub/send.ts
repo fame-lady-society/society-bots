@@ -1,6 +1,6 @@
 import { SNS } from "@aws-sdk/client-sns";
 import type { RESTPostAPIChannelMessageJSONBody } from "discord-api-types/v10";
-import { IChannelMessage } from "./messages";
+import { IChannelMessage } from "./messages.ts";
 
 export async function sendDiscordMessage({
   topicArn,

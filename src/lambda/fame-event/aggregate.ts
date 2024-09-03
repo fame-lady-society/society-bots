@@ -11,7 +11,6 @@ import {
   zeroAddress,
 } from "viem";
 import { baseClient, mainnetClient, sepoliaClient } from "../../viem.ts";
-import type { CompleteSwapEvent, ISwapWebhook } from "./types.ts";
 import { base } from "viem/chains";
 import {
   chainlinkUsdcEthAbi,
@@ -21,27 +20,28 @@ import {
 } from "../../wagmi.generated.ts";
 import { Token, WETH9 } from "@uniswap/sdk-core";
 import { FeeAmount, Pool } from "@uniswap/v3-sdk";
+import {
+  BASE_FAME_ADDRESS,
+  BASE_FAME_NFT_ADDRESS,
+  BASE_FAME_WETH_V2_POOL,
+  BASE_FAME_WETH_V3_POOL,
+} from "@/constants.ts";
+import { CompleteSwapEvent } from "@/webhook/swap/types.ts";
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 // const TOTAL_SUPPLY = parseUnits("888000000", 18);
-const TOKEN_ADDRESS = "0xf307e242BfE1EC1fF01a4Cef2fdaa81b10A52418";
+const TOKEN_ADDRESS = BASE_FAME_ADDRESS;
 /* v3 Pool info:
  * token0: WETH
  * token1: FAME
  * */
-const TOKEN_WETH_V3_POOL = "0xeed3eff5775865229dcd0d7e0f6e89c611841202";
+const TOKEN_WETH_V3_POOL = BASE_FAME_WETH_V3_POOL;
 /* v3 Pool info:
  * token0: WETH
  * token1: FAME
  * */
-const TOKEN_WETH_V2_POOL = "0x3e2cab55bebf41719148b4e6b63f6644b18ae49c";
-const TOKEN_LINKED_NFT_ADDRESS = "0xBB5ED04dD7B207592429eb8d599d103CCad646c4";
-// const TOKEN_DECIMALS = 18;
-const BASE_USDC_WETH_V3_POOL = "0xd0b53D9277642d899DF5C87A3966A349A798F224";
-const MAX_AMOUNT = parseUnits("1", 18);
-const MIN_AMOUNT = parseUnits("0.001", 18);
-const NFT_TRANSFER_TOPIC =
-  "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+const TOKEN_WETH_V2_POOL = BASE_FAME_WETH_V2_POOL;
+const TOKEN_LINKED_NFT_ADDRESS = BASE_FAME_NFT_ADDRESS;
 
 function addressToAbi(address: `0x${string}`) {
   switch (address.toLowerCase()) {
@@ -471,11 +471,9 @@ function updateBalanceDeltaFromV3SwapEvent(
   );
 }
 
-export async function handler({
-  transactionHash,
+export async function aggregateLogs({
   logs,
 }: {
-  transactionHash: `0x${string}`;
   logs: {
     address: `0x${string}`; // contract address
     data: `0x${string}`;
@@ -604,3 +602,66 @@ function ignorableDecodeError(e: unknown) {
     e instanceof DecodeLogTopicsMismatch
   );
 }
+
+export function aggregateSwapEvents({
+  recipientMap,
+}: {
+  recipientMap: Map<`0x${string}`, CompleteSwapEvent>;
+}) {
+  let isArb = false;
+
+  const nftsMinted: bigint[] = [];
+  const nftsBurned: bigint[] = [];
+
+  const wethBalanceDelta = new Map<`0x${string}`, bigint>();
+  const tokenBalanceDelta = new Map<`0x${string}`, bigint>();
+
+  const v2SwapEventRecipient = recipientMap.get(
+    BASE_FAME_WETH_V2_POOL.toLowerCase() as `0x${string}`
+  );
+  const v3SwapEventRecipient = recipientMap.get(
+    BASE_FAME_WETH_V3_POOL.toLowerCase() as `0x${string}`
+  );
+
+  if (v2SwapEventRecipient || v3SwapEventRecipient) {
+    isArb = true;
+  }
+
+  for (const recipient of recipientMap.values()) {
+    for (const token0TransferEvent of recipient.token0TransferEvents) {
+      const { to, value } = token0TransferEvent;
+      wethBalanceDelta.set(to, (wethBalanceDelta.get(to) ?? 0n) + value);
+      wethBalanceDelta.set(
+        token0TransferEvent.from,
+        (wethBalanceDelta.get(token0TransferEvent.from) ?? 0n) - value
+      );
+    }
+
+    for (const token1TransferEvent of recipient.token1TransferEvents) {
+      const { to, value } = token1TransferEvent;
+      tokenBalanceDelta.set(to, (tokenBalanceDelta.get(to) ?? 0n) + value);
+      tokenBalanceDelta.set(
+        token1TransferEvent.from,
+        (tokenBalanceDelta.get(token1TransferEvent.from) ?? 0n) - value
+      );
+    }
+
+    for (const mintEvent of recipient.mintEvents) {
+      nftsMinted.push(mintEvent.tokenId);
+    }
+
+    for (const burnEvent of recipient.burnEvents) {
+      nftsBurned.push(burnEvent.tokenId);
+    }
+  }
+
+  return {
+    isArb,
+    nftsMinted,
+    nftsBurned,
+    wethBalanceDelta,
+    tokenBalanceDelta,
+  };
+}
+
+export type AggregateSwapEvents = ReturnType<typeof aggregateSwapEvents>;

@@ -1,5 +1,5 @@
-if (!process.env.DYNAMODB_FAME_TABLE_NAME) {
-  throw new Error("DYNAMODB_FAME_TABLE_NAME is not defined");
+if (!process.env.DYNAMODB_FAME_INDEX_TABLE_NAME) {
+  throw new Error("DYNAMODB_FAME_INDEX_TABLE_NAME is not defined");
 }
 export const DYNAMODB_FAME_INDEX_TABLE_NAME =
   process.env.DYNAMODB_FAME_INDEX_TABLE_NAME;

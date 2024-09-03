@@ -29,5 +29,8 @@ export const logger = bunyanCreateLogger({
 });
 
 export function createLogger(options: LoggerOptions) {
-  return logger.child(options);
+  return bunyanCreateLogger({
+    level: toLogLevel(process.env.LOG_LEVEL || "info"),
+    ...options,
+  });
 }

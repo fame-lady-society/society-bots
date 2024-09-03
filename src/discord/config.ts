@@ -23,18 +23,11 @@ export const discordBotToken = lazy(() => {
   return process.env.DISCORD_BOT_TOKEN;
 });
 
-export const testingChannelId = lazy(() => {
-  if (!process.env.DISCORD_TESTING_CHANNEL_ID) {
-    throw new Error("DISCORD_TESTING_CHANNEL_ID is not set");
-  }
-  return process.env.DISCORD_TESTING_CHANNEL_ID;
-});
-
 export const deferredMessageTopicArn = lazy(function getTopicArn() {
-  if (!process.env.DISCORD_DEFERRED_MESSAGE_TOPIC_ARN) {
-    throw new Error("DISCORD_DEFERRED_MESSAGE_TOPIC_ARN not set");
+  if (!process.env.DISCORD_MESSAGE_TOPIC_ARN) {
+    throw new Error("DISCORD_MESSAGE_TOPIC_ARN not set");
   }
-  return process.env.DISCORD_DEFERRED_MESSAGE_TOPIC_ARN;
+  return process.env.DISCORD_MESSAGE_TOPIC_ARN;
 });
 
 export const publicKey = lazy(() => {
@@ -42,4 +35,11 @@ export const publicKey = lazy(() => {
     throw new Error("DISCORD_PUBLIC_KEY not set");
   }
   return process.env.DISCORD_PUBLIC_KEY;
+});
+
+export const imageHost = lazy(() => {
+  if (!process.env.IMAGE_HOST) {
+    throw new Error("IMAGE_HOST not set");
+  }
+  return process.env.IMAGE_HOST;
 });

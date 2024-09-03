@@ -1,13 +1,13 @@
 import { SQSHandler } from "aws-lambda";
-import { parseMessage } from "../update-interaction";
+import { parseMessage } from "../update-interaction/index.ts";
 import { createLogger } from "@/utils/logging.js";
-import { handle as commandHandler } from "../update-interaction/commands";
-import { handle as messageHandler } from "../commands/message/send";
+import { handle as commandHandler } from "../update-interaction/commands.ts";
+import { handle as messageHandler } from "../commands/message/send.ts";
 import { InteractionType } from "discord-api-types/v10";
-import { sendInteraction } from "../service/discord";
+import { sendInteraction } from "../service/discord.ts";
 
 import "../commands/deferred.js";
-import { InferredApplicationCommandType } from "../types";
+import { InferredApplicationCommandType } from "../types.ts";
 
 const logger = createLogger({
   name: "discord/lambda",

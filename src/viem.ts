@@ -1,4 +1,4 @@
-import { createPublicClient, http, fallback, AbiEvent } from "viem";
+import { createPublicClient, http, fallback } from "viem";
 import { base, mainnet, sepolia } from "viem/chains";
 
 const sepoliaRpcs: string[] = JSON.parse(process.env.SEPOLIA_RPCS_JSON || "[]");

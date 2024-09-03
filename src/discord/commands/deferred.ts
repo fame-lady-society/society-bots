@@ -1,1 +1,1 @@
-export * as ping from "./ping/deferred";
+export * as ping from "./ping/deferred.ts";

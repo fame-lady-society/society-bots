@@ -4,7 +4,7 @@ import {
   APIInteractionResponseCallbackData,
   RESTPostAPIChannelMessageJSONBody,
 } from "discord-api-types/v10";
-import { discordBotToken } from "../config";
+import { discordBotToken } from "../config.ts";
 
 class RateLimitHandler {
   private axiosInstance: AxiosInstance;

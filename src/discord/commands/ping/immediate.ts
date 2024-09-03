@@ -1,9 +1,9 @@
-import { register } from "../../interactions/command";
+import { register } from "../../interactions/command.ts";
 import {
   createDeferredInteraction,
   deferredMessage,
-} from "../../update-interaction";
-import { logger } from "./common";
+} from "../../update-interaction/index.ts";
+import { logger } from "./common.ts";
 
 register({
   handler: async (interaction) => {
