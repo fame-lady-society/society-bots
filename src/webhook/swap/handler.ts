@@ -507,7 +507,7 @@ export async function handler({
       token0TransferEvents: [],
       token1TransferEvents: [],
     };
-    recipientMap.set(recipient.toLowerCase() as `0x${string}`, r);
+    recipientMap.set(recipient, r);
     return r;
   }
   for (const log of logs) {

@@ -25,8 +25,9 @@ import {
   BASE_FAME_NFT_ADDRESS,
   BASE_FAME_WETH_V2_POOL,
   BASE_FAME_WETH_V3_POOL,
-} from "@/constants.ts";
+} from "../../constants.ts";
 import { CompleteSwapEvent } from "@/webhook/swap/types.ts";
+import { bigIntToStringJsonFormat } from "../../utils/json.ts";
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 // const TOTAL_SUPPLY = parseUnits("888000000", 18);
@@ -429,19 +430,19 @@ function updateBalanceDeltaFromV2SwapEvent(
   const sender = v2SwapEvent.sender.toLowerCase() as `0x${string}`;
   const to = v2SwapEvent.to.toLowerCase() as `0x${string}`;
   wethBalanceDelta.set(
-    v2SwapEvent.sender,
+    sender,
     (wethBalanceDelta.get(sender) ?? 0n) - v2SwapEvent.amount0In
   );
   wethBalanceDelta.set(
-    v2SwapEvent.to,
+    to,
     (wethBalanceDelta.get(to) ?? 0n) + v2SwapEvent.amount0Out
   );
   tokenBalanceDelta.set(
-    v2SwapEvent.sender,
+    sender,
     (tokenBalanceDelta.get(sender) ?? 0n) - v2SwapEvent.amount1In
   );
   tokenBalanceDelta.set(
-    v2SwapEvent.to,
+    to,
     (tokenBalanceDelta.get(to) ?? 0n) + v2SwapEvent.amount1Out
   );
 }
@@ -454,19 +455,19 @@ function updateBalanceDeltaFromV3SwapEvent(
   const sender = v3SwapEvent.sender.toLowerCase() as `0x${string}`;
   const recipient = v3SwapEvent.recipient.toLowerCase() as `0x${string}`;
   wethBalanceDelta.set(
-    v3SwapEvent.sender,
+    sender,
     (wethBalanceDelta.get(sender) ?? 0n) - v3SwapEvent.amount0
   );
   wethBalanceDelta.set(
-    v3SwapEvent.recipient,
+    recipient,
     (wethBalanceDelta.get(recipient) ?? 0n) + v3SwapEvent.amount0
   );
   tokenBalanceDelta.set(
-    v3SwapEvent.sender,
+    sender,
     (tokenBalanceDelta.get(sender) ?? 0n) - v3SwapEvent.amount1
   );
   tokenBalanceDelta.set(
-    v3SwapEvent.recipient,
+    recipient,
     (tokenBalanceDelta.get(recipient) ?? 0n) + v3SwapEvent.amount1
   );
 }
@@ -505,9 +506,10 @@ export async function aggregateLogs({
       token0TransferEvents: [],
       token1TransferEvents: [],
     };
-    recipientMap.set(recipient.toLowerCase() as `0x${string}`, r);
+    recipientMap.set(recipient, r);
     return r;
   }
+  const decodedLogs: unknown[] = [];
   for (const log of logs) {
     const { data, topics } = log;
     let { address } = log;
@@ -523,7 +525,7 @@ export async function aggregateLogs({
         topics,
         strict: true,
       });
-
+      decodedLogs.push(decodedEvent);
       switch (decodedEvent.eventName) {
         case "Swap": {
           if (
@@ -605,8 +607,14 @@ function ignorableDecodeError(e: unknown) {
 
 export function aggregateSwapEvents({
   recipientMap,
+  value,
+  from: txFrom,
+  to: txTo,
 }: {
   recipientMap: Map<`0x${string}`, CompleteSwapEvent>;
+  value: bigint;
+  from: `0x${string}`;
+  to: `0x${string}`;
 }) {
   let isArb = false;
 
@@ -629,21 +637,21 @@ export function aggregateSwapEvents({
 
   for (const recipient of recipientMap.values()) {
     for (const token0TransferEvent of recipient.token0TransferEvents) {
-      const { to, value } = token0TransferEvent;
+      let { to, from } = token0TransferEvent;
+      to = to.toLowerCase() as `0x${string}`;
+      from = from.toLowerCase() as `0x${string}`;
+      const { value } = token0TransferEvent;
       wethBalanceDelta.set(to, (wethBalanceDelta.get(to) ?? 0n) + value);
-      wethBalanceDelta.set(
-        token0TransferEvent.from,
-        (wethBalanceDelta.get(token0TransferEvent.from) ?? 0n) - value
-      );
+      wethBalanceDelta.set(from, (wethBalanceDelta.get(from) ?? 0n) - value);
     }
 
     for (const token1TransferEvent of recipient.token1TransferEvents) {
-      const { to, value } = token1TransferEvent;
+      let { to, from } = token1TransferEvent;
+      to = to.toLowerCase() as `0x${string}`;
+      from = from.toLowerCase() as `0x${string}`;
+      const { value } = token1TransferEvent;
       tokenBalanceDelta.set(to, (tokenBalanceDelta.get(to) ?? 0n) + value);
-      tokenBalanceDelta.set(
-        token1TransferEvent.from,
-        (tokenBalanceDelta.get(token1TransferEvent.from) ?? 0n) - value
-      );
+      tokenBalanceDelta.set(from, (tokenBalanceDelta.get(from) ?? 0n) - value);
     }
 
     for (const mintEvent of recipient.mintEvents) {
@@ -653,6 +661,19 @@ export function aggregateSwapEvents({
     for (const burnEvent of recipient.burnEvents) {
       nftsBurned.push(burnEvent.tokenId);
     }
+  }
+
+  // if there is any value, create a fake weth transfer event
+  if (value > 0n) {
+    txTo = txTo.toLowerCase() as `0x${string}`;
+    txFrom = txFrom.toLowerCase() as `0x${string}`;
+    const fakeWethTransferEvent = {
+      to: txTo,
+      from: txFrom,
+      value,
+    };
+    wethBalanceDelta.set(txTo, (wethBalanceDelta.get(txTo) ?? 0n) + value);
+    wethBalanceDelta.set(txFrom, (wethBalanceDelta.get(txFrom) ?? 0n) - value);
   }
 
   return {

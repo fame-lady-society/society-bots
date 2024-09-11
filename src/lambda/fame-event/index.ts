@@ -15,7 +15,7 @@ import { SNS } from "@aws-sdk/client-sns";
 import { APIEmbed, APIEmbedField } from "discord-api-types/v10";
 import { createLogger } from "@/utils/logging.js";
 import { zeroHash, AbiEvent, TransactionReceipt } from "viem";
-import { sepoliaClient, mainnetClient, baseClient } from "@/viem.js";
+import { sepoliaClient, baseClient } from "@/viem.ts";
 import { fetchMetadata } from "./metadata.js";
 import { sendDiscordMessage } from "@/discord/pubsub/send.js";
 import { getLastIndexedBlock, setLastIndexedBlock } from "./data.js";
@@ -74,21 +74,21 @@ async function eventsForClient({
   const lastBlock = BigInt(lastBlockResponse?.block ?? latestBlock);
   const [v3SwapEvents, v2SwapEvents, nftTransferEvents, ,] = await Promise.all([
     findEvents<typeof uniswapV3SwapEventAbi>(
-      sepoliaClient,
+      client as typeof sepoliaClient,
       v3PoolAddress,
       uniswapV3SwapEventAbi,
       lastBlock,
       latestBlock
     ),
     findEvents<typeof uniswapV2SwapEventAbi>(
-      sepoliaClient,
+      client as typeof sepoliaClient,
       v2PoolAddress,
       uniswapV2SwapEventAbi,
       lastBlock,
       latestBlock
     ),
     findEvents<typeof transferEvent>(
-      sepoliaClient,
+      client as typeof sepoliaClient,
       nftAddress,
       transferEvent,
       lastBlock,
@@ -179,21 +179,29 @@ export const handleForClient = async ({
   // fetch all transaction receipts for swap events
   const swapEventTransactionReceipts = await Promise.all(
     [...swapEvents].map((txHash) =>
-      client
-        .getTransactionReceipt({
+      Promise.all([
+        client.getTransactionReceipt({
           hash: txHash,
-        })
-        .then(async (receipt) => {
-          const logs = await aggregateLogs({ logs: receipt.logs });
-          return [
-            txHash,
-            {
-              receipt,
+        }),
+        client.getTransaction({
+          hash: txHash,
+        }),
+      ]).then(async ([receipt, tx]) => {
+        const logs = await aggregateLogs({ logs: receipt.logs });
+        return [
+          txHash,
+          {
+            receipt,
+            ...logs,
+            ...aggregateSwapEvents({
               ...logs,
-              ...aggregateSwapEvents(logs),
-            },
-          ] as const;
-        })
+              from: tx.from!,
+              to: tx.to!,
+              value: tx.value,
+            }),
+          },
+        ] as const;
+      })
     )
   );
 
@@ -214,53 +222,69 @@ export const handleForClient = async ({
         readonly currentUsdPrice: number;
         readonly receipt: TransactionReceipt;
       };
-    }
+    }[]
   >();
 
   console.log(`Handling ${swapEvents.size} swap events`);
   for (const [_, swapEvent] of swapEventTransactionReceipts) {
-    for (const [recipient] of swapEvent.recipientMap) {
-      const embeds: APIEmbed[] = [];
-      embeds.push(
-        ...(await notifyDiscordSwap({
-          swapEvent,
-          recipient,
-          testnet: !!client.chain.testnet,
-          blockNumber: swapEvent.receipt.blockNumber,
-          tokenAddress,
-          client,
-        }))
-      );
-      embeds.push(
-        ...(await notifyDiscordMint({
-          testnet: !!client.chain.testnet,
-          tokenIds: swapEvent.nftsMinted,
-          toAddress: recipient,
-        }))
-      );
-      embeds.push(
-        ...(await notifyDiscordBurn({
-          testnet: !!client.chain.testnet,
-          tokenIds: swapEvent.nftsBurned,
-          fromAddress: recipient,
-        }))
-      );
-      transactionEmbeds.set(recipient, {
+    const embeds: APIEmbed[] = [];
+    const recipient = swapEvent.receipt.from.toLowerCase() as `0x${string}`;
+    embeds.push(
+      ...(await notifyDiscordSwap({
+        swapEvent,
+        recipient,
+        testnet: !!client.chain.testnet,
+        blockNumber: swapEvent.receipt.blockNumber,
+        tokenAddress,
+        client,
+      }))
+    );
+
+    embeds.push(
+      ...(await notifyDiscordMint({
+        testnet: !!client.chain.testnet,
+        tokenIds: swapEvent.nftsMinted,
+        toAddress: recipient,
+      }))
+    );
+    embeds.push(
+      ...(await notifyDiscordBurn({
+        testnet: !!client.chain.testnet,
+        tokenIds: swapEvent.nftsBurned,
+        fromAddress: recipient,
+      }))
+    );
+
+    const existing = transactionEmbeds.get(recipient) ?? [];
+    transactionEmbeds.set(recipient, [
+      ...existing,
+      {
         embeds,
         swapEvent,
-      });
-    }
+      },
+    ]);
   }
 
-  for (const { embeds } of transactionEmbeds.values()) {
-    await sendDiscordMessage({
-      channelId: DISCORD_CHANNEL_ID,
-      message: {
-        embeds,
-      },
-      topicArn: DISCORD_MESSAGE_TOPIC_ARN,
-      sns,
-    });
+  for (const events of transactionEmbeds.values()) {
+    for (const { embeds, swapEvent } of events) {
+      if (embeds.length === 0) {
+        logger.warn(
+          `No embeds for transaction ${swapEvent.receipt.transactionHash}`
+        );
+        continue;
+      }
+      logger.info(
+        `Sending ${embeds.length} embeds for transaction ${swapEvent.receipt.transactionHash}`
+      );
+      await sendDiscordMessage({
+        channelId: DISCORD_CHANNEL_ID,
+        message: {
+          embeds,
+        },
+        topicArn: DISCORD_MESSAGE_TOPIC_ARN,
+        sns,
+      });
+    }
   }
   console.log(
     `Handled ${swapEvents.size} swap events and setting last block to ${latestBlock} for chain ${client.chain.name}`

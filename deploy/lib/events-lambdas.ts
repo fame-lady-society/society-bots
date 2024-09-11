@@ -5,6 +5,7 @@ import { Construct } from "constructs";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as sns from "aws-cdk-lib/aws-sns";
 import * as sqs from "aws-cdk-lib/aws-sqs";
+import * as subs from "aws-cdk-lib/aws-sns-subscriptions";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as eventSources from "aws-cdk-lib/aws-lambda-event-sources";
@@ -17,6 +18,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 export interface Props {
   readonly baseRpcsJson: string;
   readonly sepoliaRpcsJson: string;
+  readonly mainnetRpcsJson: string;
   readonly discordChannelId: string;
   readonly domain: [string, string] | string;
   readonly discordAppId: string;
@@ -52,6 +54,7 @@ export class EventLambdas extends Construct {
     const {
       baseRpcsJson,
       sepoliaRpcsJson,
+      mainnetRpcsJson,
       domain,
       discordChannelId,
       discordAppId,
@@ -66,7 +69,9 @@ export class EventLambdas extends Construct {
       retentionPeriod: cdk.Duration.days(1),
     });
     const deferredMessageTopic = new sns.Topic(this, "DeferredMessageTopic");
-
+    deferredMessageTopic.addSubscription(
+      new subs.SqsSubscription(deferredMessageQueue)
+    );
     const lastEventBlock = new dynamodb.Table(this, "LastFameEventBlock", {
       partitionKey: { name: "key", type: dynamodb.AttributeType.STRING },
       tableClass: dynamodb.TableClass.STANDARD,
@@ -108,6 +113,7 @@ export class EventLambdas extends Construct {
         IMAGE_HOST: domainName,
         BASE_RPCS_JSON: baseRpcsJson,
         SEPOLIA_RPCS_JSON: sepoliaRpcsJson,
+        MAINNET_RPCS_JSON: mainnetRpcsJson,
         LOG_LEVEL: "INFO",
         DISCORD_APPLICATION_ID: discordAppId,
         DISCORD_PUBLIC_KEY: discordPublicKey,

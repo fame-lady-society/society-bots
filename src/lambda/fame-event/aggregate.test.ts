@@ -1,9 +1,9 @@
-import { bigIntToStringJsonFormat } from "../../utils/json";
+import { promises as fs } from "fs";
 import { arbLogs1 } from "./_fixtures/arbs.ts";
 import { swapWithNftMintLogs } from "./_fixtures/swaps.ts";
-import { CompleteSwapEvent, aggregateSwapEvents, handler } from "./handler.ts";
+import { aggregateLogs, aggregateSwapEvents } from "./aggregate.ts";
 
-import { createPublicClient, http, zeroAddress } from "viem";
+import { createPublicClient, formatUnits, http, zeroAddress } from "viem";
 
 const client = createPublicClient({
   transport: http("http://localhost:8545"),
@@ -15,9 +15,8 @@ const swapWithNfts =
   "0x4bf34a62add53c797d63ddb6905fe712628967ae9f4516f7c62bc2b60857eae9";
 describe("swap event handler", () => {
   it("should handle swap event", async () => {
-    const { currentUsdPrice, recipientMap } = await handler({
+    const { currentUsdPrice, recipientMap } = await aggregateLogs({
       logs: arbLogs1,
-      transactionHash: arbTransactionHash,
     });
     let output = "";
     output += `currentUsdPrice: ${currentUsdPrice}\n`;
@@ -82,21 +81,38 @@ describe("swap event handler", () => {
         output += `    from: ${from} to: ${to} value: ${value}\n`;
       }
     }
-    const a = aggregateSwapEvents({ recipientMap });
+    const a = aggregateSwapEvents({
+      recipientMap,
+      from: "0x8A2b1153ddd95f96E8709a4Ae912c946cc1f4ae2",
+      to: "0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD",
+      value: 0n,
+    });
     expect(a.isArb).toEqual(true);
   });
 
   it("should handle swap with nft mint event", async () => {
-    const { currentUsdPrice, recipientMap } = await handler({
+    const { currentUsdPrice, recipientMap } = await aggregateLogs({
       logs: swapWithNftMintLogs,
-      transactionHash: swapWithNfts,
     });
 
     const allNftMintEvents = Array.from(recipientMap.values()).flatMap(
       (events) => events.mintEvents
     );
 
-    const a = aggregateSwapEvents({ recipientMap });
+    const a = aggregateSwapEvents({
+      recipientMap,
+      from: "0xF11Ce547ff948a03570B20Eac4a4d7b648693324",
+      to: "0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD",
+      value: 173453089098201902n,
+    });
+    console.log({
+      tokenBalanceDelta: [...a.tokenBalanceDelta.entries()].map(
+        ([address, delta]) => `${address}: ${formatUnits(delta, 18)}`
+      ),
+      wethBalanceDelta: [...a.wethBalanceDelta.entries()].map(
+        ([address, delta]) => `${address}: ${formatUnits(delta, 18)}`
+      ),
+    });
     const { nftsMinted } = a;
 
     expect(nftsMinted.length).toEqual(allNftMintEvents.length);

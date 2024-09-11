@@ -4,11 +4,53 @@ import { fetchMetadata } from "./metadata.js";
 import { APIEmbed, APIEmbedField } from "discord-api-types/v10";
 import { sendDiscordMessage } from "@/discord/pubsub/send.js";
 
-import { erc20Abi, formatUnits } from "viem";
+import { erc20Abi, formatEther, formatUnits, parseUnits } from "viem";
 import { fameSocietyTokenAddress } from "@/wagmi.generated.ts";
 import { base } from "viem/chains";
 import { AggregateSwapEvents } from "./aggregate.ts";
 import { imageHost } from "@/discord/config.ts";
+import { logger } from "@/utils/logging.ts";
+import { fillGrid } from "./grid.ts";
+import { generateTokenIdListString } from "./utils.ts";
+
+export const formatToken = (
+  amount: bigint,
+  tokenDecimals: number,
+  formatDecimals: number
+) => {
+  const base = formatUnits(amount, tokenDecimals);
+  const [integerPart, fractionalPart] = base.split(".");
+
+  let left = Number(integerPart);
+  let suffix = "";
+
+  if (left >= 1_000_000_000_000) {
+    left /= 1_000_000_000_000;
+    suffix = "T";
+  } else if (left >= 1_000_000_000) {
+    left /= 1_000_000_000;
+    suffix = "B";
+  } else if (left >= 1_000_000) {
+    left /= 1_000_000;
+    suffix = "M";
+  } else if (left >= 1000) {
+    left /= 1000;
+    suffix = "K";
+  }
+
+  const formattedLeft =
+    left < 1000
+      ? left.toLocaleString("en").replaceAll(",", " ")
+      : left.toFixed(1);
+
+  const right = suffix
+    ? ""
+    : fractionalPart && formatDecimals > 0
+    ? Number(`0.${fractionalPart}`).toFixed(formatDecimals).slice(2)
+    : "";
+
+  return `${formattedLeft}${suffix}${right ? "." + right : ""}`;
+};
 
 export async function notifyDiscordMint({
   tokenIds,
@@ -22,8 +64,15 @@ export async function notifyDiscordMint({
   if (tokenIds.length === 0) {
     return [];
   }
-  const ensName = await mainnetClient.getEnsName({ address: toAddress });
-  const displayName = ensName ? ensName : toAddress;
+  let displayName: string = toAddress;
+  try {
+    const ensName = await mainnetClient.getEnsName({ address: toAddress });
+    if (ensName) {
+      displayName = ensName;
+    }
+  } catch (error) {
+    logger.warn({ error, toAddress }, "Failed to fetch ENS name");
+  }
   const fields: APIEmbedField[] = [];
   if (tokenIds.length === 1) {
     fields.push({
@@ -35,6 +84,11 @@ export async function notifyDiscordMint({
     fields.push({
       name: "minted",
       value: tokenIds.length.toString(),
+      inline: true,
+    });
+    fields.push({
+      name: "token ids",
+      value: generateTokenIdListString(tokenIds.map(Number)),
       inline: true,
     });
   }
@@ -54,7 +108,7 @@ export async function notifyDiscordMint({
   return [
     {
       title: "$FAME Society Mint",
-      description: `A new $FAME Society was minted${
+      description: `New $FAME Society was minted${
         testnet ? " on testnet" : ""
       }`,
       image: {
@@ -80,8 +134,15 @@ export async function notifyDiscordBurn({
   if (tokenIds.length === 0) {
     return [];
   }
-  const ensName = await mainnetClient.getEnsName({ address: fromAddress });
-  const displayName = ensName ? ensName : fromAddress;
+  let displayName: string = fromAddress;
+  try {
+    const ensName = await mainnetClient.getEnsName({ address: fromAddress });
+    if (ensName) {
+      displayName = ensName;
+    }
+  } catch (error) {
+    logger.warn({ error, fromAddress }, "Failed to fetch ENS name");
+  }
   const fields: APIEmbedField[] = [];
   if (tokenIds.length === 1) {
     fields.push({
@@ -93,6 +154,11 @@ export async function notifyDiscordBurn({
     fields.push({
       name: "burned",
       value: tokenIds.length.toString(),
+      inline: true,
+    });
+    fields.push({
+      name: "token ids",
+      value: generateTokenIdListString(tokenIds.map(Number)),
       inline: true,
     });
   }
@@ -112,7 +178,7 @@ export async function notifyDiscordBurn({
   return [
     {
       title: "$FAME Society Mint",
-      description: `A new $FAME Society was burned${
+      description: `New $FAME Society was burned${
         testnet ? " on testnet" : ""
       }`,
       image: {
@@ -126,6 +192,9 @@ export async function notifyDiscordBurn({
   ] as APIEmbed[];
 }
 
+const MAX_AMOUNT = parseUnits("1", 18);
+const MIN_AMOUNT = parseUnits("0.001", 18);
+
 export async function notifyDiscordSwap({
   blockNumber,
   swapEvent,
@@ -135,10 +204,7 @@ export async function notifyDiscordSwap({
   client,
 }: {
   blockNumber: bigint;
-  swapEvent: Pick<
-    AggregateSwapEvents,
-    "tokenBalanceDelta" | "wethBalanceDelta"
-  >;
+  swapEvent: AggregateSwapEvents;
   recipient: `0x${string}`;
   testnet: boolean;
   tokenAddress: `0x${string}`;
@@ -146,12 +212,44 @@ export async function notifyDiscordSwap({
 }) {
   const tokenDelta = swapEvent.tokenBalanceDelta.get(recipient);
   const wethDelta = swapEvent.wethBalanceDelta.get(recipient);
-  if (!tokenDelta || !wethDelta) {
-    throw new Error(`No swap event for recipient ${recipient}`);
+  if (typeof tokenDelta === "undefined" || typeof wethDelta === "undefined") {
+    logger.info(
+      {
+        recipient,
+        tokenBalanceDelta: [...swapEvent.tokenBalanceDelta.entries()].map(
+          ([address, delta]) => `${address}: ${formatUnits(delta, 18)}`
+        ),
+        wethBalanceDelta: [...swapEvent.wethBalanceDelta.entries()].map(
+          ([address, delta]) => `${address}: ${formatUnits(delta, 18)}`
+        ),
+      },
+      "No swap event"
+    );
+    return [];
   }
-  const ensName = await mainnetClient.getEnsName({ address: recipient });
-  const displayName = ensName ? ensName : recipient;
+  let displayName: string = recipient;
+  try {
+    const ensName = await mainnetClient.getEnsName({ address: recipient });
+    if (ensName) {
+      displayName = ensName;
+    }
+  } catch (error) {
+    logger.warn({ error, recipient }, "Failed to fetch ENS name");
+  }
   const fields: APIEmbedField[] = [];
+
+  const grid = fillGrid(
+    wethDelta < 0n ? -wethDelta : wethDelta,
+    MIN_AMOUNT,
+    MAX_AMOUNT,
+    ["🎬", "🌟", "👑"]
+  );
+  if (grid) {
+    fields.push({
+      name: tokenDelta > 0 ? "buy" : "sell",
+      value: grid.join(""),
+    });
+  }
   fields.push({
     name: "recipient",
     value: displayName,
@@ -167,21 +265,50 @@ export async function notifyDiscordSwap({
   if (tokenDelta > 0) {
     fields.push({
       name: "bought $FAME",
-      value: formatUnits(tokenDelta, 18),
+      value: formatToken(tokenDelta, 18, 0),
       inline: true,
     });
   } else if (tokenDelta < 0) {
     fields.push({
       name: "sold $FAME",
-      value: formatUnits(-tokenDelta, 18),
+      value: formatToken(-tokenDelta, 18, 0),
       inline: true,
     });
   }
-  fields.push({
-    name: "for WETH",
-    value: formatUnits(wethDelta, 18),
-    inline: true,
-  });
+  if (wethDelta > 0) {
+    fields.push({
+      name: "for WETH",
+      value: formatToken(wethDelta, 18, 4),
+      inline: true,
+    });
+  } else if (wethDelta < 0) {
+    fields.push({
+      name: "with WETH",
+      value: formatToken(-wethDelta, 18, 4),
+      inline: true,
+    });
+  }
+  if (swapEvent.isArb) {
+    fields.push({
+      name: "arb",
+      value: "true",
+      inline: true,
+    });
+  }
+  if (swapEvent.nftsMinted.length > 0) {
+    fields.push({
+      name: "minted",
+      value: swapEvent.nftsMinted.length.toString(),
+      inline: true,
+    });
+  }
+  if (swapEvent.nftsBurned.length > 0) {
+    fields.push({
+      name: "burned",
+      value: swapEvent.nftsBurned.length.toString(),
+      inline: true,
+    });
+  }
 
   // get current balance (should include the swap)
   const currentBalance = await client.readContract({
@@ -201,13 +328,13 @@ export async function notifyDiscordSwap({
 
   return [
     {
-      title: "$FAME Society Swap",
-      description: `A $FAME Society swap occurred${
-        testnet ? " on testnet" : ""
+      title: "$FAME BUY",
+      description: `A $FAME Society buy${
+        testnet ? " occurred on testnet" : ""
       }`,
       fields,
-      video: {
-        url: "https://images-ext-1.discordapp.net/external/1rMxR_ORQ4JQ4AWNkGYEHA0NvK_f6xv84tmrOU3QDz0/https/media.tenor.com/Sznlx6WCcFkAAAPo/dance-iggy-pop-iggy.mp4",
+      image: {
+        url: "https://dev.fame.support/assets/image/dance.gif",
       },
     },
   ] as APIEmbed[];
