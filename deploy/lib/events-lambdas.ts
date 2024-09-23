@@ -48,6 +48,7 @@ function compile(entrypoint: string, options?: BuildOptions) {
 }
 
 export class EventLambdas extends Construct {
+  public readonly notificationLambda: lambda.Function;
   constructor(scope: Construct, id: string, props: Props) {
     super(scope, id);
 
@@ -72,11 +73,59 @@ export class EventLambdas extends Construct {
     deferredMessageTopic.addSubscription(
       new subs.SqsSubscription(deferredMessageQueue)
     );
+
+    const logHandlerQueue = new sqs.Queue(this, "LogHandlerQueue", {
+      visibilityTimeout: cdk.Duration.seconds(30),
+      retentionPeriod: cdk.Duration.days(1),
+    });
+    const logHandlerTopic = new sns.Topic(this, "LogHandlerTopic");
+    logHandlerTopic.addSubscription(new subs.SqsSubscription(logHandlerQueue));
+
     const lastEventBlock = new dynamodb.Table(this, "LastFameEventBlock", {
       partitionKey: { name: "key", type: dynamodb.AttributeType.STRING },
       tableClass: dynamodb.TableClass.STANDARD,
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
     });
+
+    const discordNotificationsTable = new dynamodb.Table(
+      this,
+      "DiscordNotifications",
+      {
+        partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
+        sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
+        tableClass: dynamodb.TableClass.STANDARD,
+        billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      }
+    );
+    discordNotificationsTable.addGlobalSecondaryIndex({
+      indexName: "GSI1",
+      partitionKey: { name: "sk", type: dynamodb.AttributeType.STRING },
+    });
+
+    const interactionHandlerCodeDir = compile(
+      path.join(__dirname, "../../src/discord/lambda/interaction.ts")
+    );
+    const interactionHandler = new lambda.Function(this, "interactionHandler", {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      architecture: lambda.Architecture.ARM_64,
+      code: lambda.Code.fromAsset(interactionHandlerCodeDir),
+      handler: "index.handler",
+      timeout: cdk.Duration.seconds(5),
+      memorySize: 256,
+      environment: {
+        DISCORD_APPLICATION_ID: discordAppId,
+        DISCORD_PUBLIC_KEY: discordPublicKey,
+        DISCORD_BOT_TOKEN: discordBotToken,
+        LOG_LEVEL: "debug",
+        DISCORD_MESSAGE_TOPIC_ARN: deferredMessageTopic.topicArn,
+        DYNAMODB_REGION: cdk.Stack.of(this).region,
+        DYNAMODB_DISCORD_NOTIFICATION_TABLE_NAME:
+          discordNotificationsTable.tableName,
+        DYNAMODB_FAME_INDEX_TABLE_NAME: lastEventBlock.tableName,
+      },
+    });
+    discordNotificationsTable.grantReadWriteData(interactionHandler);
+    deferredMessageTopic.grantPublish(interactionHandler);
 
     const deferredMessageCodeDir = compile(
       path.join(__dirname, "../../src/discord/lambda/deferred.ts")
@@ -101,7 +150,7 @@ export class EventLambdas extends Construct {
     });
 
     const fameEventCodeDir = compile(
-      path.join(__dirname, "../../src/lambda/fame-event/index.ts")
+      path.join(__dirname, "../../src/fame-event/lambdas/messaging/index.ts")
     );
     const fameEventHandler = new lambda.Function(this, "FameEvent", {
       runtime: lambda.Runtime.NODEJS_20_X,
@@ -121,10 +170,13 @@ export class EventLambdas extends Construct {
         DISCORD_CHANNEL_ID: discordChannelId,
         DISCORD_MESSAGE_TOPIC_ARN: deferredMessageTopic.topicArn,
         DYNAMODB_FAME_INDEX_TABLE_NAME: lastEventBlock.tableName,
+        DYNAMODB_DISCORD_NOTIFICATION_TABLE_NAME:
+          discordNotificationsTable.tableName,
         DYNAMODB_REGION: cdk.Stack.of(this).region,
       },
     });
     lastEventBlock.grantReadWriteData(fameEventHandler);
+    discordNotificationsTable.grantReadWriteData(fameEventHandler);
     deferredMessageTopic.grantPublish(fameEventHandler);
     const fameEventScheduleRule = new events.Rule(
       this,
@@ -136,5 +188,23 @@ export class EventLambdas extends Construct {
     fameEventScheduleRule.addTarget(
       new eventTargets.LambdaFunction(fameEventHandler)
     );
+
+    new cdk.CfnOutput(this, "LogHandlerQueueArn", {
+      value: logHandlerQueue.queueArn,
+    });
+
+    new cdk.CfnOutput(this, "MessageTopicArn", {
+      value: deferredMessageTopic.topicArn,
+    });
+
+    new cdk.CfnOutput(this, "LastEventBlockTableName", {
+      value: lastEventBlock.tableName,
+    });
+
+    new cdk.CfnOutput(this, "DiscordNotificationsTableName", {
+      value: discordNotificationsTable.tableName,
+    });
+
+    this.notificationLambda = interactionHandler;
   }
 }

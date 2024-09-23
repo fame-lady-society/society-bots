@@ -1,25 +1,13 @@
-// import { EventBridgeEvent } from "aws-lambda";
-import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import {
-  DynamoDBDocumentClient,
-  GetCommand,
-  PutCommand,
-} from "@aws-sdk/lib-dynamodb";
-import {
-  fameLadySocietyAbi,
-  fameLadySocietyAddress,
-  uniswapV3PoolAbi,
-  uniswapV2PoolAbi,
-} from "@/wagmi.generated.ts";
 import { SNS } from "@aws-sdk/client-sns";
-import { APIEmbed, APIEmbedField } from "discord-api-types/v10";
+import { APIEmbed } from "discord-api-types/v10";
 import { createLogger } from "@/utils/logging.js";
-import { zeroHash, AbiEvent, TransactionReceipt } from "viem";
+import { zeroHash, TransactionReceipt } from "viem";
 import { sepoliaClient, baseClient } from "@/viem.ts";
-import { fetchMetadata } from "./metadata.js";
 import { sendDiscordMessage } from "@/discord/pubsub/send.js";
-import { getLastIndexedBlock, setLastIndexedBlock } from "./data.js";
-import { base, sepolia } from "viem/chains";
+import {
+  getLastIndexedBlock,
+  setLastIndexedBlock,
+} from "../../dynamodb/fameIndex.ts";
 import {
   uniswapV2SwapEventAbi,
   transferEvent,
@@ -45,6 +33,11 @@ import { findEvents } from "./utils.ts";
 import { EventType } from "./types.ts";
 import { aggregateLogs, aggregateSwapEvents } from "./aggregate.ts";
 import { CompleteSwapEvent } from "@/webhook/swap/types.ts";
+import {
+  DiscordGuildChannelNotification,
+  getNotifications,
+} from "@/fame-event/dynamodb/discord-guilds-notifications.ts";
+import { NotificationType } from "@/types.ts";
 
 type PromiseType<T extends Promise<any>> = T extends Promise<infer U>
   ? U
@@ -211,7 +204,10 @@ export const handleForClient = async ({
   const transactionEmbeds = new Map<
     `0x${string}`,
     {
-      embeds: APIEmbed[];
+      fameBuyNotifications: APIEmbed[];
+      fameSellNotifications: APIEmbed[];
+      nftMintNotifications: APIEmbed[];
+      nftBurnNotifications: APIEmbed[];
       swapEvent: {
         readonly isArb: boolean;
         readonly nftsMinted: bigint[];
@@ -224,34 +220,66 @@ export const handleForClient = async ({
       };
     }[]
   >();
+  const activeNotifications = await getNotifications();
+  const activeNotificationMap = new Map<
+    string,
+    {
+      guildId: string;
+      channelId: string;
+      notifications: NotificationType[];
+    }
+  >();
+  for (const notification of activeNotifications) {
+    const key = `${notification.guildId}:${notification.channelId}`;
+    const existing = activeNotificationMap.get(key) ?? {
+      guildId: notification.guildId,
+      channelId: notification.channelId,
+      notifications: [],
+    };
+    activeNotificationMap.set(key, {
+      ...existing,
+      notifications: [...existing.notifications, notification.notification],
+    });
+  }
 
   console.log(`Handling ${swapEvents.size} swap events`);
   for (const [_, swapEvent] of swapEventTransactionReceipts) {
-    const embeds: APIEmbed[] = [];
+    const fameBuyNotifications: APIEmbed[] = [];
+    const fameSellNotifications: APIEmbed[] = [];
+    const nftMintNotifications: APIEmbed[] = [];
+    const nftBurnNotifications: APIEmbed[] = [];
     const recipient = swapEvent.receipt.from.toLowerCase() as `0x${string}`;
-    embeds.push(
-      ...(await notifyDiscordSwap({
-        swapEvent,
-        recipient,
-        testnet: !!client.chain.testnet,
-        blockNumber: swapEvent.receipt.blockNumber,
-        tokenAddress,
-        client,
-      }))
-    );
-
-    embeds.push(
+    const { buy, sell } = await notifyDiscordSwap({
+      swapEvent,
+      recipient,
+      testnet: !!client.chain.testnet,
+      blockNumber: swapEvent.receipt.blockNumber,
+      tokenAddress,
+      client,
+      txHash: swapEvent.receipt.transactionHash,
+    });
+    if (buy) {
+      fameBuyNotifications.push(...buy);
+    }
+    if (sell) {
+      fameSellNotifications.push(...sell);
+    }
+    nftMintNotifications.push(
       ...(await notifyDiscordMint({
         testnet: !!client.chain.testnet,
         tokenIds: swapEvent.nftsMinted,
         toAddress: recipient,
+        client,
+        txHash: swapEvent.receipt.transactionHash,
       }))
     );
-    embeds.push(
+    nftBurnNotifications.push(
       ...(await notifyDiscordBurn({
         testnet: !!client.chain.testnet,
         tokenIds: swapEvent.nftsBurned,
         fromAddress: recipient,
+        client,
+        txHash: swapEvent.receipt.transactionHash,
       }))
     );
 
@@ -259,31 +287,67 @@ export const handleForClient = async ({
     transactionEmbeds.set(recipient, [
       ...existing,
       {
-        embeds,
+        fameBuyNotifications,
+        fameSellNotifications,
+        nftMintNotifications,
+        nftBurnNotifications,
         swapEvent,
       },
     ]);
   }
 
   for (const events of transactionEmbeds.values()) {
-    for (const { embeds, swapEvent } of events) {
-      if (embeds.length === 0) {
-        logger.warn(
-          `No embeds for transaction ${swapEvent.receipt.transactionHash}`
+    for (const {
+      swapEvent,
+      fameBuyNotifications,
+      fameSellNotifications,
+      nftMintNotifications,
+      nftBurnNotifications,
+    } of events) {
+      for (const {
+        channelId,
+        notifications,
+      } of activeNotificationMap.values()) {
+        const embeds: APIEmbed[] = [];
+        if (
+          notifications.includes("fame-buy") &&
+          fameBuyNotifications.length > 0
+        ) {
+          embeds.push(...fameBuyNotifications, ...nftMintNotifications);
+        }
+        if (
+          notifications.includes("fame-sell") &&
+          fameSellNotifications.length > 0
+        ) {
+          embeds.push(...fameSellNotifications, ...nftBurnNotifications);
+        }
+        if (
+          notifications.includes("fame-nft-mint") &&
+          !notifications.includes("fame-buy")
+        ) {
+          embeds.push(...nftMintNotifications);
+        }
+        if (
+          notifications.includes("fame-nft-burn") &&
+          !notifications.includes("fame-sell")
+        ) {
+          embeds.push(...nftBurnNotifications);
+        }
+        if (embeds.length === 0) {
+          continue;
+        }
+        logger.info(
+          `Sending ${embeds.length} embeds for transaction ${swapEvent.receipt.transactionHash} for ${channelId}`
         );
-        continue;
+        await sendDiscordMessage({
+          channelId,
+          message: {
+            embeds,
+          },
+          topicArn: DISCORD_MESSAGE_TOPIC_ARN,
+          sns,
+        });
       }
-      logger.info(
-        `Sending ${embeds.length} embeds for transaction ${swapEvent.receipt.transactionHash}`
-      );
-      await sendDiscordMessage({
-        channelId: DISCORD_CHANNEL_ID,
-        message: {
-          embeds,
-        },
-        topicArn: DISCORD_MESSAGE_TOPIC_ARN,
-        sns,
-      });
     }
   }
   console.log(
@@ -296,30 +360,26 @@ export const handleForClient = async ({
 };
 
 export const handler = async () => {
-  console.log("Starting handler");
-  try {
-    const results = await Promise.allSettled([
-      handleForClient({
-        client: sepoliaClient,
-        v2PoolAddress: SEPOLIA_EXAMPLE_WETH_V2_POOL,
-        v3PoolAddress: SEPOLIA_EXAMPLE_WETH_V3_POOL,
-        nftAddress: SEPOLIA_EXAMPLE_NFT_ADDRESS,
-        tokenAddress: SEPOLIA_EXAMPLE_ADDRESS,
-      }),
-      handleForClient({
-        client: baseClient,
-        v2PoolAddress: BASE_FAME_WETH_V2_POOL,
-        v3PoolAddress: BASE_FAME_WETH_V3_POOL,
-        nftAddress: BASE_FAME_NFT_ADDRESS,
-        tokenAddress: BASE_FAME_ADDRESS,
-      }),
-    ]);
-    for (const result of results) {
-      if (result.status === "rejected") {
-        throw result.reason;
-      }
-    }
-  } catch (error) {
-    logger.error("Error handling events", error);
-  }
+  logger.info("Starting handler");
+  await Promise.allSettled([
+    handleForClient({
+      client: sepoliaClient,
+      v2PoolAddress: SEPOLIA_EXAMPLE_WETH_V2_POOL,
+      v3PoolAddress: SEPOLIA_EXAMPLE_WETH_V3_POOL,
+      nftAddress: SEPOLIA_EXAMPLE_NFT_ADDRESS,
+      tokenAddress: SEPOLIA_EXAMPLE_ADDRESS,
+    }).catch((error) => {
+      logger.error("Error handling events for sepolia", error);
+    }),
+    handleForClient({
+      client: baseClient,
+      v2PoolAddress: BASE_FAME_WETH_V2_POOL,
+      v3PoolAddress: BASE_FAME_WETH_V3_POOL,
+      nftAddress: BASE_FAME_NFT_ADDRESS,
+      tokenAddress: BASE_FAME_ADDRESS,
+    }).catch((error) => {
+      logger.error("Error handling events for base", error);
+    }),
+  ]);
+  logger.info("Handler finished");
 };

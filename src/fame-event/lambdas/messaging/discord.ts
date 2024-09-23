@@ -56,10 +56,14 @@ export async function notifyDiscordMint({
   tokenIds,
   toAddress,
   testnet,
+  txHash,
+  client,
 }: {
   tokenIds: bigint[];
   toAddress: `0x${string}`;
   testnet: boolean;
+  txHash: `0x${string}`;
+  client: typeof sepoliaClient | typeof baseClient;
 }) {
   if (tokenIds.length === 0) {
     return [];
@@ -111,6 +115,7 @@ export async function notifyDiscordMint({
       description: `New $FAME Society was minted${
         testnet ? " on testnet" : ""
       }`,
+      url: `${client.chain.blockExplorers.default.url}/tx/${txHash}`,
       image: {
         url:
           tokenIds.length === 1
@@ -126,10 +131,14 @@ export async function notifyDiscordBurn({
   tokenIds,
   fromAddress,
   testnet,
+  txHash,
+  client,
 }: {
   tokenIds: bigint[];
   fromAddress: `0x${string}`;
   testnet: boolean;
+  txHash: `0x${string}`;
+  client: typeof sepoliaClient | typeof baseClient;
 }) {
   if (tokenIds.length === 0) {
     return [];
@@ -181,6 +190,7 @@ export async function notifyDiscordBurn({
       description: `New $FAME Society was burned${
         testnet ? " on testnet" : ""
       }`,
+      url: `${client.chain.blockExplorers.default.url}/tx/${txHash}`,
       image: {
         url:
           tokenIds.length === 1
@@ -196,6 +206,7 @@ const MAX_AMOUNT = parseUnits("1", 18);
 const MIN_AMOUNT = parseUnits("0.001", 18);
 
 export async function notifyDiscordSwap({
+  txHash,
   blockNumber,
   swapEvent,
   recipient,
@@ -203,13 +214,17 @@ export async function notifyDiscordSwap({
   tokenAddress,
   client,
 }: {
+  txHash: `0x${string}`;
   blockNumber: bigint;
   swapEvent: AggregateSwapEvents;
   recipient: `0x${string}`;
   testnet: boolean;
   tokenAddress: `0x${string}`;
   client: typeof sepoliaClient | typeof baseClient;
-}) {
+}): Promise<{
+  buy?: APIEmbed[];
+  sell?: APIEmbed[];
+}> {
   const tokenDelta = swapEvent.tokenBalanceDelta.get(recipient);
   const wethDelta = swapEvent.wethBalanceDelta.get(recipient);
   if (typeof tokenDelta === "undefined" || typeof wethDelta === "undefined") {
@@ -225,7 +240,7 @@ export async function notifyDiscordSwap({
       },
       "No swap event"
     );
-    return [];
+    return {};
   }
   let displayName: string = recipient;
   try {
@@ -288,13 +303,14 @@ export async function notifyDiscordSwap({
       inline: true,
     });
   }
-  if (swapEvent.isArb) {
-    fields.push({
-      name: "arb",
-      value: "true",
-      inline: true,
-    });
-  }
+  // not accurate
+  // if (swapEvent.isArb) {
+  //   fields.push({
+  //     name: "arb",
+  //     value: "true",
+  //     inline: true,
+  //   });
+  // }
   if (swapEvent.nftsMinted.length > 0) {
     fields.push({
       name: "minted",
@@ -326,16 +342,19 @@ export async function notifyDiscordSwap({
     inline: true,
   });
 
-  return [
-    {
-      title: "$FAME BUY",
-      description: `A $FAME Society buy${
-        testnet ? " occurred on testnet" : ""
-      }`,
-      fields,
-      image: {
-        url: "https://dev.fame.support/assets/image/dance.gif",
+  return {
+    [tokenDelta > 0 ? "buy" : "sell"]: [
+      {
+        title: "$FAME BUY",
+        description: `A $FAME Society buy${
+          testnet ? " occurred on testnet" : ""
+        }`,
+        url: `${client.chain.blockExplorers.default.url}/tx/${txHash}`,
+        fields,
+        image: {
+          url: "https://dev.fame.support/assets/image/dance.gif",
+        },
       },
-    },
-  ] as APIEmbed[];
+    ],
+  };
 }

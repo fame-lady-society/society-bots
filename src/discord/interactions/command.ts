@@ -23,7 +23,7 @@ export async function handle(
   for (const handler of handlers) {
     const result = await handler.handler(interaction);
     if (result) {
-      logger.info("Handled interaction");
+      logger.info({ result }, "Handled interaction");
       return result;
     }
   }

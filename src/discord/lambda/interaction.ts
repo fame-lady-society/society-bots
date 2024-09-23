@@ -1,13 +1,25 @@
-import type { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
+import type {
+  APIGatewayProxyEvent,
+  APIGatewayProxyEventV2,
+  APIGatewayProxyResult,
+  APIGatewayProxyResultV2,
+} from "aws-lambda";
 import { sign } from "tweetnacl";
 import { createLogger } from "@/utils/logging.js";
-import { InferredApplicationCommandType } from "../types.js";
-import { handle as pingHandler } from "../interactions/ping.js";
-import { handle as commandHandler } from "../interactions/command.js";
-import type { APIInteraction } from "discord-api-types/v10";
-import { InteractionType } from "discord-api-types/v10";
-import "../commands/immediate.js";
-import { publicKey } from "../config.js";
+import { InferredApplicationCommandType } from "../types.ts";
+import { handle as pingHandler } from "../interactions/ping.ts";
+import { handle as commandHandler } from "../interactions/command.ts";
+import type {
+  APIInteraction,
+  APIInteractionResponse,
+  APIInteractionResponseUpdateMessage,
+} from "discord-api-types/v10";
+import {
+  InteractionResponseType,
+  InteractionType,
+} from "discord-api-types/v10";
+import "../commands/immediate.ts";
+import { publicKey } from "../config.ts";
 
 /**
  *
@@ -23,8 +35,8 @@ const logger = createLogger({
 });
 
 export const handler = async (
-  event: APIGatewayProxyEvent
-): Promise<APIGatewayProxyResult> => {
+  event: APIGatewayProxyEventV2
+): Promise<APIGatewayProxyResultV2> => {
   try {
     logger.info({ event }, "Received event");
     const PUBLIC_KEY = publicKey.get();
@@ -82,8 +94,19 @@ export const handler = async (
       case InteractionType.Ping:
         return pingHandler(body);
       case InteractionType.ApplicationCommand:
-        return commandHandler(body as InferredApplicationCommandType);
+        // return {
+        //   statusCode: 200,
+        //   body: JSON.stringify({
+        //     type: InteractionResponseType.DeferredChannelMessageWithSource,
+        //   } as APIInteractionResponse),
+        // };
+        const response = await commandHandler(
+          body as InferredApplicationCommandType
+        );
+        logger.info({ response }, "response");
+        return response;
       default:
+        logger.error({ body }, "unknown interaction type");
         return {
           statusCode: 400,
           body: JSON.stringify({

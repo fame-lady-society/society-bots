@@ -12,15 +12,15 @@ import { IBucket } from "aws-cdk-lib/aws-s3";
 
 export interface Props {
   readonly domain: [string, string] | string;
-  readonly imageHttpApi: IHttpApi;
+  readonly httpApi: IHttpApi;
   readonly assetStorageBucket: IBucket;
 }
 
-export class ImageDistribution extends Construct {
+export class Distribution extends Construct {
   constructor(scope: Construct, id: string, props: Props) {
     super(scope, id);
 
-    const { domain, imageHttpApi } = props;
+    const { domain, httpApi } = props;
 
     const domains = domain instanceof Array ? domain : [domain];
     const domainName = domains.join(".");
@@ -41,18 +41,19 @@ export class ImageDistribution extends Construct {
     const distribution = new cloudfront.Distribution(this, "Distribution", {
       defaultBehavior: {
         origin: new cloudfrontorigins.HttpOrigin(
-          `${imageHttpApi.apiId}.execute-api.${
+          `${httpApi.apiId}.execute-api.${
             cdk.Stack.of(this).region
           }.amazonaws.com`
         ),
-        allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
+        allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
       },
       additionalBehaviors: {
         "/assets/*": {
           origin: new cloudfrontorigins.S3Origin(props.assetStorageBucket),
           allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
-          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          viewerProtocolPolicy:
+            cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         },
       },
       domainNames: [domainName],

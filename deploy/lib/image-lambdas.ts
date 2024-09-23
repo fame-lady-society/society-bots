@@ -42,7 +42,8 @@ function compile(entrypoint: string, options?: BuildOptions) {
 }
 
 export class ImageLambdas extends Construct {
-  declare readonly httpApi: apigw2.HttpApi;
+  declare readonly imageThumbLambda: lambda.IFunction;
+  declare readonly imageMosaicLambda: lambda.IFunction;
   declare readonly assetStorageBucket: s3.Bucket;
   constructor(scope: Construct, id: string, props: Props) {
     super(scope, id);
@@ -105,36 +106,8 @@ export class ImageLambdas extends Construct {
     });
     storageBucket.grantReadWrite(mosaicHandler);
 
-    const httpApi = new apigw2.HttpApi(this, "FameImage", {
-      description: "This service accepts webhooks responses from alchemy.",
-      defaultDomainMapping: {
-        domainName: new apigw2.DomainName(this, "DomainName", {
-          domainName: `thumb.${domainName}`,
-          certificate: new acm.Certificate(this, "certificate", {
-            domainName: `thumb.${domainName}`,
-            validation: acm.CertificateValidation.fromDns(hostedZone),
-          }),
-        }),
-      },
-    });
-    httpApi.addRoutes({
-      path: "/thumb/{tokenId}",
-      methods: [apigw2.HttpMethod.GET, apigw2.HttpMethod.OPTIONS],
-      integration: new HttpLambdaIntegration("thumb", thumbHandler),
-    });
-
-    httpApi.addRoutes({
-      path: "/mosaic/{tokenId}",
-      methods: [apigw2.HttpMethod.GET, apigw2.HttpMethod.OPTIONS],
-      integration: new HttpLambdaIntegration("mosaic", mosaicHandler),
-    });
-
-    const apiUrl = cdk.Fn.select(1, cdk.Fn.split("//", httpApi.apiEndpoint));
-    new cdk.CfnOutput(this, "ApiUrl", {
-      value: apiUrl,
-    });
-
-    this.httpApi = httpApi;
     this.assetStorageBucket = storageBucket;
+    this.imageThumbLambda = thumbHandler;
+    this.imageMosaicLambda = mosaicHandler;
   }
 }

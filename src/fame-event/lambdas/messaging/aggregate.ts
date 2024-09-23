@@ -10,14 +10,14 @@ import {
   parseUnits,
   zeroAddress,
 } from "viem";
-import { baseClient, mainnetClient, sepoliaClient } from "../../viem.ts";
+import { baseClient, mainnetClient, sepoliaClient } from "../../../viem.ts";
 import { base } from "viem/chains";
 import {
   chainlinkUsdcEthAbi,
   chainlinkUsdcEthAddress,
   uniswapV3PoolAbi,
   uniswapV2PoolAbi,
-} from "../../wagmi.generated.ts";
+} from "../../../wagmi.generated.ts";
 import { Token, WETH9 } from "@uniswap/sdk-core";
 import { FeeAmount, Pool } from "@uniswap/v3-sdk";
 import {
@@ -25,9 +25,9 @@ import {
   BASE_FAME_NFT_ADDRESS,
   BASE_FAME_WETH_V2_POOL,
   BASE_FAME_WETH_V3_POOL,
-} from "../../constants.ts";
+} from "../../../constants.ts";
 import { CompleteSwapEvent } from "@/webhook/swap/types.ts";
-import { bigIntToStringJsonFormat } from "../../utils/json.ts";
+import { bigIntToStringJsonFormat } from "../../../utils/json.ts";
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 // const TOTAL_SUPPLY = parseUnits("888000000", 18);

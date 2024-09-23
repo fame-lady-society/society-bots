@@ -4,7 +4,7 @@ import {
   GetCommand,
   PutCommand,
 } from "@aws-sdk/lib-dynamodb";
-import { DYNAMODB_FAME_INDEX_TABLE_NAME } from "./config.js";
+import { DYNAMODB_FAME_INDEX_TABLE_NAME } from "../lambdas/messaging/config.ts";
 
 export const defaultDb = DynamoDBDocumentClient.from(
   new DynamoDBClient({

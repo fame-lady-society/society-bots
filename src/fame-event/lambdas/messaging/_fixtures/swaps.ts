@@ -1,4 +1,4 @@
-import { convertStringObjectToBigInt } from "../../../utils/json.ts";
+import { convertStringObjectToBigInt } from "../../../../utils/json.ts";
 
 export const swapWithNftMintLogs = (
   [
