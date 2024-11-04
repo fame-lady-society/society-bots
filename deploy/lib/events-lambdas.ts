@@ -87,6 +87,16 @@ export class EventLambdas extends Construct {
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
     });
 
+    const lastWrapperEventBlock = new dynamodb.Table(
+      this,
+      "LastWrapperEventBlock",
+      {
+        partitionKey: { name: "key", type: dynamodb.AttributeType.STRING },
+        tableClass: dynamodb.TableClass.STANDARD,
+        billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      }
+    );
+
     const discordNotificationsTable = new dynamodb.Table(
       this,
       "DiscordNotifications",
@@ -178,6 +188,34 @@ export class EventLambdas extends Construct {
     lastEventBlock.grantReadWriteData(fameEventHandler);
     discordNotificationsTable.grantReadWriteData(fameEventHandler);
     deferredMessageTopic.grantPublish(fameEventHandler);
+
+
+    const wrapEventCodeDir = compile(
+      path.join(__dirname, "../../src/lambda/fls-wrapper-event/index.ts")
+    );
+
+    const wrapEventHandler = new lambda.Function(this, "WrapEvent", {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      code: lambda.Code.fromAsset(wrapEventCodeDir),
+      handler: "index.handler",
+      timeout: cdk.Duration.seconds(60),
+      memorySize: 512,
+      environment: {
+        DISCORD_CHANNEL_ID: discordChannelId,
+        DISCORD_MESSAGE_TOPIC_ARN: deferredMessageTopic.topicArn,
+        DYNAMODB_REGION: cdk.Stack.of(this).region,
+        DYNAMODB_TABLE: lastWrapperEventBlock.tableName,
+        LOG_LEVEL: "debug",
+        DISCORD_APPLICATION_ID: discordAppId,
+        DISCORD_PUBLIC_KEY: discordPublicKey,
+        DISCORD_BOT_TOKEN: discordBotToken,
+        SEPOLIA_RPCS_JSON: sepoliaRpcsJson,
+        MAINNET_RPCS_JSON: mainnetRpcsJson,
+      },
+    });
+    lastWrapperEventBlock.grantReadWriteData(wrapEventHandler);
+    deferredMessageTopic.grantPublish(wrapEventHandler);
+
     const fameEventScheduleRule = new events.Rule(
       this,
       "fameEventScheduleRule",
@@ -187,6 +225,17 @@ export class EventLambdas extends Construct {
     );
     fameEventScheduleRule.addTarget(
       new eventTargets.LambdaFunction(fameEventHandler)
+    );
+
+    const wrapEventScheduleRule = new events.Rule(
+      this,
+      "wrapEventScheduleRule",
+      {
+        schedule: events.Schedule.rate(cdk.Duration.minutes(6)),
+      }
+    );
+    wrapEventScheduleRule.addTarget(
+      new eventTargets.LambdaFunction(wrapEventHandler)
     );
 
     new cdk.CfnOutput(this, "LogHandlerQueueArn", {
@@ -203,6 +252,10 @@ export class EventLambdas extends Construct {
 
     new cdk.CfnOutput(this, "DiscordNotificationsTableName", {
       value: discordNotificationsTable.tableName,
+    });
+
+    new cdk.CfnOutput(this, "LastWrapperEventBlockTableName", {
+      value: lastWrapperEventBlock.tableName,
     });
 
     this.notificationLambda = interactionHandler;

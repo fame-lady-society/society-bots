@@ -5,18 +5,15 @@ import {
   GetCommand,
   PutCommand,
 } from "@aws-sdk/lib-dynamodb";
-import {
-  wrappedNftAddress,
-  fameLadySocietyABI,
-  fameLadySocietyAddress,
-} from "./generated";
+
 import { SNS } from "@aws-sdk/client-sns";
 import { APIEmbedField } from "discord-api-types/v10";
-import { sendDiscordMessage } from "@0xflick/backend/discord/send";
 import { createLogger } from "@/utils/logging.js";
-import { zeroHash, AbiEvent } from "viem";
-import { sepoliaClient, mainnetClient } from "./viem";
-import { customDescription, fetchMetadata } from "./metadata";
+import { zeroHash, AbiEvent, GetEnsNameReturnType } from "viem";
+import { customDescription, fetchMetadata } from "./metadata.js";
+import { sendDiscordMessage } from "@/discord/pubsub/send.ts";
+import { fameLadySocietyAbi, fameLadySocietyAddress, wrappedNftAddress } from "@/wagmi.generated.ts";
+import { mainnetClient, sepoliaClient } from "@/viem.ts";
 
 type PromiseType<T extends Promise<any>> = T extends Promise<infer U>
   ? U
@@ -136,7 +133,7 @@ async function notifyDiscordMetadataUpdate({
             description ?? `A lady was named${testnet ? " on Sepolia" : ""}`,
           fields,
           image: {
-            url: `https://fls-www.vercel.app/${network}/og/token/${tokenId}`,
+            url: `https://fls-www.vercel.app/${testnet ? "sepolia" : "mainnet"}/og/token/${tokenId}`,
           },
         },
       ],
@@ -197,9 +194,8 @@ async function notifyDiscordSingleToken({
       embeds: [
         {
           title: "#itsawrap",
-          description: `A new Fame Lady Society was wrapped${
-            testnet ? " on Sepolia" : ""
-          }`,
+          description: `A new Fame Lady Society was wrapped${testnet ? " on Sepolia" : ""
+            }`,
           image: {
             url: `https://img.fameladysociety.com/thumb/${tokenId}`,
           },
@@ -231,7 +227,7 @@ async function notifyDiscordMultipleTokens({
   discordMessageTopicArn: string;
   sns: SNS;
 }) {
-  let ensName: string;
+  let ensName: GetEnsNameReturnType;
   try {
     ensName = await client.getEnsName({ address: toAddress });
   } catch (e) {
@@ -262,17 +258,23 @@ async function notifyDiscordMultipleTokens({
     value: wrappedCount.toString(),
     inline: true,
   });
+
+  const url = `https://img.fameladysociety.com/mosaic/${tokenIds
+    .map((t) => t.toString())
+    .join(",")}`;
+
+  logger.info("Sending discord message with url", url);
+
   await sendDiscordMessage({
     channelId,
     message: {
       embeds: [
         {
           title: "#itsawrap",
-          description: `A Fame Lady Society metadata was updated${
-            testnet ? " on Sepolia" : ""
-          }`,
+          description: `New Fame Lady Society tokens were wrapped${testnet ? " on Sepolia" : ""
+            }`,
           image: {
-            url: `https://img.fameladysociety.com/thumb/${tokenId}`,
+            url,
           },
           fields,
         },
@@ -319,224 +321,224 @@ const metadataEvent = {
 } as const;
 
 export const handler = async () =>
-  // event: EventBridgeEvent<"check-fls-wrap", void>
-  {
-    // Get last bock read
-    const [lastBlockSepoliaResponse, lastBlockMainnetResponse] =
-      await Promise.all([
-        db.send(
-          new GetCommand({
-            TableName: process.env.DYNAMODB_TABLE,
-            Key: {
-              key: "lastBlockSepolia",
-            },
-          })
-        ),
-        db.send(
-          new GetCommand({
-            TableName: process.env.DYNAMODB_TABLE,
-            Key: {
-              key: "lastBlockMainnet",
-            },
-          })
-        ),
-      ]);
-
-    const [latestBlockSepolia, latestBlockMainnet] = await Promise.all([
-      sepoliaClient.getBlockNumber(),
-      mainnetClient.getBlockNumber(),
-    ]);
-
-    const lastBlockSepolia = BigInt(
-      lastBlockSepoliaResponse.Item?.value ?? latestBlockSepolia
-    );
-    const lastBlockMainnet = BigInt(
-      lastBlockMainnetResponse.Item?.value ?? latestBlockMainnet
-    );
-
-    // Get events from last block read
-    const [
-      sepoliaTransferEvents,
-      mainnetTransferEvents,
-      sepoliaMetadataEvents,
-      mainnetMetadataEvents,
-    ] = await Promise.all([
-      findEvents<typeof transferEvent>(
-        sepoliaClient,
-        wrappedNftAddress[5],
-        transferEvent,
-        lastBlockSepolia,
-        latestBlockSepolia
-      ).then((events) => {
-        logger.info(`Found ${events.length} events on Sepolia`);
-        return events.filter((event) => event.args.from === zeroHash);
-      }),
-      findEvents<typeof transferEvent>(
-        mainnetClient,
-        fameLadySocietyAddress[1],
-        transferEvent,
-        lastBlockMainnet,
-        latestBlockMainnet
-      ).then((events) => {
-        logger.info(`Found ${events.length} events on Mainnet`);
-        return events.filter((event) => event.args.from === zeroHash);
-      }),
-      findEvents<typeof metadataEvent>(
-        sepoliaClient,
-        wrappedNftAddress[5],
-        metadataEvent,
-        lastBlockSepolia,
-        latestBlockSepolia
-      ),
-      findEvents<typeof metadataEvent>(
-        mainnetClient,
-        fameLadySocietyAddress[1],
-        metadataEvent,
-        lastBlockMainnet,
-        latestBlockMainnet
-      ),
-    ]);
-
-    // Only interested in events that have from address 0x0 (new mints)
-    // const filteredEvents = events.filter((event) => {
-    //   return event.args.from === zeroHash;
-    // });
-
-    // Notify discord
-    const sns = new SNS({});
-    // Group events by to address
-    const sepoliaEventsByTo = new Map<
-      `0x${string}`,
-      PromiseType<ReturnType<typeof findEvents<typeof transferEvent>>>
-    >();
-    const mainnetEventsByTo = new Map<
-      `0x${string}`,
-      PromiseType<ReturnType<typeof findEvents<typeof transferEvent>>>
-    >();
-    for (const event of sepoliaTransferEvents) {
-      const events = sepoliaEventsByTo.get(event.args.to) || [];
-      events.push(event);
-      sepoliaEventsByTo.set(event.args.to, events);
-    }
-    for (const event of mainnetTransferEvents) {
-      const events = mainnetEventsByTo.get(event.args.to) || [];
-      events.push(event);
-      mainnetEventsByTo.set(event.args.to, events);
-    }
-
-    const wrappedCount =
-      sepoliaEventsByTo.size || mainnetEventsByTo.size
-        ? await mainnetClient.readContract({
-            address: fameLadySocietyAddress[1],
-            abi: fameLadySocietyABI,
-            functionName: "balanceOf",
-            args: [fameLadySocietyAddress[1]],
-          })
-        : 0n;
-
-    // Now push out the events
-    for (const [to, events] of sepoliaEventsByTo.entries()) {
-      const tokenIds = events.map(({ args }) => args.tokenId);
-      if (tokenIds.length === 1) {
-        await notifyDiscordSingleToken({
-          tokenId: tokenIds[0],
-          wrappedCount: 0n, // fake
-          toAddress: to,
-          channelId: process.env.DISCORD_CHANNEL_ID,
-          client: sepoliaClient,
-          discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN,
-          testnet: true,
-          sns,
-        });
-      } else {
-        await notifyDiscordMultipleTokens({
-          tokenIds,
-          wrappedCount: 0n, // fake
-          toAddress: to,
-          channelId: process.env.DISCORD_CHANNEL_ID,
-          client: sepoliaClient,
-          testnet: true,
-          discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN,
-          sns,
-        });
-      }
-    }
-
-    for (const [to, events] of mainnetEventsByTo.entries()) {
-      const tokenIds = events.map(({ args }) => args.tokenId);
-      if (tokenIds.length === 1) {
-        await notifyDiscordSingleToken({
-          tokenId: tokenIds[0],
-          wrappedCount,
-          toAddress: to,
-          channelId: process.env.DISCORD_CHANNEL_ID,
-          client: mainnetClient,
-          discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN,
-          testnet: false,
-          sns,
-        });
-      } else {
-        await notifyDiscordMultipleTokens({
-          tokenIds,
-          wrappedCount,
-          toAddress: to,
-          channelId: process.env.DISCORD_CHANNEL_ID,
-          client: mainnetClient,
-          testnet: false,
-          discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN,
-          sns,
-        });
-      }
-    }
-
-    for (const event of sepoliaMetadataEvents) {
-      const {
-        args: { _tokenId: tokenId },
-      } = event;
-      await notifyDiscordMetadataUpdate({
-        address: wrappedNftAddress[5],
-        tokenId,
-        channelId: process.env.DISCORD_CHANNEL_ID,
-        client: sepoliaClient,
-        testnet: true,
-        discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN,
-        sns,
-      });
-    }
-
-    for (const event of mainnetMetadataEvents) {
-      const {
-        args: { _tokenId: tokenId },
-      } = event;
-      await notifyDiscordMetadataUpdate({
-        address: fameLadySocietyAddress[1],
-        tokenId,
-        channelId: process.env.DISCORD_CHANNEL_ID,
-        client: mainnetClient,
-        testnet: false,
-        discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN,
-        sns,
-      });
-    }
-
+// event: EventBridgeEvent<"check-fls-wrap", void>
+{
+  // Get last bock read
+  const [lastBlockSepoliaResponse, lastBlockMainnetResponse] =
     await Promise.all([
       db.send(
-        new PutCommand({
+        new GetCommand({
           TableName: process.env.DYNAMODB_TABLE,
-          Item: {
+          Key: {
             key: "lastBlockSepolia",
-            value: Number(latestBlockSepolia + 1n),
           },
         })
       ),
       db.send(
-        new PutCommand({
+        new GetCommand({
           TableName: process.env.DYNAMODB_TABLE,
-          Item: {
+          Key: {
             key: "lastBlockMainnet",
-            value: Number(latestBlockMainnet + 1n),
           },
         })
       ),
     ]);
-  };
+
+  const [latestBlockSepolia, latestBlockMainnet] = await Promise.all([
+    sepoliaClient.getBlockNumber(),
+    mainnetClient.getBlockNumber(),
+  ]);
+
+  const lastBlockSepolia = BigInt(
+    lastBlockSepoliaResponse.Item?.value ?? latestBlockSepolia
+  );
+  const lastBlockMainnet = BigInt(
+    lastBlockMainnetResponse.Item?.value ?? latestBlockMainnet
+  );
+
+  // Get events from last block read
+  const [
+    sepoliaTransferEvents,
+    mainnetTransferEvents,
+    sepoliaMetadataEvents,
+    mainnetMetadataEvents,
+  ] = await Promise.all([
+    findEvents<typeof transferEvent>(
+      sepoliaClient,
+      wrappedNftAddress[11155111],
+      transferEvent,
+      lastBlockSepolia,
+      latestBlockSepolia
+    ).then((events) => {
+      logger.info(`Found ${events.length} events on Sepolia`);
+      return events.filter((event) => event.args.from === zeroHash);
+    }),
+    findEvents<typeof transferEvent>(
+      mainnetClient,
+      fameLadySocietyAddress[1],
+      transferEvent,
+      lastBlockMainnet,
+      latestBlockMainnet
+    ).then((events) => {
+      logger.info(`Found ${events.length} events on Mainnet`);
+      return events.filter((event) => event.args.from === zeroHash);
+    }),
+    findEvents<typeof metadataEvent>(
+      sepoliaClient,
+      wrappedNftAddress[11155111],
+      metadataEvent,
+      lastBlockSepolia,
+      latestBlockSepolia
+    ),
+    findEvents<typeof metadataEvent>(
+      mainnetClient,
+      fameLadySocietyAddress[1],
+      metadataEvent,
+      lastBlockMainnet,
+      latestBlockMainnet
+    ),
+  ]);
+
+  // Only interested in events that have from address 0x0 (new mints)
+  // const filteredEvents = events.filter((event) => {
+  //   return event.args.from === zeroHash;
+  // });
+
+  // Notify discord
+  const sns = new SNS({});
+  // Group events by to address
+  const sepoliaEventsByTo = new Map<
+    `0x${string}`,
+    PromiseType<ReturnType<typeof findEvents<typeof transferEvent>>>
+  >();
+  const mainnetEventsByTo = new Map<
+    `0x${string}`,
+    PromiseType<ReturnType<typeof findEvents<typeof transferEvent>>>
+  >();
+  for (const event of sepoliaTransferEvents) {
+    const events = sepoliaEventsByTo.get(event.args.to!) || [];
+    events.push(event);
+    sepoliaEventsByTo.set(event.args.to!, events);
+  }
+  for (const event of mainnetTransferEvents) {
+    const events = mainnetEventsByTo.get(event.args.to!) || [];
+    events.push(event);
+    mainnetEventsByTo.set(event.args.to!, events);
+  }
+
+  const wrappedCount =
+    sepoliaEventsByTo.size || mainnetEventsByTo.size
+      ? await mainnetClient.readContract({
+        address: fameLadySocietyAddress[1],
+        abi: fameLadySocietyAbi,
+        functionName: "balanceOf",
+        args: [fameLadySocietyAddress[1]],
+      })
+      : 0n;
+
+  // Now push out the events
+  for (const [to, events] of sepoliaEventsByTo.entries()) {
+    const tokenIds = events.map(({ args }) => args.tokenId!);
+    if (tokenIds.length === 1) {
+      await notifyDiscordSingleToken({
+        tokenId: tokenIds[0],
+        wrappedCount: 0n, // fake
+        toAddress: to,
+        channelId: process.env.DISCORD_CHANNEL_ID!,
+        client: sepoliaClient,
+        discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
+        testnet: true,
+        sns,
+      });
+    } else {
+      await notifyDiscordMultipleTokens({
+        tokenIds,
+        wrappedCount: 0n, // fake
+        toAddress: to,
+        channelId: process.env.DISCORD_CHANNEL_ID!,
+        client: sepoliaClient,
+        testnet: true,
+        discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
+        sns,
+      });
+    }
+  }
+
+  for (const [to, events] of mainnetEventsByTo.entries()) {
+    const tokenIds = events.map(({ args }) => args.tokenId!);
+    if (tokenIds.length === 1) {
+      await notifyDiscordSingleToken({
+        tokenId: tokenIds[0],
+        wrappedCount,
+        toAddress: to,
+        channelId: process.env.DISCORD_CHANNEL_ID!,
+        client: mainnetClient,
+        discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
+        testnet: false,
+        sns,
+      });
+    } else {
+      await notifyDiscordMultipleTokens({
+        tokenIds,
+        wrappedCount,
+        toAddress: to,
+        channelId: process.env.DISCORD_CHANNEL_ID!,
+        client: mainnetClient,
+        testnet: false,
+        discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
+        sns,
+      });
+    }
+  }
+
+  for (const event of sepoliaMetadataEvents) {
+    const {
+      args: { _tokenId: tokenId },
+    } = event;
+    await notifyDiscordMetadataUpdate({
+      address: wrappedNftAddress[11155111],
+      tokenId: tokenId!,
+      channelId: process.env.DISCORD_CHANNEL_ID!,
+      client: sepoliaClient,
+      testnet: true,
+      discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
+      sns,
+    });
+  }
+
+  for (const event of mainnetMetadataEvents) {
+    const {
+      args: { _tokenId: tokenId },
+    } = event;
+    await notifyDiscordMetadataUpdate({
+      address: fameLadySocietyAddress[1],
+      tokenId: tokenId!,
+      channelId: process.env.DISCORD_CHANNEL_ID!,
+      client: mainnetClient,
+      testnet: false,
+      discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
+      sns,
+    });
+  }
+
+  await Promise.all([
+    db.send(
+      new PutCommand({
+        TableName: process.env.DYNAMODB_TABLE,
+        Item: {
+          key: "lastBlockSepolia",
+          value: Number(latestBlockSepolia + 1n),
+        },
+      })
+    ),
+    db.send(
+      new PutCommand({
+        TableName: process.env.DYNAMODB_TABLE,
+        Item: {
+          key: "lastBlockMainnet",
+          value: Number(latestBlockMainnet + 1n),
+        },
+      })
+    ),
+  ]);
+};

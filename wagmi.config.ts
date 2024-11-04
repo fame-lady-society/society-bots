@@ -23,6 +23,12 @@ export default defineConfig({
             [sepolia.id]: "0x6261bC8dc29CfaDb1EDEEB1dEE9114d876DbFcD5",
           },
         },
+        {
+          name: "WrappedNFT",
+          address: {
+            [sepolia.id]: "0x9EFf37047657a0f50b989165b48012834eDB2212",
+          },
+        },
       ],
     }),
     etherscan({
