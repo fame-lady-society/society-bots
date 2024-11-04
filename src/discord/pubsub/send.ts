@@ -3,7 +3,9 @@ import type { RESTPostAPIChannelMessageJSONBody } from "discord-api-types/v10";
 import { IChannelMessage } from "./messages.ts";
 import { createLogger } from "@/utils/logging.ts";
 
-const logger = createLogger("discord:pubsub:send");
+const logger = createLogger({
+  name: "discord:pubsub:send",
+});
 
 export async function sendDiscordMessage({
   topicArn,
