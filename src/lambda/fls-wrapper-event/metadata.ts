@@ -1,7 +1,6 @@
+import { IMetadata } from "@/metadata.ts";
+import { mainnetClient, sepoliaClient } from "@/viem.ts";
 import { erc721Abi } from "viem";
-import { mainnetClient, sepoliaClient } from "./viem";
-import { fetchJson } from "./ipfs";
-import { IMetadata } from "@0xflick/models";
 
 export async function fetchMetadata({
   client,
@@ -20,10 +19,9 @@ export async function fetchMetadata({
       args: [BigInt(tokenId)],
     })
     .then(async (tokenUri) => {
-      const metadata = await fetchJson<IMetadata>({
-        cid: tokenUri.replace("ipfs://", ""),
-      });
-      return metadata;
+      const response = await fetch(tokenUri);
+      const metadata = await response.json();
+      return metadata as IMetadata;
     });
 }
 
