@@ -62,6 +62,7 @@ async function findEvents<E extends AbiEvent>(
     fromBlock,
     toBlock,
     event,
+    strict: true,
   });
 
   return events.map((event) => {
@@ -416,14 +417,14 @@ export const handler = async () =>
     PromiseType<ReturnType<typeof findEvents<typeof transferEvent>>>
   >();
   for (const event of sepoliaTransferEvents) {
-    const events = sepoliaEventsByTo.get(event.args.to!) || [];
+    const events = sepoliaEventsByTo.get(event.args.to) || [];
     events.push(event);
-    sepoliaEventsByTo.set(event.args.to!, events);
+    sepoliaEventsByTo.set(event.args.to, events);
   }
   for (const event of mainnetTransferEvents) {
-    const events = mainnetEventsByTo.get(event.args.to!) || [];
+    const events = mainnetEventsByTo.get(event.args.to) || [];
     events.push(event);
-    mainnetEventsByTo.set(event.args.to!, events);
+    mainnetEventsByTo.set(event.args.to, events);
   }
 
   const wrappedCount =
@@ -438,7 +439,7 @@ export const handler = async () =>
 
   // Now push out the events
   for (const [to, events] of sepoliaEventsByTo.entries()) {
-    const tokenIds = events.map(({ args }) => args.tokenId!);
+    const tokenIds = events.map(({ args }) => args.tokenId);
     if (tokenIds.length === 1) {
       await notifyDiscordSingleToken({
         tokenId: tokenIds[0],
@@ -497,7 +498,7 @@ export const handler = async () =>
     } = event;
     await notifyDiscordMetadataUpdate({
       address: wrappedNftAddress[11155111],
-      tokenId: tokenId!,
+      tokenId,
       channelId: process.env.DISCORD_CHANNEL_ID!,
       client: sepoliaClient,
       testnet: true,
@@ -512,7 +513,7 @@ export const handler = async () =>
     } = event;
     await notifyDiscordMetadataUpdate({
       address: fameLadySocietyAddress[1],
-      tokenId: tokenId!,
+      tokenId,
       channelId: process.env.DISCORD_CHANNEL_ID!,
       client: mainnetClient,
       testnet: false,
