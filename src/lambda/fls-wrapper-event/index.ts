@@ -381,7 +381,7 @@ export const handler = async () =>
       lastBlockMainnet,
       latestBlockMainnet
     ).then((events) => {
-      logger.info(`Found ${events.length} events on Mainnet`);
+      logger.info({ events }, `Found ${events.length} events on Mainnet`);
       return events.filter((event) => event.args.from === zeroHash);
     }),
     findEvents<typeof metadataEvent>(
