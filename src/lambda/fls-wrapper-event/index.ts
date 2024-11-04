@@ -9,7 +9,7 @@ import {
 import { SNS } from "@aws-sdk/client-sns";
 import { APIEmbedField } from "discord-api-types/v10";
 import { createLogger } from "@/utils/logging.js";
-import { zeroHash, AbiEvent, GetEnsNameReturnType } from "viem";
+import { AbiEvent, GetEnsNameReturnType, zeroAddress } from "viem";
 import { customDescription, fetchMetadata } from "./metadata.js";
 import { sendDiscordMessage } from "@/discord/pubsub/send.ts";
 import { fameLadySocietyAbi, fameLadySocietyAddress, wrappedNftAddress } from "@/wagmi.generated.ts";
@@ -373,7 +373,7 @@ export const handler = async () =>
       latestBlockSepolia
     ).then((events) => {
       logger.info(`Found ${events.length} events on Sepolia`);
-      return events.filter((event) => event.args.from === zeroHash);
+      return events.filter((event) => event.args.from === zeroAddress);
     }),
     findEvents<typeof transferEvent>(
       mainnetClient,
@@ -383,7 +383,7 @@ export const handler = async () =>
       latestBlockMainnet
     ).then((events) => {
       logger.info({ events: JSON.parse(JSON.stringify(events, bigIntToStringJsonFormat)) }, `Found ${events.length} events on Mainnet`);
-      return events.filter((event) => event.args.from === zeroHash);
+      return events.filter((event) => event.args.from === zeroAddress);
     }),
     findEvents<typeof metadataEvent>(
       sepoliaClient,
