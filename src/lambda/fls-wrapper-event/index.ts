@@ -14,6 +14,7 @@ import { customDescription, fetchMetadata } from "./metadata.js";
 import { sendDiscordMessage } from "@/discord/pubsub/send.ts";
 import { fameLadySocietyAbi, fameLadySocietyAddress, wrappedNftAddress } from "@/wagmi.generated.ts";
 import { mainnetClient, sepoliaClient } from "@/viem.ts";
+import { bigIntToStringJsonFormat } from "@/utils/json.ts";
 
 type PromiseType<T extends Promise<any>> = T extends Promise<infer U>
   ? U
@@ -381,7 +382,7 @@ export const handler = async () =>
       lastBlockMainnet,
       latestBlockMainnet
     ).then((events) => {
-      logger.info({ events }, `Found ${events.length} events on Mainnet`);
+      logger.info({ events: JSON.parse(JSON.stringify(events, bigIntToStringJsonFormat)) }, `Found ${events.length} events on Mainnet`);
       return events.filter((event) => event.args.from === zeroHash);
     }),
     findEvents<typeof metadataEvent>(
