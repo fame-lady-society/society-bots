@@ -51,6 +51,14 @@ const db = DynamoDBDocumentClient.from(
   }
 );
 
+async function redirectFromGet(url: string) {
+  const response = await fetch(url, { redirect: "manual" });
+  if (response.status === 302) {
+    return response.headers.get("location") ?? url;
+  }
+  return url;
+}
+
 async function findEvents<E extends AbiEvent>(
   client: typeof sepoliaClient | typeof mainnetClient,
   contractAddress: `0x${string}`,
@@ -135,7 +143,9 @@ async function notifyDiscordMetadataUpdate({
             description ?? `A lady was named${testnet ? " on Sepolia" : ""}`,
           fields,
           image: {
-            url: `https://fls-www.vercel.app/${testnet ? "sepolia" : "mainnet"}/og/token/${tokenId}`,
+            url: await redirectFromGet(
+              `https://fls-www.vercel.app/${testnet ? "sepolia" : "mainnet"}/og/token/${tokenId}`
+            ),
           },
         },
       ],
@@ -199,7 +209,9 @@ async function notifyDiscordSingleToken({
           description: `A new Fame Lady Society was wrapped${testnet ? " on Sepolia" : ""
             }`,
           image: {
-            url: `https://img.fameladysociety.com/thumb/${tokenId}`,
+            url: await redirectFromGet(
+              `https://img.fameladysociety.com/thumb/${tokenId}`
+            ),
           },
           fields,
         },
@@ -276,7 +288,7 @@ async function notifyDiscordMultipleTokens({
           description: `New Fame Lady Society tokens were wrapped${testnet ? " on Sepolia" : ""
             }`,
           image: {
-            url,
+            url: await redirectFromGet(url),
           },
           fields,
         },
@@ -401,10 +413,7 @@ export const handler = async () =>
     ),
   ]);
 
-  // Only interested in events that have from address 0x0 (new mints)
-  // const filteredEvents = events.filter((event) => {
-  //   return event.args.from === zeroHash;
-  // });
+  const promises: Promise<void>[] = [];
 
   // Notify discord
   const sns = new SNS({});
@@ -442,18 +451,21 @@ export const handler = async () =>
   for (const [to, events] of sepoliaEventsByTo.entries()) {
     const tokenIds = events.map(({ args }) => args.tokenId);
     if (tokenIds.length === 1) {
-      await notifyDiscordSingleToken({
-        tokenId: tokenIds[0],
-        wrappedCount: 0n, // fake
-        toAddress: to,
-        channelId: process.env.DISCORD_CHANNEL_ID!,
-        client: sepoliaClient,
-        discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
-        testnet: true,
-        sns,
-      });
+      promises.push(
+        notifyDiscordSingleToken({
+          tokenId: tokenIds[0],
+          wrappedCount: 0n, // fake
+          toAddress: to,
+          channelId: process.env.DISCORD_CHANNEL_ID!,
+          client: sepoliaClient,
+          discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
+          testnet: true,
+          sns,
+        })
+      );
     } else {
-      await notifyDiscordMultipleTokens({
+      promises.push(
+        notifyDiscordMultipleTokens({
         tokenIds,
         wrappedCount: 0n, // fake
         toAddress: to,
@@ -461,26 +473,30 @@ export const handler = async () =>
         client: sepoliaClient,
         testnet: true,
         discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
-        sns,
-      });
+          sns,
+        })
+      );
     }
   }
 
   for (const [to, events] of mainnetEventsByTo.entries()) {
     const tokenIds = events.map(({ args }) => args.tokenId!);
     if (tokenIds.length === 1) {
-      await notifyDiscordSingleToken({
-        tokenId: tokenIds[0],
-        wrappedCount,
-        toAddress: to,
-        channelId: process.env.DISCORD_CHANNEL_ID!,
-        client: mainnetClient,
-        discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
-        testnet: false,
-        sns,
-      });
+      promises.push(
+        notifyDiscordSingleToken({
+          tokenId: tokenIds[0],
+          wrappedCount,
+          toAddress: to,
+          channelId: process.env.DISCORD_CHANNEL_ID!,
+          client: mainnetClient,
+          discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
+          testnet: false,
+          sns,
+        })
+      );
     } else {
-      await notifyDiscordMultipleTokens({
+      promises.push(
+        notifyDiscordMultipleTokens({
         tokenIds,
         wrappedCount,
         toAddress: to,
@@ -488,8 +504,9 @@ export const handler = async () =>
         client: mainnetClient,
         testnet: false,
         discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
-        sns,
-      });
+          sns,
+        })
+      );
     }
   }
 
@@ -497,30 +514,34 @@ export const handler = async () =>
     const {
       args: { _tokenId: tokenId },
     } = event;
-    await notifyDiscordMetadataUpdate({
-      address: wrappedNftAddress[11155111],
-      tokenId,
+    promises.push(
+      notifyDiscordMetadataUpdate({
+        address: wrappedNftAddress[11155111],
+        tokenId,
       channelId: process.env.DISCORD_CHANNEL_ID!,
       client: sepoliaClient,
       testnet: true,
       discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
-      sns,
-    });
-  }
+          sns,
+        })
+      );
+    }
 
   for (const event of mainnetMetadataEvents) {
     const {
       args: { _tokenId: tokenId },
     } = event;
-    await notifyDiscordMetadataUpdate({
-      address: fameLadySocietyAddress[1],
-      tokenId,
+    promises.push(
+      notifyDiscordMetadataUpdate({
+        address: fameLadySocietyAddress[1],
+        tokenId,
       channelId: process.env.DISCORD_CHANNEL_ID!,
       client: mainnetClient,
       testnet: false,
       discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
-      sns,
-    });
+        sns,
+      })
+    );
   }
 
   await Promise.all([
