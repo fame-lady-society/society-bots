@@ -563,7 +563,10 @@ export const handler = async () =>
     );
   }
 
+
+
   await Promise.all([
+    ...promises,
     db.send(
       new PutCommand({
         TableName: process.env.DYNAMODB_TABLE,
