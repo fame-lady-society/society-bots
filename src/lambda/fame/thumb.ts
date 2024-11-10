@@ -98,8 +98,7 @@ export const handler = async (
 
     const tokenIdStr = pathParameters!.tokenId!;
     console.log(`tokenID: ${tokenIdStr}`);
-    const index = await fetchFameSocietyRevealerIndex({ client: baseClient });
-    const s3Key = `assets/thumb/reveal-${index.toString()}/${tokenIdStr}.png`;
+    const s3Key = `assets/thumb/reveal-4/${tokenIdStr}.png`;
     const exists = await s3Exists({ key: s3Key, bucket: assetBucket });
 
     if (!exists) {
