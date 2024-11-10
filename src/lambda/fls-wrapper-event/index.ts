@@ -52,11 +52,29 @@ const db = DynamoDBDocumentClient.from(
 );
 
 async function redirectFromGet(url: string) {
-  const response = await fetch(url, { redirect: "manual" });
-  if (response.status === 302) {
-    return response.headers.get("location") ?? url;
+  const controller = new AbortController();
+  try {
+    const timeoutId = setTimeout(() => controller.abort(), 1000);
+
+    const response = await fetch(url, {
+      redirect: "manual",
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
+    if (response.status === 302) {
+      return response.headers.get("location") ?? url;
+    }
+    return url;
+  } catch (error) {
+    if (controller.signal.aborted) {
+      logger.warn(`Timedout following redirect for ${url}`);
+    } else {
+      logger.error(`Failed to follow redirect for ${url}`);
+    }
+    return url;
   }
-  return url;
 }
 
 async function findEvents<E extends AbiEvent>(
@@ -466,13 +484,13 @@ export const handler = async () =>
     } else {
       promises.push(
         notifyDiscordMultipleTokens({
-        tokenIds,
-        wrappedCount: 0n, // fake
-        toAddress: to,
-        channelId: process.env.DISCORD_CHANNEL_ID!,
-        client: sepoliaClient,
-        testnet: true,
-        discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
+          tokenIds,
+          wrappedCount: 0n, // fake
+          toAddress: to,
+          channelId: process.env.DISCORD_CHANNEL_ID!,
+          client: sepoliaClient,
+          testnet: true,
+          discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
           sns,
         })
       );
@@ -497,13 +515,13 @@ export const handler = async () =>
     } else {
       promises.push(
         notifyDiscordMultipleTokens({
-        tokenIds,
-        wrappedCount,
-        toAddress: to,
-        channelId: process.env.DISCORD_CHANNEL_ID!,
-        client: mainnetClient,
-        testnet: false,
-        discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
+          tokenIds,
+          wrappedCount,
+          toAddress: to,
+          channelId: process.env.DISCORD_CHANNEL_ID!,
+          client: mainnetClient,
+          testnet: false,
+          discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
           sns,
         })
       );
@@ -518,14 +536,14 @@ export const handler = async () =>
       notifyDiscordMetadataUpdate({
         address: wrappedNftAddress[11155111],
         tokenId,
-      channelId: process.env.DISCORD_CHANNEL_ID!,
-      client: sepoliaClient,
-      testnet: true,
-      discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
-          sns,
-        })
-      );
-    }
+        channelId: process.env.DISCORD_CHANNEL_ID!,
+        client: sepoliaClient,
+        testnet: true,
+        discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
+        sns,
+      })
+    );
+  }
 
   for (const event of mainnetMetadataEvents) {
     const {
@@ -535,10 +553,10 @@ export const handler = async () =>
       notifyDiscordMetadataUpdate({
         address: fameLadySocietyAddress[1],
         tokenId,
-      channelId: process.env.DISCORD_CHANNEL_ID!,
-      client: mainnetClient,
-      testnet: false,
-      discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
+        channelId: process.env.DISCORD_CHANNEL_ID!,
+        client: mainnetClient,
+        testnet: false,
+        discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
         sns,
       })
     );
