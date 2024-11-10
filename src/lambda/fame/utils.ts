@@ -47,6 +47,7 @@ async function fetchMetadata({
     address: fameSocietyTokenAddress[base.id],
     functionName: "renderer",
   });
+  console.log("renderer", renderer);
   const tokenURI = await client.readContract({
     abi: erc721Abi,
     address: renderer,
