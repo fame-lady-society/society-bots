@@ -75,7 +75,6 @@ export const handler = async (
         body: "Forbidden",
       };
     }
-    console.log("Received preflight request");
     return {
       statusCode: 200,
       headers: {
@@ -86,7 +85,6 @@ export const handler = async (
       body: "",
     };
   }
-  console.log("Received image request");
   try {
     if (["GET", "OPTIONS", "HEAD"].includes(event.httpMethod)) {
       return {
@@ -97,12 +95,10 @@ export const handler = async (
     const { pathParameters } = event;
 
     const tokenIdStr = pathParameters!.tokenId!;
-    console.log(`tokenID: ${tokenIdStr}`);
     const s3Key = `assets/thumb/reveal-4/${tokenIdStr}.png`;
     const exists = await s3Exists({ key: s3Key, bucket: assetBucket });
 
     if (!exists) {
-      console.log(`image not found in S3: ${s3Key}`);
       const imageArrayBuffer = await fetchTokenImage(tokenIdStr);
       const imageBuffer = Buffer.from(imageArrayBuffer);
       const imageData = await resizeImage({
@@ -111,9 +107,7 @@ export const handler = async (
         height: 400,
       });
 
-      console.log("Saving canvas to S3");
       await s3WriteObject(s3Key, imageData);
-      console.log("Done");
       return {
         statusCode: 302,
         headers: {
@@ -122,8 +116,6 @@ export const handler = async (
         body: "",
       };
     }
-    console.log(`image found in S3: ${s3Key}`);
-    console.log("Returning image");
     return {
       statusCode: 302,
       headers: {
