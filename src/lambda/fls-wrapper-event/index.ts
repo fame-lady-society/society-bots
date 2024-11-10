@@ -412,8 +412,9 @@ export const handler = async () =>
       lastBlockMainnet,
       latestBlockMainnet
     ).then((events) => {
-      logger.info({ events: JSON.parse(JSON.stringify(events, bigIntToStringJsonFormat)) }, `Found ${events.length} events on Mainnet`);
-      return events.filter((event) => event.args.from === zeroAddress);
+      const newEvents = events.filter((event) => event.args.from === zeroAddress);
+      logger.info(`Found ${newEvents.length} events on Mainnet`);
+      return newEvents;
     }),
     findEvents<typeof metadataEvent>(
       sepoliaClient,
