@@ -1,9 +1,10 @@
-import { BASE_FAME_NFT_ADDRESS } from "@/constants.ts";
 import { IMetadata } from "@/metadata.ts";
 import { baseClient } from "@/viem.ts";
 import {
   fameSocietyRevealerAbi,
   fameSocietyRevealerAddress,
+  fameSocietyTokenAbi,
+  fameSocietyTokenAddress,
 } from "@/wagmi.generated.ts";
 import { erc721Abi } from "viem";
 import { base } from "viem/chains";
@@ -26,9 +27,9 @@ export async function fetchTokenImage(
 ): Promise<ArrayBuffer> {
   const { image: imageUrl } = await fetchMetadata({
     client: baseClient,
-    address: BASE_FAME_NFT_ADDRESS,
     tokenId: BigInt(tokenId),
   });
+
   const fetchImage = await fetch(imageUrl);
   const buffer = await fetchImage.arrayBuffer();
   return buffer;
@@ -36,23 +37,23 @@ export async function fetchTokenImage(
 
 async function fetchMetadata({
   client,
-  address,
   tokenId,
 }: {
   client: typeof baseClient;
-  address: `0x${string}`;
   tokenId: bigint;
 }) {
-  return client
-    .readContract({
-      abi: erc721Abi,
-      address: address,
-      functionName: "tokenURI",
-      args: [BigInt(tokenId)],
-    })
-    .then(async (tokenUri) => {
-      const metadataResponse = await fetch(tokenUri);
-      const metadata: IMetadata = await metadataResponse.json();
-      return metadata;
-    });
+  const renderer = await client.readContract({
+    abi: fameSocietyTokenAbi,
+    address: fameSocietyTokenAddress[base.id],
+    functionName: "renderer",
+  });
+  const tokenURI = await client.readContract({
+    abi: erc721Abi,
+    address: renderer,
+    functionName: "tokenURI",
+    args: [tokenId],
+  });
+  const metadataResponse = await fetch(tokenURI);
+  const metadata: IMetadata = await metadataResponse.json();
+  return metadata;
 }
