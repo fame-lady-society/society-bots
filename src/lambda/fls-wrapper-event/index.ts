@@ -473,7 +473,7 @@ export const handler = async () =>
       promises.push(
         notifyDiscordSingleToken({
           tokenId: tokenIds[0],
-          wrappedCount: 0n, // fake
+          wrappedCount,
           toAddress: to,
           channelId: process.env.DISCORD_CHANNEL_ID!,
           client: sepoliaClient,
@@ -486,7 +486,7 @@ export const handler = async () =>
       promises.push(
         notifyDiscordMultipleTokens({
           tokenIds,
-          wrappedCount: 0n, // fake
+          wrappedCount,
           toAddress: to,
           channelId: process.env.DISCORD_CHANNEL_ID!,
           client: sepoliaClient,
