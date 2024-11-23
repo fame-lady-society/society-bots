@@ -12,7 +12,7 @@ import { createLogger } from "@/utils/logging.js";
 import { AbiEvent, GetEnsNameReturnType, zeroAddress } from "viem";
 import { customDescription, fetchMetadata } from "./metadata.js";
 import { sendDiscordMessage } from "@/discord/pubsub/send.ts";
-import { fameLadySocietyAbi, fameLadySocietyAddress, wrappedNftAddress } from "@/wagmi.generated.ts";
+import { fameLadySocietyAbi, fameLadySocietyAddress, fameLadySquadAddress, wrappedNftAddress } from "@/wagmi.generated.ts";
 import { mainnetClient, sepoliaClient } from "@/viem.ts";
 import { bigIntToStringJsonFormat } from "@/utils/json.ts";
 
@@ -459,7 +459,7 @@ export const handler = async () =>
   const wrappedCount =
     sepoliaEventsByTo.size || mainnetEventsByTo.size
       ? await mainnetClient.readContract({
-        address: fameLadySocietyAddress[1],
+        address: fameLadySquadAddress[1],
         abi: fameLadySocietyAbi,
         functionName: "balanceOf",
         args: [fameLadySocietyAddress[1]],
