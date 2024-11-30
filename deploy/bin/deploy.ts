@@ -6,7 +6,7 @@ import { DeployCertStack, DeployInfraStack } from "../lib/deploy-stack.js";
 const app = new cdk.App();
 const infraStack = new DeployInfraStack(
   app,
-  `Bot-${process.env.STAGE ?? "dev"}`,
+  `Eliza-${process.env.STAGE ?? "dev"}`,
   {
     /* If you don't specify 'env', this stack will be environment-agnostic.
      * Account/Region-dependent features and context lookups will not work,
@@ -26,7 +26,7 @@ const infraStack = new DeployInfraStack(
 
 const certStack = new DeployCertStack(
   app,
-  `BotCert-${process.env.STAGE ?? "dev"}`,
+  `ElizaCert-${process.env.STAGE ?? "dev"}`,
   {
     env: {
       account: process.env.CDK_DEFAULT_ACCOUNT,

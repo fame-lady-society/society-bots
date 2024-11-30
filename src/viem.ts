@@ -1,5 +1,11 @@
-import { createPublicClient, http, fallback } from "viem";
-import { base, mainnet, sepolia } from "viem/chains";
+import {
+  createPublicClient,
+  http,
+  fallback,
+  createWalletClient,
+  Account,
+} from "viem";
+import { base, mainnet, optimism, sepolia } from "viem/chains";
 
 const sepoliaRpcs: string[] = JSON.parse(process.env.SEPOLIA_RPCS_JSON || "[]");
 
@@ -21,3 +27,19 @@ export const baseClient = createPublicClient({
   transport: fallback(baseRpcs.map((rpc) => http(rpc, { batch: true }))),
   chain: base,
 });
+
+const optimismRpcs: string[] = JSON.parse(
+  process.env.OPTIMISM_RPCS_JSON || "[]",
+);
+
+export const optimismClient = createPublicClient({
+  transport: fallback(optimismRpcs.map((rpc) => http(rpc, { batch: true }))),
+  chain: optimism,
+});
+
+export const createOptimismWallet = (account: Account) =>
+  createWalletClient({
+    account,
+    chain: optimism,
+    transport: http(optimismRpcs[0]),
+  });

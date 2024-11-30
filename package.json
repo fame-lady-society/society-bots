@@ -39,7 +39,7 @@
     "esbuild": "^0.14.38",
     "eslint": "^8.13.0",
     "jest": "^29.7.0",
-    "prettier": "^2.6.2",
+    "prettier": "^3.4.1",
     "ts-jest": "^29.2.4",
     "ts-node": "^10.9.2",
     "typescript": "^5.5.4"
@@ -55,6 +55,8 @@
     "@discordjs/builders": "^1.2.0",
     "@discordjs/rest": "^1.1.0",
     "@ensdomains/ens-contracts": "^0.0.12",
+    "@farcaster/hub-nodejs": "^0.12.7",
+    "@farcaster/hub-web": "^0.9.5",
     "@thanpolas/crypto-utils": "^0.4.1",
     "@thanpolas/univ3prices": "^3.0.2",
     "@twitter-api-v2/plugin-token-refresher": "^1.0.0",
@@ -87,7 +89,7 @@
     "sharp": "^0.30.4",
     "tweetnacl": "^1.0.3",
     "twitter-api-v2": "^1.12.0",
-    "viem": "^2.17.2",
-    "wagmi": "^2.12.8"
+    "viem": "2.21.51",
+    "wagmi": "^2.13.2"
   }
 }

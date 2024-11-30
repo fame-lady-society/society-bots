@@ -6,6 +6,7 @@ import { Distribution } from "./distribution.js";
 import { Certificates } from "./certificates.js";
 import { EventLambdas } from "./events-lambdas.js";
 import { HttpApi } from "./http-api.js";
+import { Eliza } from "./eliza.js";
 
 export class DeployInfraStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -40,6 +41,10 @@ export class DeployInfraStack extends cdk.Stack {
       domain: JSON.parse(process.env.IMAGE_BASE_HOST_JSON!),
       httpApi,
       assetStorageBucket,
+    });
+
+    new Eliza(this, "Eliza", {
+      fid: Number(process.env.FARCASTER_APP_ID!),
     });
   }
 }
