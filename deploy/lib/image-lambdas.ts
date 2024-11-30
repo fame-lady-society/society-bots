@@ -23,7 +23,7 @@ export interface Props {
 function compile(entrypoint: string, options?: BuildOptions) {
   const outfile = path.join(
     cdk.FileSystem.mkdtemp(path.basename(entrypoint)),
-    "index.mjs"
+    "index.mjs",
   );
   buildSync({
     entryPoints: [entrypoint],
@@ -32,7 +32,7 @@ function compile(entrypoint: string, options?: BuildOptions) {
     platform: "node",
     target: "node20",
     format: "esm",
-    external: ["aws-sdk", "canvas"],
+    external: ["aws-sdk", "canvas", "dtrace-provider"],
     inject: [path.join(__dirname, "./esbuild/cjs-shim.ts")],
     sourcemap: true,
     ...options,
@@ -61,11 +61,11 @@ export class ImageLambdas extends Construct {
     });
 
     const thumbCodeDir = compile(
-      path.join(__dirname, "../../src/lambda/fame/thumb.ts")
+      path.join(__dirname, "../../src/lambda/fame/thumb.ts"),
     );
     fs.copyFileSync(
       path.resolve(__dirname, "../docker/canvas/Dockerfile"),
-      `${thumbCodeDir}/Dockerfile`
+      `${thumbCodeDir}/Dockerfile`,
     );
     const thumbHandler = new lambda.DockerImageFunction(this, "FameThumb", {
       code: lambda.DockerImageCode.fromImageAsset(thumbCodeDir, {
@@ -84,11 +84,11 @@ export class ImageLambdas extends Construct {
     storageBucket.grantReadWrite(thumbHandler);
 
     const mosaicCodeDir = compile(
-      path.join(__dirname, "../../src/lambda/fame/mosaic.ts")
+      path.join(__dirname, "../../src/lambda/fame/mosaic.ts"),
     );
     fs.copyFileSync(
       path.resolve(__dirname, "../docker/canvas/Dockerfile"),
-      `${mosaicCodeDir}/Dockerfile`
+      `${mosaicCodeDir}/Dockerfile`,
     );
     const mosaicHandler = new lambda.DockerImageFunction(this, "Mosaic", {
       code: lambda.DockerImageCode.fromImageAsset(mosaicCodeDir, {

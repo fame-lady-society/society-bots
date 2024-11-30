@@ -21,7 +21,7 @@ export interface Props {
 function compile(entrypoint: string, options?: BuildOptions) {
   const outfile = path.join(
     cdk.FileSystem.mkdtemp(path.basename(entrypoint)),
-    "index.mjs"
+    "index.mjs",
   );
   buildSync({
     entryPoints: [entrypoint],
@@ -30,7 +30,7 @@ function compile(entrypoint: string, options?: BuildOptions) {
     platform: "node",
     target: "node20",
     format: "esm",
-    external: ["aws-sdk", "canvas"],
+    external: ["aws-sdk", "canvas", "dtrace-provider"],
     inject: [path.join(__dirname, "./esbuild/cjs-shim.ts")],
     sourcemap: true,
     ...options,
@@ -55,7 +55,7 @@ export class AlchemyWebhooks extends Construct {
     const webhookSwapHandler = new lambda.Function(this, "SwapSchwing", {
       runtime: lambda.Runtime.NODEJS_20_X,
       code: lambda.Code.fromAsset(
-        compile(path.join(__dirname, "../../src/webhook/swap/index.ts"))
+        compile(path.join(__dirname, "../../src/webhook/swap/index.ts")),
       ),
       handler: "index.handler",
       timeout: cdk.Duration.seconds(5),
@@ -80,7 +80,7 @@ export class AlchemyWebhooks extends Construct {
       methods: [apigw2.HttpMethod.POST],
       integration: new HttpLambdaIntegration(
         "webhook-swap-base-schwing",
-        webhookSwapHandler
+        webhookSwapHandler,
       ),
     });
 

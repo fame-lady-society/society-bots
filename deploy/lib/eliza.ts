@@ -17,7 +17,7 @@ function compile(entrypoint: string, options?: BuildOptions) {
     platform: "node",
     target: "node20",
     format: "esm",
-    external: ["aws-sdk", "canvas"],
+    external: ["aws-sdk", "canvas", "dtrace-provider"],
     inject: [path.join(__dirname, "./esbuild/cjs-shim.ts")],
     sourcemap: true,
     ...options,
@@ -50,7 +50,7 @@ export class Eliza extends Construct {
     //   runtime: lambda.Runtime.NODEJS_18_X,
     // });
 
-    new cdk.CfnOutput(this, "ElizaStateTable", {
+    new cdk.CfnOutput(this, "ElizaStateTableName", {
       value: stateTable.tableName,
     });
   }

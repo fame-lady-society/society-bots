@@ -29,7 +29,7 @@ export interface Props {
 function compile(entrypoint: string, options?: BuildOptions) {
   const outfile = path.join(
     cdk.FileSystem.mkdtemp(path.basename(entrypoint)),
-    "index.mjs"
+    "index.mjs",
   );
   buildSync({
     entryPoints: [entrypoint],
@@ -38,7 +38,7 @@ function compile(entrypoint: string, options?: BuildOptions) {
     platform: "node",
     target: "node20",
     format: "esm",
-    external: ["aws-sdk", "canvas"],
+    external: ["aws-sdk", "canvas", "dtrace-provider"],
     inject: [path.join(__dirname, "./esbuild/cjs-shim.ts")],
     sourcemap: true,
     ...options,
@@ -71,7 +71,7 @@ export class EventLambdas extends Construct {
     });
     const deferredMessageTopic = new sns.Topic(this, "DeferredMessageTopic");
     deferredMessageTopic.addSubscription(
-      new subs.SqsSubscription(deferredMessageQueue)
+      new subs.SqsSubscription(deferredMessageQueue),
     );
 
     const logHandlerQueue = new sqs.Queue(this, "LogHandlerQueue", {
@@ -94,7 +94,7 @@ export class EventLambdas extends Construct {
         partitionKey: { name: "key", type: dynamodb.AttributeType.STRING },
         tableClass: dynamodb.TableClass.STANDARD,
         billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
-      }
+      },
     );
 
     const discordNotificationsTable = new dynamodb.Table(
@@ -105,7 +105,7 @@ export class EventLambdas extends Construct {
         sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
         tableClass: dynamodb.TableClass.STANDARD,
         billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
-      }
+      },
     );
     discordNotificationsTable.addGlobalSecondaryIndex({
       indexName: "GSI1",
@@ -113,7 +113,7 @@ export class EventLambdas extends Construct {
     });
 
     const interactionHandlerCodeDir = compile(
-      path.join(__dirname, "../../src/discord/lambda/interaction.ts")
+      path.join(__dirname, "../../src/discord/lambda/interaction.ts"),
     );
     const interactionHandler = new lambda.Function(this, "interactionHandler", {
       runtime: lambda.Runtime.NODEJS_20_X,
@@ -138,7 +138,7 @@ export class EventLambdas extends Construct {
     deferredMessageTopic.grantPublish(interactionHandler);
 
     const deferredMessageCodeDir = compile(
-      path.join(__dirname, "../../src/discord/lambda/deferred.ts")
+      path.join(__dirname, "../../src/discord/lambda/deferred.ts"),
     );
     new lambda.Function(this, "deferredMessage", {
       runtime: lambda.Runtime.NODEJS_20_X,
@@ -160,7 +160,7 @@ export class EventLambdas extends Construct {
     });
 
     const fameEventCodeDir = compile(
-      path.join(__dirname, "../../src/fame-event/lambdas/messaging/index.ts")
+      path.join(__dirname, "../../src/fame-event/lambdas/messaging/index.ts"),
     );
     const fameEventHandler = new lambda.Function(this, "FameEvent", {
       runtime: lambda.Runtime.NODEJS_20_X,
@@ -189,9 +189,8 @@ export class EventLambdas extends Construct {
     discordNotificationsTable.grantReadWriteData(fameEventHandler);
     deferredMessageTopic.grantPublish(fameEventHandler);
 
-
     const wrapEventCodeDir = compile(
-      path.join(__dirname, "../../src/lambda/fls-wrapper-event/index.ts")
+      path.join(__dirname, "../../src/lambda/fls-wrapper-event/index.ts"),
     );
 
     const wrapEventHandler = new lambda.Function(this, "WrapEvent", {
@@ -221,10 +220,10 @@ export class EventLambdas extends Construct {
       "fameEventScheduleRule",
       {
         schedule: events.Schedule.rate(cdk.Duration.minutes(4)),
-      }
+      },
     );
     fameEventScheduleRule.addTarget(
-      new eventTargets.LambdaFunction(fameEventHandler)
+      new eventTargets.LambdaFunction(fameEventHandler),
     );
 
     const wrapEventScheduleRule = new events.Rule(
@@ -232,10 +231,10 @@ export class EventLambdas extends Construct {
       "wrapEventScheduleRule",
       {
         schedule: events.Schedule.rate(cdk.Duration.minutes(6)),
-      }
+      },
     );
     wrapEventScheduleRule.addTarget(
-      new eventTargets.LambdaFunction(wrapEventHandler)
+      new eventTargets.LambdaFunction(wrapEventHandler),
     );
 
     new cdk.CfnOutput(this, "LogHandlerQueueArn", {
