@@ -6,7 +6,7 @@ import { DeployCertStack, DeployInfraStack } from "../lib/deploy-stack.js";
 const app = new cdk.App();
 const infraStack = new DeployInfraStack(
   app,
-  `Eliza-${process.env.STAGE ?? "dev"}`,
+  `Bot-${process.env.STAGE ?? "dev"}`,
   {
     /* If you don't specify 'env', this stack will be environment-agnostic.
      * Account/Region-dependent features and context lookups will not work,
@@ -21,18 +21,18 @@ const infraStack = new DeployInfraStack(
      * want to deploy the stack to. */
     // env: { account: '123456789012', region: 'us-east-1' },
     /* For more information, see https://docs.aws.amazon.com/cdk/latest/guide/environments.html */
-  }
+  },
 );
 
 const certStack = new DeployCertStack(
   app,
-  `ElizaCert-${process.env.STAGE ?? "dev"}`,
+  `BotCert-${process.env.STAGE ?? "dev"}`,
   {
     env: {
       account: process.env.CDK_DEFAULT_ACCOUNT,
       region: "us-east-1",
     },
-  }
+  },
 );
 
 infraStack.addDependency(certStack);
