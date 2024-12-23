@@ -12,17 +12,13 @@ import { createLogger } from "@/utils/logging.js";
 import { AbiEvent, GetEnsNameReturnType, zeroAddress } from "viem";
 import { customDescription, fetchMetadata } from "./metadata.js";
 import { sendDiscordMessage } from "@/discord/pubsub/send.ts";
-import {
-  fameLadySocietyAbi,
-  fameLadySocietyAddress,
-  fameLadySquadAddress,
-  wrappedNftAddress,
-} from "@/wagmi.generated.ts";
+import { fameLadySocietyAbi, fameLadySocietyAddress, fameLadySquadAddress, wrappedNftAddress } from "@/wagmi.generated.ts";
 import { mainnetClient, sepoliaClient } from "@/viem.ts";
 import { bigIntToStringJsonFormat } from "@/utils/json.ts";
 
-type PromiseType<T extends Promise<any>> =
-  T extends Promise<infer U> ? U : never;
+type PromiseType<T extends Promise<any>> = T extends Promise<infer U>
+  ? U
+  : never;
 
 const logger = createLogger({
   name: "fls-wrapper-event",
@@ -52,7 +48,7 @@ const db = DynamoDBDocumentClient.from(
     marshallOptions: {
       convertEmptyValues: true,
     },
-  },
+  }
 );
 
 async function redirectFromGet(url: string) {
@@ -62,7 +58,7 @@ async function redirectFromGet(url: string) {
 
     const response = await fetch(url, {
       redirect: "manual",
-      signal: controller.signal,
+      signal: controller.signal
     });
 
     clearTimeout(timeoutId);
@@ -86,7 +82,7 @@ async function findEvents<E extends AbiEvent>(
   contractAddress: `0x${string}`,
   event: E,
   fromBlock: bigint,
-  toBlock: bigint,
+  toBlock: bigint
 ) {
   const events = await client.getLogs({
     address: contractAddress,
@@ -166,7 +162,7 @@ async function notifyDiscordMetadataUpdate({
           fields,
           image: {
             url: await redirectFromGet(
-              `https://fls-www.vercel.app/${testnet ? "sepolia" : "mainnet"}/og/token/${tokenId}`,
+              `https://fls-www.vercel.app/${testnet ? "sepolia" : "mainnet"}/og/token/${tokenId}`
             ),
           },
         },
@@ -228,12 +224,11 @@ async function notifyDiscordSingleToken({
       embeds: [
         {
           title: "#itsawrap",
-          description: `A new Fame Lady Society was wrapped${
-            testnet ? " on Sepolia" : ""
-          }`,
+          description: `A new Fame Lady Society was wrapped${testnet ? " on Sepolia" : ""
+            }`,
           image: {
             url: await redirectFromGet(
-              `https://img.fameladysociety.com/thumb/${tokenId}`,
+              `https://img.fameladysociety.com/thumb/${tokenId}`
             ),
           },
           fields,
@@ -308,9 +303,8 @@ async function notifyDiscordMultipleTokens({
       embeds: [
         {
           title: "#itsawrap",
-          description: `New Fame Lady Society tokens were wrapped${
-            testnet ? " on Sepolia" : ""
-          }`,
+          description: `New Fame Lady Society tokens were wrapped${testnet ? " on Sepolia" : ""
+            }`,
           image: {
             url: await redirectFromGet(url),
           },
@@ -359,248 +353,237 @@ const metadataEvent = {
 } as const;
 
 export const handler = async () =>
-  // event: EventBridgeEvent<"check-fls-wrap", void>
-  {
-    // Get last bock read
-    const [lastBlockSepoliaResponse, lastBlockMainnetResponse] =
-      await Promise.all([
-        db.send(
-          new GetCommand({
-            TableName: process.env.DYNAMODB_TABLE,
-            Key: {
-              key: "lastBlockSepolia",
-            },
-          }),
-        ),
-        db.send(
-          new GetCommand({
-            TableName: process.env.DYNAMODB_TABLE,
-            Key: {
-              key: "lastBlockMainnet",
-            },
-          }),
-        ),
-      ]);
-
-    const [safeSepoliaBlock, safeMainnetBlock] = await Promise.all([
-      sepoliaClient.getBlock({
-        blockTag: "safe",
-      }),
-      mainnetClient.getBlock({
-        blockTag: "safe",
-      }),
-    ]);
-
-    const { number: safeSepoliaBlockNumber } = safeSepoliaBlock;
-    const { number: safeMainnetBlockNumber } = safeMainnetBlock;
-
-    const lastBlockSepolia = BigInt(
-      lastBlockSepoliaResponse.Item?.value ??
-        safeSepoliaBlock.number ??
-        (await sepoliaClient.getBlockNumber()) - 10n,
-    );
-    const lastBlockMainnet = BigInt(
-      lastBlockMainnetResponse.Item?.value ??
-        safeMainnetBlock.number ??
-        (await mainnetClient.getBlockNumber()) - 10n,
-    );
-
-    // Get events from last block read
-    const [
-      sepoliaTransferEvents,
-      mainnetTransferEvents,
-      sepoliaMetadataEvents,
-      mainnetMetadataEvents,
-    ] = await Promise.all([
-      findEvents<typeof transferEvent>(
-        sepoliaClient,
-        wrappedNftAddress[11155111],
-        transferEvent,
-        lastBlockSepolia,
-        safeSepoliaBlockNumber,
-      ).then((events) => {
-        logger.info(`Found ${events.length} events on Sepolia`);
-        return events.filter((event) => event.args.from === zeroAddress);
-      }),
-      findEvents<typeof transferEvent>(
-        mainnetClient,
-        fameLadySocietyAddress[1],
-        transferEvent,
-        lastBlockMainnet,
-        safeMainnetBlockNumber,
-      ).then((events) => {
-        const newEvents = events.filter(
-          (event) => event.args.from === zeroAddress,
-        );
-        logger.info(`Found ${newEvents.length} events on Mainnet`);
-        return newEvents;
-      }),
-      findEvents<typeof metadataEvent>(
-        sepoliaClient,
-        wrappedNftAddress[11155111],
-        metadataEvent,
-        lastBlockSepolia,
-        safeSepoliaBlockNumber,
+// event: EventBridgeEvent<"check-fls-wrap", void>
+{
+  // Get last bock read
+  const [lastBlockSepoliaResponse, lastBlockMainnetResponse] =
+    await Promise.all([
+      db.send(
+        new GetCommand({
+          TableName: process.env.DYNAMODB_TABLE,
+          Key: {
+            key: "lastBlockSepolia",
+          },
+        })
       ),
-      findEvents<typeof metadataEvent>(
-        mainnetClient,
-        fameLadySocietyAddress[1],
-        metadataEvent,
-        lastBlockMainnet,
-        safeMainnetBlockNumber,
+      db.send(
+        new GetCommand({
+          TableName: process.env.DYNAMODB_TABLE,
+          Key: {
+            key: "lastBlockMainnet",
+          },
+        })
       ),
     ]);
 
-    const promises: Promise<void>[] = [];
+  const [latestBlockSepolia, latestBlockMainnet] = await Promise.all([
+    sepoliaClient.getBlockNumber(),
+    mainnetClient.getBlockNumber(),
+  ]);
 
-    // Notify discord
-    const sns = new SNS({});
-    // Group events by to address
-    const sepoliaEventsByTo = new Map<
-      `0x${string}`,
-      PromiseType<ReturnType<typeof findEvents<typeof transferEvent>>>
-    >();
-    const mainnetEventsByTo = new Map<
-      `0x${string}`,
-      PromiseType<ReturnType<typeof findEvents<typeof transferEvent>>>
-    >();
-    for (const event of sepoliaTransferEvents) {
-      const events = sepoliaEventsByTo.get(event.args.to) || [];
-      events.push(event);
-      sepoliaEventsByTo.set(event.args.to, events);
-    }
-    for (const event of mainnetTransferEvents) {
-      const events = mainnetEventsByTo.get(event.args.to) || [];
-      events.push(event);
-      mainnetEventsByTo.set(event.args.to, events);
-    }
+  const lastBlockSepolia = BigInt(
+    lastBlockSepoliaResponse.Item?.value ?? latestBlockSepolia
+  );
+  const lastBlockMainnet = BigInt(
+    lastBlockMainnetResponse.Item?.value ?? latestBlockMainnet
+  );
 
-    const wrappedCount =
-      sepoliaEventsByTo.size || mainnetEventsByTo.size
-        ? await mainnetClient.readContract({
-            address: fameLadySquadAddress[1],
-            abi: fameLadySocietyAbi,
-            functionName: "balanceOf",
-            args: [fameLadySocietyAddress[1]],
-          })
-        : 0n;
+  // Get events from last block read
+  const [
+    sepoliaTransferEvents,
+    mainnetTransferEvents,
+    sepoliaMetadataEvents,
+    mainnetMetadataEvents,
+  ] = await Promise.all([
+    findEvents<typeof transferEvent>(
+      sepoliaClient,
+      wrappedNftAddress[11155111],
+      transferEvent,
+      lastBlockSepolia,
+      latestBlockSepolia
+    ).then((events) => {
+      logger.info(`Found ${events.length} events on Sepolia`);
+      return events.filter((event) => event.args.from === zeroAddress);
+    }),
+    findEvents<typeof transferEvent>(
+      mainnetClient,
+      fameLadySocietyAddress[1],
+      transferEvent,
+      lastBlockMainnet,
+      latestBlockMainnet
+    ).then((events) => {
+      const newEvents = events.filter((event) => event.args.from === zeroAddress);
+      logger.info(`Found ${newEvents.length} events on Mainnet`);
+      return newEvents;
+    }),
+    findEvents<typeof metadataEvent>(
+      sepoliaClient,
+      wrappedNftAddress[11155111],
+      metadataEvent,
+      lastBlockSepolia,
+      latestBlockSepolia
+    ),
+    findEvents<typeof metadataEvent>(
+      mainnetClient,
+      fameLadySocietyAddress[1],
+      metadataEvent,
+      lastBlockMainnet,
+      latestBlockMainnet
+    ),
+  ]);
 
-    // Now push out the events
-    for (const [to, events] of sepoliaEventsByTo.entries()) {
-      const tokenIds = events.map(({ args }) => args.tokenId);
-      if (tokenIds.length === 1) {
-        promises.push(
-          notifyDiscordSingleToken({
-            tokenId: tokenIds[0],
-            wrappedCount,
-            toAddress: to,
-            channelId: process.env.DISCORD_CHANNEL_ID!,
-            client: sepoliaClient,
-            discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
-            testnet: true,
-            sns,
-          }),
-        );
-      } else {
-        promises.push(
-          notifyDiscordMultipleTokens({
-            tokenIds,
-            wrappedCount,
-            toAddress: to,
-            channelId: process.env.DISCORD_CHANNEL_ID!,
-            client: sepoliaClient,
-            testnet: true,
-            discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
-            sns,
-          }),
-        );
-      }
-    }
+  const promises: Promise<void>[] = [];
 
-    for (const [to, events] of mainnetEventsByTo.entries()) {
-      const tokenIds = events.map(({ args }) => args.tokenId!);
-      if (tokenIds.length === 1) {
-        promises.push(
-          notifyDiscordSingleToken({
-            tokenId: tokenIds[0],
-            wrappedCount,
-            toAddress: to,
-            channelId: process.env.DISCORD_CHANNEL_ID!,
-            client: mainnetClient,
-            discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
-            testnet: false,
-            sns,
-          }),
-        );
-      } else {
-        promises.push(
-          notifyDiscordMultipleTokens({
-            tokenIds,
-            wrappedCount,
-            toAddress: to,
-            channelId: process.env.DISCORD_CHANNEL_ID!,
-            client: mainnetClient,
-            testnet: false,
-            discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
-            sns,
-          }),
-        );
-      }
-    }
+  // Notify discord
+  const sns = new SNS({});
+  // Group events by to address
+  const sepoliaEventsByTo = new Map<
+    `0x${string}`,
+    PromiseType<ReturnType<typeof findEvents<typeof transferEvent>>>
+  >();
+  const mainnetEventsByTo = new Map<
+    `0x${string}`,
+    PromiseType<ReturnType<typeof findEvents<typeof transferEvent>>>
+  >();
+  for (const event of sepoliaTransferEvents) {
+    const events = sepoliaEventsByTo.get(event.args.to) || [];
+    events.push(event);
+    sepoliaEventsByTo.set(event.args.to, events);
+  }
+  for (const event of mainnetTransferEvents) {
+    const events = mainnetEventsByTo.get(event.args.to) || [];
+    events.push(event);
+    mainnetEventsByTo.set(event.args.to, events);
+  }
 
-    for (const event of sepoliaMetadataEvents) {
-      const {
-        args: { _tokenId: tokenId },
-      } = event;
+  const wrappedCount =
+    sepoliaEventsByTo.size || mainnetEventsByTo.size
+      ? await mainnetClient.readContract({
+        address: fameLadySquadAddress[1],
+        abi: fameLadySocietyAbi,
+        functionName: "balanceOf",
+        args: [fameLadySocietyAddress[1]],
+      })
+      : 0n;
+
+  // Now push out the events
+  for (const [to, events] of sepoliaEventsByTo.entries()) {
+    const tokenIds = events.map(({ args }) => args.tokenId);
+    if (tokenIds.length === 1) {
       promises.push(
-        notifyDiscordMetadataUpdate({
-          address: wrappedNftAddress[11155111],
-          tokenId,
+        notifyDiscordSingleToken({
+          tokenId: tokenIds[0],
+          wrappedCount,
+          toAddress: to,
+          channelId: process.env.DISCORD_CHANNEL_ID!,
+          client: sepoliaClient,
+          discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
+          testnet: true,
+          sns,
+        })
+      );
+    } else {
+      promises.push(
+        notifyDiscordMultipleTokens({
+          tokenIds,
+          wrappedCount,
+          toAddress: to,
           channelId: process.env.DISCORD_CHANNEL_ID!,
           client: sepoliaClient,
           testnet: true,
           discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
           sns,
-        }),
+        })
       );
     }
+  }
 
-    for (const event of mainnetMetadataEvents) {
-      const {
-        args: { _tokenId: tokenId },
-      } = event;
+  for (const [to, events] of mainnetEventsByTo.entries()) {
+    const tokenIds = events.map(({ args }) => args.tokenId!);
+    if (tokenIds.length === 1) {
       promises.push(
-        notifyDiscordMetadataUpdate({
-          address: fameLadySocietyAddress[1],
-          tokenId,
+        notifyDiscordSingleToken({
+          tokenId: tokenIds[0],
+          wrappedCount,
+          toAddress: to,
+          channelId: process.env.DISCORD_CHANNEL_ID!,
+          client: mainnetClient,
+          discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
+          testnet: false,
+          sns,
+        })
+      );
+    } else {
+      promises.push(
+        notifyDiscordMultipleTokens({
+          tokenIds,
+          wrappedCount,
+          toAddress: to,
           channelId: process.env.DISCORD_CHANNEL_ID!,
           client: mainnetClient,
           testnet: false,
           discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
           sns,
-        }),
+        })
       );
     }
+  }
 
-    await Promise.all([
-      ...promises,
-      db.send(
-        new PutCommand({
-          TableName: process.env.DYNAMODB_TABLE,
-          Item: {
-            key: "lastBlockSepolia",
-            value: Number(safeSepoliaBlockNumber + 1n),
-          },
-        }),
-      ),
-      db.send(
-        new PutCommand({
-          TableName: process.env.DYNAMODB_TABLE,
-          Item: {
-            key: "lastBlockMainnet",
-            value: Number(safeMainnetBlockNumber + 1n),
-          },
-        }),
-      ),
-    ]);
-  };
+  for (const event of sepoliaMetadataEvents) {
+    const {
+      args: { _tokenId: tokenId },
+    } = event;
+    promises.push(
+      notifyDiscordMetadataUpdate({
+        address: wrappedNftAddress[11155111],
+        tokenId,
+        channelId: process.env.DISCORD_CHANNEL_ID!,
+        client: sepoliaClient,
+        testnet: true,
+        discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
+        sns,
+      })
+    );
+  }
+
+  for (const event of mainnetMetadataEvents) {
+    const {
+      args: { _tokenId: tokenId },
+    } = event;
+    promises.push(
+      notifyDiscordMetadataUpdate({
+        address: fameLadySocietyAddress[1],
+        tokenId,
+        channelId: process.env.DISCORD_CHANNEL_ID!,
+        client: mainnetClient,
+        testnet: false,
+        discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
+        sns,
+      })
+    );
+  }
+
+
+
+  await Promise.all([
+    ...promises,
+    db.send(
+      new PutCommand({
+        TableName: process.env.DYNAMODB_TABLE,
+        Item: {
+          key: "lastBlockSepolia",
+          value: Number(latestBlockSepolia + 1n),
+        },
+      })
+    ),
+    db.send(
+      new PutCommand({
+        TableName: process.env.DYNAMODB_TABLE,
+        Item: {
+          key: "lastBlockMainnet",
+          value: Number(latestBlockMainnet + 1n),
+        },
+      })
+    ),
+  ]);
+};
