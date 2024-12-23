@@ -82,6 +82,7 @@
     "ipfs-http-client": "^60.0.0",
     "is-ipfs": "^6.0.2",
     "lambda-logger-node": "4.0.0-7",
+    "lumaai": "^1.2.0",
     "multiformats": "^9.6.5",
     "parquet-lite": "OzySky/parquet-lite",
     "ramda": "^0.28.0",
