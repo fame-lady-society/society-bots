@@ -63,10 +63,12 @@ export const handler = async () => {
   const sepoliaProcessor = new DefaultEventProcessor(
     sepoliaClient,
     wrappedNftAddress[11155111],
+    "0x71e57b37b4bea589673d0afe1992a6457ca754b3",
   );
   const mainnetProcessor = new DefaultEventProcessor(
     mainnetClient,
     fameLadySocietyAddress[1],
+    fameLadySquadAddress[1],
   );
 
   // Get last blocks from DynamoDB

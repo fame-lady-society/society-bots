@@ -7,7 +7,9 @@ import {
 } from "viem";
 import { base, mainnet, optimism, sepolia } from "viem/chains";
 
-const sepoliaRpcs: string[] = JSON.parse(process.env.SEPOLIA_RPCS_JSON || "[]");
+export const sepoliaRpcs: string[] = JSON.parse(
+  process.env.SEPOLIA_RPCS_JSON || "[]",
+);
 
 export const sepoliaClient = createPublicClient({
   transport: fallback(sepoliaRpcs.map((rpc) => http(rpc, { batch: true }))),

@@ -2,10 +2,11 @@ import { describe, it, expect } from "@jest/globals";
 import { createPublicClient, http, zeroAddress } from "viem";
 import { mainnet } from "viem/chains";
 import { DefaultEventProcessor } from "./processor.ts";
-import { fameLadySocietyAddress } from "@/wagmi.generated.ts";
+import {
+  fameLadySocietyAddress,
+  fameLadySquadAddress,
+} from "@/wagmi.generated.ts";
 import { bigIntToStringJsonFormat } from "@/utils/json.ts";
-
-jest.mock;
 
 describe("EventProcessor", () => {
   it("processes events for specific blocks", async () => {
@@ -17,11 +18,12 @@ describe("EventProcessor", () => {
     const processor = new DefaultEventProcessor(
       client as any,
       fameLadySocietyAddress[1],
+      fameLadySquadAddress[1],
     );
 
     const result = await processor.processEvents({
-      fromBlock: 21461509n,
-      toBlock: 21461509n,
+      fromBlock: 21589199n,
+      toBlock: 21589199n,
     });
 
     console.log(JSON.stringify(result, bigIntToStringJsonFormat, 2));

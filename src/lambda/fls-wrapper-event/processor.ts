@@ -1,5 +1,4 @@
-import { AbiEvent, Address, Hex, zeroAddress } from "viem";
-import { fameLadySocietyAbi } from "@/wagmi.generated.ts";
+import { AbiEvent, Address, erc721Abi, Hex, zeroAddress } from "viem";
 import { mainnetClient, sepoliaClient } from "@/viem.ts";
 import { createLogger } from "@/utils/logging.ts";
 
@@ -69,6 +68,7 @@ export class DefaultEventProcessor {
   constructor(
     private client: typeof sepoliaClient | typeof mainnetClient,
     private contractAddress: `0x${string}`,
+    private wrappedContractAddress: `0x${string}`,
   ) {}
 
   async processEvents(params: { fromBlock: bigint; toBlock: bigint }) {
@@ -96,8 +96,8 @@ export class DefaultEventProcessor {
     // Instead of sending notifications directly, collect them
     const wrappedCount = transferEvents.length
       ? await this.client.readContract({
-          address: this.contractAddress,
-          abi: fameLadySocietyAbi,
+          address: this.wrappedContractAddress,
+          abi: erc721Abi,
           functionName: "balanceOf",
           args: [this.contractAddress],
         })
