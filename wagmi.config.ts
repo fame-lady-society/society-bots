@@ -59,6 +59,12 @@ export default defineConfig({
             [base.id]: "0xc0c81c4c0e7ba766bd07b5b34266ccc4e0b971c9",
           },
         },
+        {
+          name: "FAMEusGovernor",
+          address: {
+            [base.id]: "0xbb2bd06084ab8ab66f14ce33fc713093e0f1d8d8",
+          },
+        },
       ],
     }),
     etherscan({

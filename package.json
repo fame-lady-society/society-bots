@@ -14,7 +14,7 @@
     "discord:build": "yarn discord:interaction:build && yarn discord:deferred:build",
     "discord:interaction:build": "esbuild src/discord/lambda/discord.ts --banner:js=\"import { createRequire } from 'module';const require = createRequire(import.meta.url);\" --platform=node --format=esm --target=node16.14 --bundle --outfile=../../deploy/.layers/discord-interaction/index.mjs",
     "discord:deferred:build": "esbuild src/discord/lambda/deferred.ts --banner:js=\"import { createRequire } from 'module';const require = createRequire(import.meta.url);\" --platform=node --format=esm --target=node16.14 --bundle --outfile=../../deploy/.layers/discord-deferred/index.mjs",
-    "discord:fls:wrapped:build": "esbuild src/lambda/fls-wrapper-event/index.ts --banner:js=\"import { createRequire } from 'module';const require = createRequire(import.meta.url);\" --platform=node --format=esm --target=node16.14 --bundle --outfile=../../deploy/.layers/fls-wrapper-event/index.mjs",
+    "discord:fls:wrapped:build": "esbuild src/lambda/fls-wrapper-event/index.ts --banner:js=\"import { createRequire } from 'module';const require = createRequire(import.meta.url);\" --platform=node --format=esm --target=node16.14 --bundle --external:dtrace-provider --outfile=../../deploy/.layers/fls-wrapper-event/index.mjs",
     "discord:cli": "yarn discord:cli:build && node dist/discord-cli/index.mjs",
     "discord:cli:build": "esbuild src/discord/cli.ts --banner:js=\"import { createRequire } from 'module';const require = createRequire(import.meta.url);\" --platform=node --format=esm --target=node16.14 --outfile=dist/discord-cli/index.mjs",
     "generate": "yarn generate:schema && yarn generate:types",

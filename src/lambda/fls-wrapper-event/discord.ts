@@ -200,7 +200,7 @@ export async function notifyDiscordMultipleTokens({
   try {
     ensName = await client.getEnsName({ address: toAddress });
   } catch (e) {
-    logger.error(e, "Failed to lookup address", toAddress);
+    // logger.error(e, "Failed to lookup address", toAddress);
     ensName = toAddress;
   }
   const displayName = ensName ? ensName : toAddress;
