@@ -6,8 +6,7 @@ import {
 } from "aws-lambda";
 import { Image, loadImage } from "canvas";
 import { generateMosaic, resizeImage } from "@/canvas/fls.ts";
-import { baseClient } from "@/viem.ts";
-import { fetchFameSocietyRevealerIndex, fetchTokenImage } from "./utils.ts";
+import { fetchTokenImage } from "./utils.ts";
 import {
   ASSET_BUCKET,
   CORS_ALLOWED_ORIGINS_JSON,
@@ -56,10 +55,9 @@ async function s3GetObject(key: string): Promise<Buffer> {
 }
 
 async function fetchOrGenerateTokenImage(
-  revealIndex: bigint,
   tokenId: string | number | bigint,
 ): Promise<Buffer> {
-  const key = `assets/thumb/reveal-${revealIndex}/${tokenId}.png`;
+  const key = `fls/assets/thumb/${tokenId}.png`;
   if (await s3Exists({ key, bucket: assetBucket })) {
     return await s3GetObject(key);
   }
@@ -138,10 +136,7 @@ export const handler = async (
       .split(",")
       .map((id) => parseInt(id, 10))
       .sort((a, b) => a - b);
-    const index = await fetchFameSocietyRevealerIndex({ client: baseClient });
-    const outputKey = `assets/mosaic/reveal-${index.toString()}/${tokenIds.join(
-      "-",
-    )}.png`;
+    const outputKey = `fls/assets/mosaic/${tokenIds.join("-")}.png`;
     const exists = await s3Exists({
       key: outputKey,
       bucket: assetBucket,
@@ -153,7 +148,7 @@ export const handler = async (
       for (let i = 0; i < tokenIds.length; i += 10) {
         const ids = tokenIds.slice(i, i + 10);
         const promises = ids.map(async (id) => {
-          const buffer = await fetchOrGenerateTokenImage(index, id);
+          const buffer = await fetchOrGenerateTokenImage(id);
           return await loadImage(buffer);
         });
         images.push(...(await Promise.all(promises)));

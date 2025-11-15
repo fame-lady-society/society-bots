@@ -12,12 +12,18 @@ export class DeployInfraStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
-    const { assetStorageBucket, imageMosaicLambda, imageThumbLambda } =
-      new ImageLambdas(this, "ImageLambdas", {
-        baseRpcsJson: process.env.BASE_RPCS_JSON!,
-        domain: JSON.parse(process.env.IMAGE_BASE_HOST_JSON!),
-        corsAllowedOriginsJson: process.env.IMAGE_CORS_ALLOWED_ORIGINS_JSON!,
-      });
+    const {
+      assetStorageBucket,
+      fameImageMosaicLambda,
+      fameImageThumbLambda,
+      flsImageMosaicLambda,
+      flsImageThumbLambda,
+    } = new ImageLambdas(this, "ImageLambdas", {
+      baseRpcsJson: process.env.BASE_RPCS_JSON!,
+      mainnetRpcsJson: process.env.MAINNET_RPCS_JSON!,
+      domain: JSON.parse(process.env.IMAGE_BASE_HOST_JSON!),
+      corsAllowedOriginsJson: process.env.IMAGE_CORS_ALLOWED_ORIGINS_JSON!,
+    });
 
     const { notificationLambda } = new EventLambdas(this, "EventLambdas", {
       baseRpcsJson: process.env.BASE_RPCS_JSON!,
@@ -32,8 +38,10 @@ export class DeployInfraStack extends cdk.Stack {
 
     const { httpApi } = new HttpApi(this, "SocietyBotREST", {
       domain: JSON.parse(process.env.IMAGE_BASE_HOST_JSON!),
-      imageThumbHandler: imageThumbLambda,
-      imageMosaicHandler: imageMosaicLambda,
+      fameImageThumbHandler: fameImageThumbLambda,
+      fameImageMosaicHandler: fameImageMosaicLambda,
+      flsImageThumbHandler: flsImageThumbLambda,
+      flsImageMosaicHandler: flsImageMosaicLambda,
       discordInteractionHandler: notificationLambda,
     });
 

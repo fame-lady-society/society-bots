@@ -9,8 +9,10 @@ import { HttpLambdaIntegration } from "aws-cdk-lib/aws-apigatewayv2-integrations
 
 export interface Props {
   readonly domain: [string, string] | string;
-  readonly imageThumbHandler: lambda.IFunction;
-  readonly imageMosaicHandler: lambda.IFunction;
+  readonly fameImageThumbHandler: lambda.IFunction;
+  readonly fameImageMosaicHandler: lambda.IFunction;
+  readonly flsImageThumbHandler: lambda.IFunction;
+  readonly flsImageMosaicHandler: lambda.IFunction;
   readonly discordInteractionHandler: lambda.IFunction;
 }
 
@@ -21,8 +23,10 @@ export class HttpApi extends Construct {
 
     const {
       domain,
-      imageThumbHandler,
-      imageMosaicHandler,
+      fameImageThumbHandler,
+      fameImageMosaicHandler,
+      flsImageThumbHandler,
+      flsImageMosaicHandler,
       discordInteractionHandler,
     } = props;
 
@@ -49,13 +53,28 @@ export class HttpApi extends Construct {
     httpApi.addRoutes({
       path: "/thumb/{tokenId}",
       methods: [apigw2.HttpMethod.GET, apigw2.HttpMethod.OPTIONS],
-      integration: new HttpLambdaIntegration("thumb", imageThumbHandler),
+      integration: new HttpLambdaIntegration("thumb", fameImageThumbHandler),
     });
 
     httpApi.addRoutes({
       path: "/mosaic/{tokenId}",
       methods: [apigw2.HttpMethod.GET, apigw2.HttpMethod.OPTIONS],
-      integration: new HttpLambdaIntegration("mosaic", imageMosaicHandler),
+      integration: new HttpLambdaIntegration("mosaic", fameImageMosaicHandler),
+    });
+
+    httpApi.addRoutes({
+      path: "/fls/thumb/{tokenId}",
+      methods: [apigw2.HttpMethod.GET, apigw2.HttpMethod.OPTIONS],
+      integration: new HttpLambdaIntegration("fls-thumb", flsImageThumbHandler),
+    });
+
+    httpApi.addRoutes({
+      path: "/fls/mosaic/{tokenId}",
+      methods: [apigw2.HttpMethod.GET, apigw2.HttpMethod.OPTIONS],
+      integration: new HttpLambdaIntegration(
+        "fls-mosaic",
+        flsImageMosaicHandler,
+      ),
     });
 
     httpApi.addRoutes({
@@ -63,7 +82,7 @@ export class HttpApi extends Construct {
       methods: [apigw2.HttpMethod.POST],
       integration: new HttpLambdaIntegration(
         "discord",
-        discordInteractionHandler
+        discordInteractionHandler,
       ),
     });
 
@@ -72,8 +91,8 @@ export class HttpApi extends Construct {
       target: route53.RecordTarget.fromAlias(
         new route53Targets.ApiGatewayv2DomainProperties(
           apiDomainName.regionalDomainName,
-          apiDomainName.regionalHostedZoneId
-        )
+          apiDomainName.regionalHostedZoneId,
+        ),
       ),
       recordName: domains.length > 1 ? `api.${domains[0]}` : "api",
     });
@@ -82,8 +101,8 @@ export class HttpApi extends Construct {
       target: route53.RecordTarget.fromAlias(
         new route53Targets.ApiGatewayv2DomainProperties(
           apiDomainName.regionalDomainName,
-          apiDomainName.regionalHostedZoneId
-        )
+          apiDomainName.regionalHostedZoneId,
+        ),
       ),
       recordName: domains.length > 1 ? `api.${domains[0]}` : "api",
     });

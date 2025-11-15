@@ -3,7 +3,6 @@ import {
   type APIGatewayProxyEvent,
   type APIGatewayProxyResult,
 } from "aws-lambda";
-import { baseClient } from "@/viem.ts";
 import { resizeImage } from "@/canvas/fls.ts";
 import {
   ASSET_BUCKET,
