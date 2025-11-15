@@ -205,6 +205,7 @@ export class EventLambdas extends Construct {
         DYNAMODB_REGION: cdk.Stack.of(this).region,
         DYNAMODB_TABLE: lastWrapperEventBlock.tableName,
         LOG_LEVEL: "debug",
+        IMAGE_HOST: domainName,
         DISCORD_APPLICATION_ID: discordAppId,
         DISCORD_PUBLIC_KEY: discordPublicKey,
         DISCORD_BOT_TOKEN: discordBotToken,

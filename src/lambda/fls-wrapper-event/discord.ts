@@ -165,7 +165,7 @@ export async function notifyDiscordSingleToken({
           }`,
           image: {
             url: await redirectFromGet(
-              `https://img.fameladysociety.com/thumb/${tokenId}`,
+              `https://${process.env.IMAGE_HOST}/fls/thumb/${tokenId}`,
             ),
           },
           fields,
@@ -228,7 +228,7 @@ export async function notifyDiscordMultipleTokens({
     inline: true,
   });
 
-  const url = `https://img.fameladysociety.com/mosaic/${tokenIds
+  const url = `https://${process.env.IMAGE_HOST}/fls/mosaic/${tokenIds
     .map((t) => t.toString())
     .join(",")}`;
 
