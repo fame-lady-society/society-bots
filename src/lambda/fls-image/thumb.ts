@@ -92,7 +92,7 @@ export const handler = async (
     const { pathParameters } = event;
 
     const tokenIdStr = pathParameters!.tokenId!;
-    const s3Key = `assets/thumb/reveal-4/${tokenIdStr}.png`;
+    const s3Key = `assets/fls/thumb/${tokenIdStr}.png`;
     const exists = await s3Exists({ key: s3Key, bucket: assetBucket });
 
     if (!exists) {

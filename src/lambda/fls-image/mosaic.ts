@@ -57,7 +57,7 @@ async function s3GetObject(key: string): Promise<Buffer> {
 async function fetchOrGenerateTokenImage(
   tokenId: string | number | bigint,
 ): Promise<Buffer> {
-  const key = `fls/assets/thumb/${tokenId}.png`;
+  const key = `assets/fls/thumb/${tokenId}.png`;
   if (await s3Exists({ key, bucket: assetBucket })) {
     return await s3GetObject(key);
   }
@@ -136,7 +136,7 @@ export const handler = async (
       .split(",")
       .map((id) => parseInt(id, 10))
       .sort((a, b) => a - b);
-    const outputKey = `fls/assets/mosaic/${tokenIds.join("-")}.png`;
+    const outputKey = `assets/fls/mosaic/${tokenIds.join("-")}.png`;
     const exists = await s3Exists({
       key: outputKey,
       bucket: assetBucket,
