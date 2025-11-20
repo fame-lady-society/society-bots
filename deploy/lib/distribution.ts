@@ -35,7 +35,7 @@ export class Distribution extends Construct {
     const certificate = acm.Certificate.fromCertificateArn(
       this,
       "DistributionCert",
-      certificateReader.parameterValue
+      certificateReader.parameterValue,
     );
 
     const distribution = new cloudfront.Distribution(this, "Distribution", {
@@ -43,13 +43,19 @@ export class Distribution extends Construct {
         origin: new cloudfrontorigins.HttpOrigin(
           `${httpApi.apiId}.execute-api.${
             cdk.Stack.of(this).region
-          }.amazonaws.com`
+          }.amazonaws.com`,
         ),
         allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
       },
       additionalBehaviors: {
         "/assets/*": {
+          origin: new cloudfrontorigins.S3Origin(props.assetStorageBucket),
+          allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
+          viewerProtocolPolicy:
+            cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        },
+        "/fameus/*": {
           origin: new cloudfrontorigins.S3Origin(props.assetStorageBucket),
           allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
           viewerProtocolPolicy:
@@ -63,14 +69,14 @@ export class Distribution extends Construct {
     new route53.ARecord(this, "AliasIPv4Record", {
       zone: hostedZone,
       target: route53.RecordTarget.fromAlias(
-        new route53Targets.CloudFrontTarget(distribution)
+        new route53Targets.CloudFrontTarget(distribution),
       ),
       recordName: domain.length === 2 ? domains[0] : undefined,
     });
     new route53.AaaaRecord(this, "AliasIPv6Record", {
       zone: hostedZone,
       target: route53.RecordTarget.fromAlias(
-        new route53Targets.CloudFrontTarget(distribution)
+        new route53Targets.CloudFrontTarget(distribution),
       ),
       recordName: domain.length === 2 ? domains[0] : undefined,
     });
