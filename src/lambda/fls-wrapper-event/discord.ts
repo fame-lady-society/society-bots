@@ -241,6 +241,7 @@ export async function notifyDiscordSingleWrappedAndDonated({
   client,
   discordMessageTopicArn,
   sns,
+  totalDonatedCount,
   blockExplorerUrl,
   txHash,
 }: {
@@ -252,6 +253,7 @@ export async function notifyDiscordSingleWrappedAndDonated({
   discordMessageTopicArn: string;
   sns: SNS;
   blockExplorerUrl: `https://${string}`;
+  totalDonatedCount: bigint;
   txHash: `0x${string}`;
 }) {
   const ensName = await client.getEnsName({ address: fromAddress });
@@ -265,6 +267,11 @@ export async function notifyDiscordSingleWrappedAndDonated({
   fields.push({
     name: "by",
     value: displayName,
+    inline: true,
+  });
+  fields.push({
+    name: "total donated",
+    value: totalDonatedCount.toString(),
     inline: true,
   });
   fields.push({
@@ -299,6 +306,7 @@ export async function notifyDiscordMultipleWrappedAndDonated({
   sns,
   blockExplorerUrl,
   txHash,
+  totalDonatedCount,
 }: {
   tokenIds: bigint[];
   wrappedCount: bigint;
@@ -308,6 +316,7 @@ export async function notifyDiscordMultipleWrappedAndDonated({
   discordMessageTopicArn: string;
   sns: SNS;
   blockExplorerUrl: `https://${string}`;
+  totalDonatedCount: bigint;
   txHash: `0x${string}`;
 }) {
   const ensName = await client.getEnsName({ address: fromAddress });
@@ -321,6 +330,11 @@ export async function notifyDiscordMultipleWrappedAndDonated({
   fields.push({
     name: "by",
     value: displayName,
+    inline: true,
+  });
+  fields.push({
+    name: "total donated",
+    value: totalDonatedCount.toString(),
     inline: true,
   });
   fields.push({

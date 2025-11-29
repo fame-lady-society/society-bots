@@ -10,6 +10,7 @@ import { SNS } from "@aws-sdk/client-sns";
 import { createLogger } from "@/utils/logging.ts";
 import { Address } from "viem";
 import {
+  fameLadySocietyAbi,
   fameLadySocietyAddress,
   fameLadySquadAddress,
   saveLadyProxyAddress,
@@ -199,39 +200,55 @@ export const handler = async () => {
       );
     }
   }
+  const promiseTotalDonatedCount =
+    mainnetResult.wrappedAndDonatedEvents.length > 0
+      ? mainnetClient.readContract({
+          address: fameLadySocietyAddress[1],
+          abi: fameLadySocietyAbi,
+          functionName: "balanceOf",
+          args: ["0xCDF3e235A04624d7f23909EbBaD008Db2c54e1cF"],
+        })
+      : Promise.resolve(0n);
 
   for (const event of mainnetResult.wrappedAndDonatedEvents) {
     const {
       args: { tokenIds, donor },
       transactionHash,
     } = event;
+
     if (tokenIds.length === 1) {
       promises.push(
-        notifyDiscordSingleWrappedAndDonated({
-          tokenId: tokenIds[0],
-          wrappedCount: mainnetResult.wrappedCount,
-          fromAddress: donor,
-          channelId: process.env.DISCORD_CHANNEL_ID!,
-          client: mainnetClient,
-          discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
-          sns,
-          blockExplorerUrl: "https://etherscan.io",
-          txHash: transactionHash,
-        }),
+        promiseTotalDonatedCount.then((totalDonatedCount) =>
+          notifyDiscordSingleWrappedAndDonated({
+            tokenId: tokenIds[0],
+            wrappedCount: mainnetResult.wrappedCount,
+            fromAddress: donor,
+            channelId: process.env.DISCORD_CHANNEL_ID!,
+            client: mainnetClient,
+            discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
+            sns,
+            blockExplorerUrl: "https://etherscan.io",
+            txHash: transactionHash,
+            totalDonatedCount,
+          }),
+        ),
       );
     } else {
       promises.push(
-        notifyDiscordMultipleWrappedAndDonated({
-          tokenIds: tokenIds.slice(),
-          wrappedCount: mainnetResult.wrappedCount,
-          fromAddress: donor,
-          channelId: process.env.DISCORD_CHANNEL_ID!,
-          client: mainnetClient,
-          discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
-          sns,
-          blockExplorerUrl: "https://etherscan.io",
-          txHash: transactionHash,
-        }),
+        promiseTotalDonatedCount.then((totalDonatedCount) =>
+          notifyDiscordMultipleWrappedAndDonated({
+            tokenIds: tokenIds.slice(),
+            wrappedCount: mainnetResult.wrappedCount,
+            fromAddress: donor,
+            channelId: process.env.DISCORD_CHANNEL_ID!,
+            client: mainnetClient,
+            discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
+            sns,
+            blockExplorerUrl: "https://etherscan.io",
+            txHash: transactionHash,
+            totalDonatedCount,
+          }),
+        ),
       );
     }
   }
