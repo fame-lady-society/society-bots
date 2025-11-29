@@ -4,7 +4,7 @@ import { mainnetClient, sepoliaClient } from "@/viem.ts";
 import { createLogger } from "@/utils/logging.ts";
 import { SNS } from "@aws-sdk/client-sns";
 import { APIEmbedField } from "discord-api-types/v10";
-import { GetEnsNameReturnType } from "viem";
+import { formatEther, GetEnsNameReturnType } from "viem";
 
 const logger = createLogger({
   name: "fls-wrapper-event:discord",
@@ -41,15 +41,13 @@ export async function notifyDiscordMetadataUpdate({
   tokenId,
   channelId,
   client,
-  testnet,
   discordMessageTopicArn,
   sns,
 }: {
   address: `0x${string}`;
   tokenId: bigint;
   channelId: string;
-  client: typeof sepoliaClient | typeof mainnetClient;
-  testnet: boolean;
+  client: typeof mainnetClient;
   discordMessageTopicArn: string;
   sns: SNS;
 }) {
@@ -79,13 +77,6 @@ export async function notifyDiscordMetadataUpdate({
     inline: true,
   });
 
-  if (testnet) {
-    fields.push({
-      name: "sepolia",
-      value: "true",
-      inline: true,
-    });
-  }
   const description = customDescription(metadata);
   await sendDiscordMessage({
     channelId,
@@ -93,8 +84,7 @@ export async function notifyDiscordMetadataUpdate({
       embeds: [
         {
           title: "#FAMEUS",
-          description:
-            description ?? `A lady was named${testnet ? " on Sepolia" : ""}`,
+          description: description ?? `A lady was named`,
           fields,
           image: {
             url: await redirectFromGet(
@@ -115,18 +105,20 @@ export async function notifyDiscordSingleToken({
   toAddress,
   channelId,
   client,
-  testnet,
   discordMessageTopicArn,
   sns,
+  blockExplorerUrl,
+  txHash,
 }: {
   tokenId: bigint;
   wrappedCount: bigint;
   toAddress: `0x${string}`;
   channelId: string;
   client: typeof sepoliaClient | typeof mainnetClient;
-  testnet: boolean;
   discordMessageTopicArn: string;
   sns: SNS;
+  blockExplorerUrl: `https://${string}`;
+  txHash: `0x${string}`;
 }) {
   const ensName = await client.getEnsName({ address: toAddress });
   const displayName = ensName ? ensName : toAddress;
@@ -141,15 +133,8 @@ export async function notifyDiscordSingleToken({
     value: displayName,
     inline: true,
   });
-  if (testnet) {
-    fields.push({
-      name: "sepolia",
-      value: "true",
-      inline: true,
-    });
-  }
   fields.push({
-    name: "wrapped",
+    name: "total wrapped",
     value: wrappedCount.toString(),
     inline: true,
   });
@@ -160,15 +145,14 @@ export async function notifyDiscordSingleToken({
       embeds: [
         {
           title: "#itsawrap",
-          description: `A new Fame Lady Society was wrapped${
-            testnet ? " on Sepolia" : ""
-          }`,
+          description: `A new Fame Lady Society was wrapped`,
           image: {
             url: await redirectFromGet(
               `https://${process.env.IMAGE_HOST}/fls/thumb/${tokenId}`,
             ),
           },
           fields,
+          url: `${blockExplorerUrl}/tx/${txHash}`,
         },
       ],
     },
@@ -183,18 +167,20 @@ export async function notifyDiscordMultipleTokens({
   toAddress,
   channelId,
   client,
-  testnet,
   discordMessageTopicArn,
   sns,
+  blockExplorerUrl,
+  txHash,
 }: {
   tokenIds: bigint[];
   wrappedCount: bigint;
   toAddress: `0x${string}`;
   channelId: string;
   client: typeof sepoliaClient | typeof mainnetClient;
-  testnet: boolean;
   discordMessageTopicArn: string;
   sns: SNS;
+  blockExplorerUrl: `https://${string}`;
+  txHash: `0x${string}`;
 }) {
   let ensName: GetEnsNameReturnType;
   try {
@@ -215,19 +201,12 @@ export async function notifyDiscordMultipleTokens({
     value: displayName,
     inline: true,
   });
-  if (testnet) {
-    fields.push({
-      name: "sepolia",
-      value: "true",
-      inline: true,
-    });
-  }
+
   fields.push({
-    name: "wrapped",
+    name: "total wrapped",
     value: wrappedCount.toString(),
     inline: true,
   });
-
   const url = `https://${process.env.IMAGE_HOST}/fls/mosaic/${tokenIds
     .map((t) => t.toString())
     .join(",")}`;
@@ -240,13 +219,273 @@ export async function notifyDiscordMultipleTokens({
       embeds: [
         {
           title: "#itsawrap",
-          description: `New Fame Lady Society tokens were wrapped${
-            testnet ? " on Sepolia" : ""
-          }`,
+          description: `New Fame Lady Society tokens were wrapped`,
           image: {
             url: await redirectFromGet(url),
           },
           fields,
+          url: `${blockExplorerUrl}/tx/${txHash}`,
+        },
+      ],
+    },
+    topicArn: discordMessageTopicArn,
+    sns,
+  });
+}
+
+export async function notifyDiscordSingleWrappedAndDonated({
+  tokenId,
+  wrappedCount,
+  fromAddress,
+  channelId,
+  client,
+  discordMessageTopicArn,
+  sns,
+  blockExplorerUrl,
+  txHash,
+}: {
+  tokenId: bigint;
+  wrappedCount: bigint;
+  fromAddress: `0x${string}`;
+  channelId: string;
+  client: typeof mainnetClient;
+  discordMessageTopicArn: string;
+  sns: SNS;
+  blockExplorerUrl: `https://${string}`;
+  txHash: `0x${string}`;
+}) {
+  const ensName = await client.getEnsName({ address: fromAddress });
+  const displayName = ensName ? ensName : fromAddress;
+  const fields: APIEmbedField[] = [];
+  fields.push({
+    name: "token id",
+    value: tokenId.toString(),
+    inline: true,
+  });
+  fields.push({
+    name: "by",
+    value: displayName,
+    inline: true,
+  });
+  fields.push({
+    name: "total wrapped",
+    value: wrappedCount.toString(),
+    inline: true,
+  });
+  await sendDiscordMessage({
+    channelId,
+    message: {
+      embeds: [
+        {
+          title: "#donate",
+          description: `A new Fame Lady Society was doanted to the vault!`,
+          fields,
+          url: `${blockExplorerUrl}/tx/${txHash}`,
+        },
+      ],
+    },
+    topicArn: discordMessageTopicArn,
+    sns,
+  });
+}
+
+export async function notifyDiscordMultipleWrappedAndDonated({
+  tokenIds,
+  wrappedCount,
+  fromAddress,
+  channelId,
+  client,
+  discordMessageTopicArn,
+  sns,
+  blockExplorerUrl,
+  txHash,
+}: {
+  tokenIds: bigint[];
+  wrappedCount: bigint;
+  fromAddress: `0x${string}`;
+  channelId: string;
+  client: typeof mainnetClient;
+  discordMessageTopicArn: string;
+  sns: SNS;
+  blockExplorerUrl: `https://${string}`;
+  txHash: `0x${string}`;
+}) {
+  const ensName = await client.getEnsName({ address: fromAddress });
+  const displayName = ensName ? ensName : fromAddress;
+  const fields: APIEmbedField[] = [];
+  fields.push({
+    name: "new",
+    value: tokenIds.length.toString(),
+    inline: true,
+  });
+  fields.push({
+    name: "by",
+    value: displayName,
+    inline: true,
+  });
+  fields.push({
+    name: "total wrapped",
+    value: wrappedCount.toString(),
+    inline: true,
+  });
+  const url = `https://${process.env.IMAGE_HOST}/fls/mosaic/${tokenIds
+    .map((t) => t.toString())
+    .join(",")}`;
+  await sendDiscordMessage({
+    channelId,
+    message: {
+      embeds: [
+        {
+          title: "#donate",
+          description: `New Fame Lady Society tokens were donated to the vault!`,
+          image: {
+            url: await redirectFromGet(url),
+          },
+          fields,
+          url: `${blockExplorerUrl}/tx/${txHash}`,
+        },
+      ],
+    },
+    topicArn: discordMessageTopicArn,
+    sns,
+  });
+}
+
+const formatEthCost = (ethCost: bigint) => {
+  const value = formatEther(ethCost);
+  const dotIndex = value.indexOf(".");
+  if (dotIndex === -1) return value;
+  const fractionalLength = value.length - dotIndex - 1;
+  if (fractionalLength <= 4) return value;
+  const rounded = Number(value).toFixed(4);
+  return rounded.replace(/\.?0+$/, "");
+};
+
+export async function notifyDiscordSingleSweepAndWrap({
+  tokenId,
+  wrappedCount,
+  fromAddress,
+  channelId,
+  client,
+  ethCost,
+  discordMessageTopicArn,
+  sns,
+  blockExplorerUrl,
+  txHash,
+}: {
+  tokenId: bigint;
+  wrappedCount: bigint;
+  fromAddress: `0x${string}`;
+  channelId: string;
+  ethCost: bigint;
+  client: typeof mainnetClient;
+  discordMessageTopicArn: string;
+  sns: SNS;
+  blockExplorerUrl: `https://${string}`;
+  txHash: `0x${string}`;
+}) {
+  const ensName = await client.getEnsName({ address: fromAddress });
+  const displayName = ensName ? ensName : fromAddress;
+  const fields: APIEmbedField[] = [];
+
+  fields.push({
+    name: "token id",
+    value: tokenId.toString(),
+    inline: true,
+  });
+  fields.push({
+    name: "eth cost",
+    value: formatEthCost(ethCost),
+    inline: true,
+  });
+  fields.push({
+    name: "by",
+    value: displayName,
+    inline: true,
+  });
+  fields.push({
+    name: "total wrapped",
+    value: wrappedCount.toString(),
+    inline: true,
+  });
+  await sendDiscordMessage({
+    channelId,
+    message: {
+      embeds: [
+        {
+          title: "#sweep",
+          description: `A new Fame Lady Society was swept and wrapped!`,
+          fields,
+          url: `${blockExplorerUrl}/tx/${txHash}`,
+        },
+      ],
+    },
+    topicArn: discordMessageTopicArn,
+    sns,
+  });
+}
+
+export async function notifyDiscordMultipleSweepAndWrap({
+  tokenIds,
+  wrappedCount,
+  fromAddress,
+  channelId,
+  client,
+  ethCost,
+  discordMessageTopicArn,
+  sns,
+  blockExplorerUrl,
+  txHash,
+}: {
+  tokenIds: bigint[];
+  wrappedCount: bigint;
+  fromAddress: `0x${string}`;
+  channelId: string;
+  ethCost: bigint;
+  client: typeof mainnetClient;
+  discordMessageTopicArn: string;
+  sns: SNS;
+  blockExplorerUrl: `https://${string}`;
+  txHash: `0x${string}`;
+}) {
+  const ensName = await client.getEnsName({ address: fromAddress });
+  const displayName = ensName ? ensName : fromAddress;
+  const fields: APIEmbedField[] = [];
+  fields.push({
+    name: "new",
+    value: tokenIds.length.toString(),
+    inline: true,
+  });
+  fields.push({
+    name: "by",
+    value: displayName,
+    inline: true,
+  });
+  fields.push({
+    name: "eth cost",
+    value: formatEthCost(ethCost),
+    inline: true,
+  });
+  fields.push({
+    name: "total wrapped",
+    value: wrappedCount.toString(),
+    inline: true,
+  });
+  const url = `https://${process.env.IMAGE_HOST}/fls/mosaic/${tokenIds
+    .map((t) => t.toString())
+    .join(",")}`;
+  await sendDiscordMessage({
+    channelId,
+    message: {
+      embeds: [
+        {
+          title: "#sweep",
+          description: `New Fame Lady Society tokens were swept and wrapped!`,
+          image: {
+            url: await redirectFromGet(url),
+          },
+          fields,
+          url: `${blockExplorerUrl}/tx/${txHash}`,
         },
       ],
     },

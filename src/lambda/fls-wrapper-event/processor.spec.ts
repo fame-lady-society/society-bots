@@ -5,6 +5,8 @@ import { DefaultEventProcessor } from "./processor.ts";
 import {
   fameLadySocietyAddress,
   fameLadySquadAddress,
+  saveLadyProxyAddress,
+  vaultDonatorAddress,
 } from "@/wagmi.generated.ts";
 import { bigIntToStringJsonFormat } from "@/utils/json.ts";
 
@@ -19,6 +21,8 @@ describe("EventProcessor", () => {
       client as any,
       fameLadySocietyAddress[1],
       fameLadySquadAddress[1],
+      saveLadyProxyAddress[1],
+      vaultDonatorAddress[1],
     );
 
     const result = await processor.processEvents({

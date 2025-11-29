@@ -3306,6 +3306,515 @@ export const fameSocietyTokenConfig = {
 } as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// SaveLady
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/**
+ * [__View Contract on Ethereum Etherscan__](https://etherscan.io/address/0xDA512B4a464AD9Ffe18FF2ddaDcF689615f79A4A)
+ */
+export const saveLadyAbi = [
+  {
+    type: 'error',
+    inputs: [{ name: 'target', internalType: 'address', type: 'address' }],
+    name: 'AddressEmptyCode',
+  },
+  { type: 'error', inputs: [], name: 'AlreadyInitialized' },
+  {
+    type: 'error',
+    inputs: [
+      { name: 'implementation', internalType: 'address', type: 'address' },
+    ],
+    name: 'ERC1967InvalidImplementation',
+  },
+  { type: 'error', inputs: [], name: 'ERC1967NonPayable' },
+  { type: 'error', inputs: [], name: 'FailedCall' },
+  { type: 'error', inputs: [], name: 'InvalidInitialization' },
+  { type: 'error', inputs: [], name: 'NewOwnerIsZeroAddress' },
+  { type: 'error', inputs: [], name: 'NoHandoverRequest' },
+  { type: 'error', inputs: [], name: 'NotInitializing' },
+  { type: 'error', inputs: [], name: 'Reentrancy' },
+  { type: 'error', inputs: [], name: 'UUPSUnauthorizedCallContext' },
+  {
+    type: 'error',
+    inputs: [{ name: 'slot', internalType: 'bytes32', type: 'bytes32' }],
+    name: 'UUPSUnsupportedProxiableUUID',
+  },
+  { type: 'error', inputs: [], name: 'Unauthorized' },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'version',
+        internalType: 'uint64',
+        type: 'uint64',
+        indexed: false,
+      },
+    ],
+    name: 'Initialized',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'pendingOwner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+    ],
+    name: 'OwnershipHandoverCanceled',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'pendingOwner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+    ],
+    name: 'OwnershipHandoverRequested',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'oldOwner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'newOwner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+    ],
+    name: 'OwnershipTransferred',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'buyer',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'tokenIds',
+        internalType: 'uint256[]',
+        type: 'uint256[]',
+        indexed: false,
+      },
+      {
+        name: 'totalPrice',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'totalWrapCost',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'feePaid',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'SweepAndWrap',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'implementation',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+    ],
+    name: 'Upgraded',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'FAME_LADY_SOCIETY',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'FAME_LADY_SQUAD',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'FEE_BPS',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'UPGRADE_INTERFACE_VERSION',
+    outputs: [{ name: '', internalType: 'string', type: 'string' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'cancelOwnershipHandover',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'pendingOwner', internalType: 'address', type: 'address' },
+    ],
+    name: 'completeOwnershipHandover',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'initialize',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '', internalType: 'address', type: 'address' },
+      { name: '', internalType: 'address', type: 'address' },
+      { name: '', internalType: 'uint256', type: 'uint256' },
+      { name: '', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'onERC721Received',
+    outputs: [{ name: '', internalType: 'bytes4', type: 'bytes4' }],
+    stateMutability: 'pure',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'owner',
+    outputs: [{ name: 'result', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'pendingOwner', internalType: 'address', type: 'address' },
+    ],
+    name: 'ownershipHandoverExpiresAt',
+    outputs: [{ name: 'result', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'proxiableUUID',
+    outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'renounceOwnership',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'requestOwnershipHandover',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'to', internalType: 'address payable', type: 'address' },
+      { name: 'amount', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'rescueETH',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'seaport',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'value', internalType: 'bool', type: 'bool' }],
+    name: 'setSquadApprovalSet',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'squadApprovalSet',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      {
+        name: 'advancedOrders',
+        internalType: 'struct AdvancedOrder[]',
+        type: 'tuple[]',
+        components: [
+          {
+            name: 'parameters',
+            internalType: 'struct OrderParameters',
+            type: 'tuple',
+            components: [
+              { name: 'offerer', internalType: 'address', type: 'address' },
+              { name: 'zone', internalType: 'address', type: 'address' },
+              {
+                name: 'offer',
+                internalType: 'struct OfferItem[]',
+                type: 'tuple[]',
+                components: [
+                  {
+                    name: 'itemType',
+                    internalType: 'enum ItemType',
+                    type: 'uint8',
+                  },
+                  { name: 'token', internalType: 'address', type: 'address' },
+                  {
+                    name: 'identifierOrCriteria',
+                    internalType: 'uint256',
+                    type: 'uint256',
+                  },
+                  {
+                    name: 'startAmount',
+                    internalType: 'uint256',
+                    type: 'uint256',
+                  },
+                  {
+                    name: 'endAmount',
+                    internalType: 'uint256',
+                    type: 'uint256',
+                  },
+                ],
+              },
+              {
+                name: 'consideration',
+                internalType: 'struct ConsiderationItem[]',
+                type: 'tuple[]',
+                components: [
+                  {
+                    name: 'itemType',
+                    internalType: 'enum ItemType',
+                    type: 'uint8',
+                  },
+                  { name: 'token', internalType: 'address', type: 'address' },
+                  {
+                    name: 'identifierOrCriteria',
+                    internalType: 'uint256',
+                    type: 'uint256',
+                  },
+                  {
+                    name: 'startAmount',
+                    internalType: 'uint256',
+                    type: 'uint256',
+                  },
+                  {
+                    name: 'endAmount',
+                    internalType: 'uint256',
+                    type: 'uint256',
+                  },
+                  {
+                    name: 'recipient',
+                    internalType: 'address payable',
+                    type: 'address',
+                  },
+                ],
+              },
+              {
+                name: 'orderType',
+                internalType: 'enum OrderType',
+                type: 'uint8',
+              },
+              { name: 'startTime', internalType: 'uint256', type: 'uint256' },
+              { name: 'endTime', internalType: 'uint256', type: 'uint256' },
+              { name: 'zoneHash', internalType: 'bytes32', type: 'bytes32' },
+              { name: 'salt', internalType: 'uint256', type: 'uint256' },
+              { name: 'conduitKey', internalType: 'bytes32', type: 'bytes32' },
+              {
+                name: 'totalOriginalConsiderationItems',
+                internalType: 'uint256',
+                type: 'uint256',
+              },
+            ],
+          },
+          { name: 'numerator', internalType: 'uint120', type: 'uint120' },
+          { name: 'denominator', internalType: 'uint120', type: 'uint120' },
+          { name: 'signature', internalType: 'bytes', type: 'bytes' },
+          { name: 'extraData', internalType: 'bytes', type: 'bytes' },
+        ],
+      },
+      { name: 'fulfillerConduitKey', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'tokenIds', internalType: 'uint256[]', type: 'uint256[]' },
+      { name: 'ethAmounts', internalType: 'uint256[]', type: 'uint256[]' },
+    ],
+    name: 'sweepAndWrap',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'newOwner', internalType: 'address', type: 'address' }],
+    name: 'transferOwnership',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'newOwner', internalType: 'address', type: 'address' }],
+    name: 'upgradeInit',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'newImplementation', internalType: 'address', type: 'address' },
+      { name: 'data', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'upgradeToAndCall',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+] as const
+
+/**
+ * [__View Contract on Ethereum Etherscan__](https://etherscan.io/address/0xDA512B4a464AD9Ffe18FF2ddaDcF689615f79A4A)
+ */
+export const saveLadyAddress = {
+  1: '0xDA512B4a464AD9Ffe18FF2ddaDcF689615f79A4A',
+} as const
+
+/**
+ * [__View Contract on Ethereum Etherscan__](https://etherscan.io/address/0xDA512B4a464AD9Ffe18FF2ddaDcF689615f79A4A)
+ */
+export const saveLadyConfig = {
+  address: saveLadyAddress,
+  abi: saveLadyAbi,
+} as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// SaveLadyProxy
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/**
+ * [__View Contract on Ethereum Etherscan__](https://etherscan.io/address/0x31fA60d6fF9F8aE536E790ebf885435Be9053116)
+ */
+export const saveLadyProxyAbi = [
+  {
+    type: 'constructor',
+    inputs: [
+      { name: '_logic', internalType: 'address', type: 'address' },
+      { name: 'initialOwner', internalType: 'address', type: 'address' },
+      { name: '_data', internalType: 'bytes', type: 'bytes' },
+    ],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'error',
+    inputs: [{ name: 'target', internalType: 'address', type: 'address' }],
+    name: 'AddressEmptyCode',
+  },
+  {
+    type: 'error',
+    inputs: [{ name: 'admin', internalType: 'address', type: 'address' }],
+    name: 'ERC1967InvalidAdmin',
+  },
+  {
+    type: 'error',
+    inputs: [
+      { name: 'implementation', internalType: 'address', type: 'address' },
+    ],
+    name: 'ERC1967InvalidImplementation',
+  },
+  { type: 'error', inputs: [], name: 'ERC1967NonPayable' },
+  { type: 'error', inputs: [], name: 'FailedCall' },
+  { type: 'error', inputs: [], name: 'ProxyDeniedAdminAccess' },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'previousAdmin',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+      {
+        name: 'newAdmin',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+    ],
+    name: 'AdminChanged',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'implementation',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+    ],
+    name: 'Upgraded',
+  },
+  { type: 'fallback', stateMutability: 'payable' },
+] as const
+
+/**
+ * [__View Contract on Ethereum Etherscan__](https://etherscan.io/address/0x31fA60d6fF9F8aE536E790ebf885435Be9053116)
+ */
+export const saveLadyProxyAddress = {
+  1: '0x31fA60d6fF9F8aE536E790ebf885435Be9053116',
+} as const
+
+/**
+ * [__View Contract on Ethereum Etherscan__](https://etherscan.io/address/0x31fA60d6fF9F8aE536E790ebf885435Be9053116)
+ */
+export const saveLadyProxyConfig = {
+  address: saveLadyProxyAddress,
+  abi: saveLadyProxyAbi,
+} as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // UniswapV2Pool
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -4349,6 +4858,99 @@ export const uniswapV3PoolAddress = {
 export const uniswapV3PoolConfig = {
   address: uniswapV3PoolAddress,
   abi: uniswapV3PoolAbi,
+} as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// VaultDonator
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/**
+ * [__View Contract on Ethereum Etherscan__](https://etherscan.io/address/0x7a276f4b91a97267d652500aa4ab8b2fa388fb9b)
+ */
+export const vaultDonatorAbi = [
+  {
+    type: 'constructor',
+    inputs: [
+      { name: 'wrappedNFTAddress', internalType: 'address', type: 'address' },
+      { name: 'vaultAddress', internalType: 'address', type: 'address' },
+    ],
+    stateMutability: 'nonpayable',
+  },
+  { type: 'error', inputs: [], name: 'EmptyTokenList' },
+  { type: 'error', inputs: [], name: 'InvalidVault' },
+  { type: 'error', inputs: [], name: 'InvalidWrappedNFT' },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'donor',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'vaultAddress',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'tokenIds',
+        internalType: 'uint256[]',
+        type: 'uint256[]',
+        indexed: false,
+      },
+    ],
+    name: 'WrappedAndDonated',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'underlying',
+    outputs: [{ name: '', internalType: 'contract IERC721', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'vault',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'tokenIds', internalType: 'uint256[]', type: 'uint256[]' },
+    ],
+    name: 'wrapAndDonate',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'wrappedNFT',
+    outputs: [
+      { name: '', internalType: 'contract WrappedNFT', type: 'address' },
+    ],
+    stateMutability: 'view',
+  },
+] as const
+
+/**
+ * [__View Contract on Ethereum Etherscan__](https://etherscan.io/address/0x7a276f4b91a97267d652500aa4ab8b2fa388fb9b)
+ */
+export const vaultDonatorAddress = {
+  1: '0x7a276F4B91A97267D652500aa4aB8b2Fa388fb9b',
+} as const
+
+/**
+ * [__View Contract on Ethereum Etherscan__](https://etherscan.io/address/0x7a276f4b91a97267d652500aa4ab8b2fa388fb9b)
+ */
+export const vaultDonatorConfig = {
+  address: vaultDonatorAddress,
+  abi: vaultDonatorAbi,
 } as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

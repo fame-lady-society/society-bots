@@ -8,23 +8,24 @@ import {
 
 import { SNS } from "@aws-sdk/client-sns";
 import { createLogger } from "@/utils/logging.ts";
-import { AbiEvent, Address, Hex, zeroAddress } from "viem";
+import { Address } from "viem";
 import {
-  fameLadySocietyAbi,
   fameLadySocietyAddress,
   fameLadySquadAddress,
-  wrappedNftAddress,
+  saveLadyProxyAddress,
+  vaultDonatorAddress,
 } from "@/wagmi.generated.ts";
-import { mainnetClient, sepoliaClient } from "@/viem.ts";
+import { mainnetClient } from "@/viem.ts";
 import { DefaultEventProcessor } from "./processor.ts";
 import {
   notifyDiscordMetadataUpdate,
+  notifyDiscordMultipleSweepAndWrap,
   notifyDiscordMultipleTokens,
+  notifyDiscordMultipleWrappedAndDonated,
+  notifyDiscordSingleSweepAndWrap,
   notifyDiscordSingleToken,
+  notifyDiscordSingleWrappedAndDonated,
 } from "./discord.ts";
-
-type PromiseType<T extends Promise<any>> =
-  T extends Promise<infer U> ? U : never;
 
 const logger = createLogger({
   name: "fls-wrapper-event",
@@ -60,161 +61,89 @@ const db = DynamoDBDocumentClient.from(
 // Modify the handler to use the processor
 export const handler = async () => {
   const sns = new SNS({});
-  const sepoliaProcessor = new DefaultEventProcessor(
-    sepoliaClient,
-    wrappedNftAddress[11155111],
-    "0x71e57b37b4bea589673d0afe1992a6457ca754b3",
-  );
   const mainnetProcessor = new DefaultEventProcessor(
     mainnetClient,
     fameLadySocietyAddress[1],
     fameLadySquadAddress[1],
+    saveLadyProxyAddress[1],
+    vaultDonatorAddress[1],
   );
 
-  // Get last blocks from DynamoDB
-  const [lastBlockSepoliaResponse, lastBlockMainnetResponse] =
-    await Promise.all([
-      db.send(
-        new GetCommand({
-          TableName: process.env.DYNAMODB_TABLE,
-          Key: {
-            key: "lastBlockSepolia",
-          },
-        }),
-      ),
-      db.send(
-        new GetCommand({
-          TableName: process.env.DYNAMODB_TABLE,
-          Key: {
-            key: "lastBlockMainnet",
-          },
-        }),
-      ),
-    ]);
-
-  const [latestBlockSepolia, latestBlockMainnet] = await Promise.all([
-    sepoliaClient.getBlockNumber(),
-    mainnetClient.getBlockNumber(),
-  ]);
-
-  const lastBlockSepolia = BigInt(
-    lastBlockSepoliaResponse.Item?.value ?? latestBlockSepolia,
+  // Get last block from DynamoDB
+  const lastBlockMainnetResponse = await db.send(
+    new GetCommand({
+      TableName: process.env.DYNAMODB_TABLE,
+      Key: {
+        key: "lastBlockMainnet",
+      },
+    }),
   );
+
+  const latestBlockMainnet = await mainnetClient.getBlockNumber();
+
   const lastBlockMainnet = BigInt(
     lastBlockMainnetResponse.Item?.value ?? latestBlockMainnet,
   );
 
-  const [sepoliaResult, mainnetResult] = await Promise.all([
-    sepoliaProcessor.processEvents({
-      fromBlock: lastBlockSepolia,
-      toBlock: latestBlockSepolia,
-    }),
-    mainnetProcessor.processEvents({
-      fromBlock: lastBlockMainnet,
-      toBlock: latestBlockMainnet,
-    }),
-  ]);
+  const mainnetResult = await mainnetProcessor.processEvents({
+    fromBlock: lastBlockMainnet,
+    toBlock: latestBlockMainnet,
+  });
 
   const promises: Promise<void>[] = [];
 
-  // Group all transfer events by to address
-  const sepoliaTransferEventsByToAddress = sepoliaResult.transferEvents.reduce(
+  // Group all transfer events by transactionHash and to address
+  const transferGroupsByTxAndAddress = mainnetResult.transferEvents.reduce(
     (acc, event) => {
-      acc[event.args.to] = [...(acc[event.args.to] || []), event];
+      const key = `${event.transactionHash}-${event.args.to}`;
+      if (!acc[key]) {
+        acc[key] = {
+          address: event.args.to,
+          transactionHash: event.transactionHash,
+          tokenIds: [],
+        };
+      }
+      acc[key].tokenIds.push(event.args.tokenId);
       return acc;
     },
-    {} as Record<Address, typeof sepoliaResult.transferEvents>,
+    {} as Record<
+      string,
+      { address: Address; transactionHash: `0x${string}`; tokenIds: bigint[] }
+    >,
   );
 
-  const mainnetTransferEventsByToAddress = mainnetResult.transferEvents.reduce(
-    (acc, event) => {
-      acc[event.args.to] = [...(acc[event.args.to] || []), event];
-      return acc;
-    },
-    {} as Record<Address, typeof mainnetResult.transferEvents>,
-  );
+  const transferGroups = Object.values(transferGroupsByTxAndAddress);
 
-  for (const [toAddress, events] of Object.entries(
-    sepoliaTransferEventsByToAddress,
-  )) {
-    const tokenIds = events.map(({ args }) => args.tokenId);
-    if (tokenIds.length === 1) {
+  for (const group of transferGroups) {
+    if (group.tokenIds.length === 1) {
       promises.push(
         notifyDiscordSingleToken({
-          tokenId: events[0].args.tokenId,
-          wrappedCount: sepoliaResult.wrappedCount,
-          toAddress: toAddress as Address,
+          tokenId: group.tokenIds[0],
+          wrappedCount: mainnetResult.wrappedCount,
+          toAddress: group.address,
           channelId: process.env.DISCORD_CHANNEL_ID!,
-          client: sepoliaClient,
+          client: mainnetClient,
           discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
-          testnet: true,
+          blockExplorerUrl: "https://etherscan.io",
+          txHash: group.transactionHash,
           sns,
         }),
       );
     } else {
       promises.push(
         notifyDiscordMultipleTokens({
-          tokenIds,
-          wrappedCount: sepoliaResult.wrappedCount,
-          toAddress: toAddress as Address,
+          tokenIds: group.tokenIds,
+          wrappedCount: mainnetResult.wrappedCount,
+          toAddress: group.address,
           channelId: process.env.DISCORD_CHANNEL_ID!,
-          client: sepoliaClient,
-          testnet: true,
+          client: mainnetClient,
           discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
+          blockExplorerUrl: "https://etherscan.io",
+          txHash: group.transactionHash,
           sns,
         }),
       );
     }
-  }
-
-  for (const [toAddress, events] of Object.entries(
-    mainnetTransferEventsByToAddress,
-  )) {
-    const tokenIds = events.map(({ args }) => args.tokenId);
-    if (tokenIds.length === 1) {
-      promises.push(
-        notifyDiscordSingleToken({
-          tokenId: tokenIds[0],
-          wrappedCount: mainnetResult.wrappedCount,
-          toAddress: toAddress as Address,
-          channelId: process.env.DISCORD_CHANNEL_ID!,
-          client: mainnetClient,
-          testnet: false,
-          discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
-          sns,
-        }),
-      );
-    } else {
-      promises.push(
-        notifyDiscordMultipleTokens({
-          tokenIds,
-          wrappedCount: mainnetResult.wrappedCount,
-          toAddress: toAddress as Address,
-          channelId: process.env.DISCORD_CHANNEL_ID!,
-          client: mainnetClient,
-          testnet: false,
-          discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
-          sns,
-        }),
-      );
-    }
-  }
-
-  for (const event of sepoliaResult.metadataEvents) {
-    const {
-      args: { _tokenId: tokenId },
-    } = event;
-    promises.push(
-      notifyDiscordMetadataUpdate({
-        address: wrappedNftAddress[11155111],
-        tokenId,
-        channelId: process.env.DISCORD_CHANNEL_ID!,
-        client: sepoliaClient,
-        testnet: true,
-        discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
-        sns,
-      }),
-    );
   }
 
   for (const event of mainnetResult.metadataEvents) {
@@ -227,33 +156,95 @@ export const handler = async () => {
         tokenId,
         channelId: process.env.DISCORD_CHANNEL_ID!,
         client: mainnetClient,
-        testnet: false,
         discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
         sns,
       }),
     );
   }
 
+  for (const event of mainnetResult.sweepAndWrapEvents) {
+    const {
+      args: { tokenIds, totalPrice, buyer },
+      transactionHash,
+    } = event;
+    if (tokenIds.length === 1) {
+      promises.push(
+        notifyDiscordSingleSweepAndWrap({
+          tokenId: tokenIds[0],
+          wrappedCount: mainnetResult.wrappedCount,
+          fromAddress: buyer,
+          channelId: process.env.DISCORD_CHANNEL_ID!,
+          client: mainnetClient,
+          discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
+          sns,
+          blockExplorerUrl: "https://etherscan.io",
+          txHash: transactionHash,
+          ethCost: totalPrice,
+        }),
+      );
+    } else {
+      promises.push(
+        notifyDiscordMultipleSweepAndWrap({
+          tokenIds: tokenIds.slice(),
+          wrappedCount: mainnetResult.wrappedCount,
+          fromAddress: buyer,
+          channelId: process.env.DISCORD_CHANNEL_ID!,
+          client: mainnetClient,
+          discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
+          sns,
+          blockExplorerUrl: "https://etherscan.io",
+          txHash: transactionHash,
+          ethCost: totalPrice,
+        }),
+      );
+    }
+  }
+
+  for (const event of mainnetResult.wrappedAndDonatedEvents) {
+    const {
+      args: { tokenIds, donor },
+      transactionHash,
+    } = event;
+    if (tokenIds.length === 1) {
+      promises.push(
+        notifyDiscordSingleWrappedAndDonated({
+          tokenId: tokenIds[0],
+          wrappedCount: mainnetResult.wrappedCount,
+          fromAddress: donor,
+          channelId: process.env.DISCORD_CHANNEL_ID!,
+          client: mainnetClient,
+          discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
+          sns,
+          blockExplorerUrl: "https://etherscan.io",
+          txHash: transactionHash,
+        }),
+      );
+    } else {
+      promises.push(
+        notifyDiscordMultipleWrappedAndDonated({
+          tokenIds: tokenIds.slice(),
+          wrappedCount: mainnetResult.wrappedCount,
+          fromAddress: donor,
+          channelId: process.env.DISCORD_CHANNEL_ID!,
+          client: mainnetClient,
+          discordMessageTopicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
+          sns,
+          blockExplorerUrl: "https://etherscan.io",
+          txHash: transactionHash,
+        }),
+      );
+    }
+  }
+
   await Promise.all(promises);
 
-  await Promise.all([
-    db.send(
-      new PutCommand({
-        TableName: process.env.DYNAMODB_TABLE,
-        Item: {
-          key: "lastBlockSepolia",
-          value: Number(sepoliaResult.newBlock),
-        },
-      }),
-    ),
-    db.send(
-      new PutCommand({
-        TableName: process.env.DYNAMODB_TABLE,
-        Item: {
-          key: "lastBlockMainnet",
-          value: Number(mainnetResult.newBlock),
-        },
-      }),
-    ),
-  ]);
+  await db.send(
+    new PutCommand({
+      TableName: process.env.DYNAMODB_TABLE,
+      Item: {
+        key: "lastBlockMainnet",
+        value: Number(mainnetResult.newBlock),
+      },
+    }),
+  );
 };

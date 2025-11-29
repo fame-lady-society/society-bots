@@ -77,6 +77,24 @@ export default defineConfig({
             [mainnet.id]: "0x6cf4328f1ea83b5d592474f9fcdc714faafd1574" as const,
           },
         },
+        {
+          name: "SaveLadyProxy",
+          address: {
+            [mainnet.id]: "0x31fA60d6fF9F8aE536E790ebf885435Be9053116",
+          },
+        },
+        {
+          name: "SaveLady",
+          address: {
+            [mainnet.id]: "0xDA512B4a464AD9Ffe18FF2ddaDcF689615f79A4A",
+          },
+        },
+        {
+          name: "VaultDonator",
+          address: {
+            [mainnet.id]: "0x7a276f4b91a97267d652500aa4ab8b2fa388fb9b",
+          },
+        },
       ],
     }),
     etherscan({
