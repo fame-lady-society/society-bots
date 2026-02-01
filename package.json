@@ -68,7 +68,7 @@
     "aws-sdk": "^2.1120.0",
     "axios": "^1.13.4",
     "bunyan": "^1.8.15",
-    "canvas": "^2.11.2",
+    "canvas": "^3.2.1",
     "commander": "^9.4.0",
     "content-hash": "^2.5.2",
     "discord-api-types": "^0.37.10",
