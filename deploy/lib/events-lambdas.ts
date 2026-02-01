@@ -36,7 +36,7 @@ function compile(entrypoint: string, options?: BuildOptions) {
     outfile,
     bundle: true,
     platform: "node",
-    target: "node20",
+    target: "node24",
     format: "esm",
     external: ["aws-sdk", "canvas", "dtrace-provider"],
     inject: [path.join(__dirname, "./esbuild/cjs-shim.ts")],
@@ -116,7 +116,7 @@ export class EventLambdas extends Construct {
       path.join(__dirname, "../../src/discord/lambda/interaction.ts"),
     );
     const interactionHandler = new lambda.Function(this, "interactionHandler", {
-      runtime: lambda.Runtime.NODEJS_20_X,
+      runtime: lambda.Runtime.NODEJS_24_X,
       architecture: lambda.Architecture.ARM_64,
       code: lambda.Code.fromAsset(interactionHandlerCodeDir),
       handler: "index.handler",
@@ -141,7 +141,7 @@ export class EventLambdas extends Construct {
       path.join(__dirname, "../../src/discord/lambda/deferred.ts"),
     );
     new lambda.Function(this, "deferredMessage", {
-      runtime: lambda.Runtime.NODEJS_20_X,
+      runtime: lambda.Runtime.NODEJS_24_X,
       code: lambda.Code.fromAsset(deferredMessageCodeDir),
       handler: "index.handler",
       timeout: cdk.Duration.seconds(30),
@@ -163,7 +163,7 @@ export class EventLambdas extends Construct {
       path.join(__dirname, "../../src/fame-event/lambdas/messaging/index.ts"),
     );
     const fameEventHandler = new lambda.Function(this, "FameEvent", {
-      runtime: lambda.Runtime.NODEJS_20_X,
+      runtime: lambda.Runtime.NODEJS_24_X,
       code: lambda.Code.fromAsset(fameEventCodeDir),
       handler: "index.handler",
       timeout: cdk.Duration.seconds(60),
@@ -194,7 +194,7 @@ export class EventLambdas extends Construct {
     );
 
     const wrapEventHandler = new lambda.Function(this, "WrapEvent", {
-      runtime: lambda.Runtime.NODEJS_20_X,
+      runtime: lambda.Runtime.NODEJS_24_X,
       code: lambda.Code.fromAsset(wrapEventCodeDir),
       handler: "index.handler",
       timeout: cdk.Duration.seconds(60),

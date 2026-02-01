@@ -45,7 +45,7 @@ export const handler = async (
 
   const BUCKET = bucketResult.Parameter?.Value;
   const IPFS_AUTH = ipfsApiAuth.Parameter?.Value;
-  const CORS_ALLOWED_ORIGINS = JSON.parse(corsAllowedHosts.Parameter?.Value);
+  const CORS_ALLOWED_ORIGINS = JSON.parse(corsAllowedHosts.Parameter?.Value!);
 
   if (!BUCKET) {
     throw new Error("BUCKET is not set");

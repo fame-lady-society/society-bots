@@ -7,20 +7,19 @@
   "type": "module",
   "scripts": {
     "test": "yarn node --experimental-vm-modules $(yarn bin jest)",
-    "fame-ipfs:origin:build": "esbuild src/lambda/fls-ipfs/origin.ts --banner:js=\"import { createRequire } from 'module';const require = createRequire(import.meta.url);\" --platform=node --format=esm --bundle --target=node16.14 --external:ipfs-http-client --outfile=../../deploy/.layers/fls-ipfs/origin/index.mjs && cd ../../deploy && yarn build:layer:fls-ipfs",
-    "fame-thumb:build": "esbuild src/lambda/fame/thumb.ts --banner:js=\"import { createRequire } from 'module';const require = createRequire(import.meta.url);\" --platform=node --format=esm --target=node16.14 --bundle --external:canvas --external:ipfs-http-client --outfile=../../deploy/.layers/fame-thumb/index.mjs",
-    "fame-mosaic:build": "esbuild src/lambda/fame/mosaic.ts --banner:js=\"import { createRequire } from 'module';const require = createRequire(import.meta.url);\" --platform=node --format=esm --target=node16.14 --bundle --external:canvas --outfile=../../deploy/.layers/fame-mosaic/index.mjs",
-    "graphql:build": "esbuild src/lambda/graphql.ts --banner:js=\"import { createRequire } from 'module';const require = createRequire(import.meta.url);\" --platform=node --format=esm --target=node16.14 --bundle --outfile=../../deploy/.layers/graphql/index.mjs",
+    "fame-ipfs:origin:build": "esbuild ./src/lambda/fls-ipfs/origin.ts --inject:./deploy/lib/esbuild/cjs-shim.ts --external:aws-sdk --external:canvas --external:dtrace-provider --platform=node --format=esm --bundle --target=node24 --external:ipfs-http-client --outfile=./deploy/.layers/fls-ipfs/origin/index.mjs",
+    "fame-thumb:build": "esbuild src/lambda/fame/thumb.ts --inject:./deploy/lib/esbuild/cjs-shim.ts --external:aws-sdk --external:canvas --external:dtrace-provider --platform=node --format=esm --target=node24 --bundle --external:canvas --external:ipfs-http-client --outfile=./deploy/.layers/fame-thumb/index.mjs",
+    "fame-mosaic:build": "esbuild src/lambda/fame/mosaic.ts --inject:./deploy/lib/esbuild/cjs-shim.ts --external:aws-sdk --external:canvas --external:dtrace-provider --platform=node --format=esm --target=node24 --bundle --external:canvas  --outfile=./deploy/.layers/fame-mosaic/index.mjs",
     "discord:build": "yarn discord:interaction:build && yarn discord:deferred:build",
-    "discord:interaction:build": "esbuild src/discord/lambda/discord.ts --banner:js=\"import { createRequire } from 'module';const require = createRequire(import.meta.url);\" --platform=node --format=esm --target=node16.14 --bundle --outfile=../../deploy/.layers/discord-interaction/index.mjs",
-    "discord:deferred:build": "esbuild src/discord/lambda/deferred.ts --banner:js=\"import { createRequire } from 'module';const require = createRequire(import.meta.url);\" --platform=node --format=esm --target=node16.14 --bundle --outfile=../../deploy/.layers/discord-deferred/index.mjs",
-    "discord:fls:wrapped:build": "esbuild src/lambda/fls-wrapper-event/index.ts --banner:js=\"import { createRequire } from 'module';const require = createRequire(import.meta.url);\" --platform=node --format=esm --target=node16.14 --bundle --external:dtrace-provider --outfile=../../deploy/.layers/fls-wrapper-event/index.mjs",
+    "discord:interaction:build": "esbuild ./src/discord/lambda/interaction.ts --inject:./deploy/lib/esbuild/cjs-shim.ts --external:aws-sdk --external:canvas --external:dtrace-provider --platform=node --format=esm --target=node24 --bundle  --outfile=./deploy/.layers/discord-interaction/index.mjs",
+    "discord:deferred:build": "esbuild src/discord/lambda/deferred.ts --inject:./deploy/lib/esbuild/cjs-shim.ts --external:aws-sdk --external:canvas --external:dtrace-provider --platform=node --format=esm --target=node24 --bundle  --outfile=./deploy/.layers/discord-deferred/index.mjs",
+    "discord:fls:wrapped:build": "esbuild src/lambda/fls-wrapper-event/index.ts --inject:./deploy/lib/esbuild/cjs-shim.ts --external:aws-sdk --external:canvas --external:dtrace-provider --platform=node --format=esm --target=node24 --bundle --external:dtrace-provider  --outfile=./deploy/.layers/fls-wrapper-event/index.mjs",
     "discord:cli": "yarn discord:cli:build && node dist/discord-cli/index.mjs",
-    "discord:cli:build": "esbuild src/discord/cli.ts --banner:js=\"import { createRequire } from 'module';const require = createRequire(import.meta.url);\" --platform=node --format=esm --target=node16.14 --outfile=dist/discord-cli/index.mjs",
-    "generate": "yarn generate:schema && yarn generate:types",
-    "generate:schema": "yarn --cwd ../../packages/graphql schema:build",
+    "discord:cli:build": "esbuild src/discord/cli.ts --inject:./deploy/lib/esbuild/cjs-shim.ts --platform=node --format=esm --target=node24 --outfile=dist/discord-cli/index.mjs",
+    "build": "yarn fame-ipfs:origin:build && yarn fame-thumb:build && yarn fame-mosaic:build && yarn discord:build && yarn discord:fls:wrapped:build && yarn discord:cli:build",
     "generate:types": "graphql-codegen --config codegen.yml",
-    "nodets": "node --import 'data:text/javascript,import { register } from \"node:module\"; import { pathToFileURL } from \"node:url\"; register(\"ts-node/esm\", pathToFileURL(\"./\"));'"
+    "nodets": "node --import 'data:text/javascript,import { register } from \"node:module\"; import { pathToFileURL } from \"node:url\"; register(\"ts-node/esm\", pathToFileURL(\"./\"));'",
+    "types": "tsc --noEmit -p tsconfig.json"
   },
   "devDependencies": {
     "@esbuild-plugins/node-modules-polyfill": "^0.1.4",
@@ -32,11 +31,11 @@
     "@types/aws-lambda": "^8.10.95",
     "@types/bunyan": "^1.8.11",
     "@types/jest": "^29.5.12",
-    "@types/node": "^20.14.10",
+    "@types/node": "^24.0.0",
     "@types/parquetjs": "^0.10.3",
     "@types/sharp": "^0.30.2",
     "@wagmi/cli": "^2.8.0",
-    "esbuild": "^0.24.0",
+    "esbuild": "^0.27.2",
     "eslint": "^8.13.0",
     "jest": "^29.7.0",
     "prettier": "^3.4.1",
@@ -67,7 +66,7 @@
     "apollo-server-lambda": "^3.13.0",
     "aws-lambda": "^1.0.7",
     "aws-sdk": "^2.1120.0",
-    "axios": "^0.27.2",
+    "axios": "^1.13.4",
     "bunyan": "^1.8.15",
     "canvas": "^2.11.2",
     "commander": "^9.4.0",
@@ -92,6 +91,9 @@
     "twitter-api-v2": "^1.12.0",
     "viem": "2.21.51",
     "wagmi": "^2.13.2"
+  },
+  "engines": {
+    "node": ">=24"
   },
   "packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e"
 }

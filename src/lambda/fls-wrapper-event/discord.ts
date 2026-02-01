@@ -88,7 +88,7 @@ export async function notifyDiscordMetadataUpdate({
           fields,
           image: {
             url: await redirectFromGet(
-              `https://fls-www.vercel.app/${testnet ? "sepolia" : "mainnet"}/og/token/${tokenId}`,
+              `https://fls-www.vercel.app/mainnet/og/token/${tokenId}`,
             ),
           },
         },

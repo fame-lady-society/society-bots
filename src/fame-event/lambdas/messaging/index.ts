@@ -32,7 +32,7 @@ import {
 import { findEvents } from "./utils.ts";
 import { EventType } from "./types.ts";
 import { aggregateLogs, aggregateSwapEvents } from "./aggregate.ts";
-import { CompleteSwapEvent } from "@/webhook/swap/types.ts";
+import { CompleteSwapEvent } from "@/webhook/swap/types.js";
 import {
   DiscordGuildChannelNotification,
   getNotifications,

@@ -105,6 +105,6 @@
     "alwaysStrict": true
   },
   "include": ["**/*.ts"],
-  "exclude": ["**/node_modules", "**/.*/", "dist", "build", "deploy"],
+  "exclude": ["node_modules", "dist", "build", "deploy", "wagmi.config.ts"],
   "references": []
 }

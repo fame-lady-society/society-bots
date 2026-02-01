@@ -6,7 +6,7 @@ import type { Readable } from "stream";
 import { cidPath as isCidPath, cid as isCid } from "is-ipfs";
 import { S3 } from "@aws-sdk/client-s3";
 import { SSM } from "@aws-sdk/client-ssm";
-import { fetchBuffer } from "../../ipfs/client";
+import { fetchBuffer } from "../../ipfs/client.js";
 
 const s3 = new S3({
   region: "us-east-1",
@@ -35,7 +35,7 @@ export const handler = async (
 
   const BUCKET = bucketResult.Parameter?.Value;
   const IPFS_AUTH = ipfsApiAuth.Parameter?.Value;
-  const CORS_ALLOWED_ORIGINS = JSON.parse(corsAllowedHosts.Parameter?.Value);
+  const CORS_ALLOWED_ORIGINS = JSON.parse(corsAllowedHosts.Parameter?.Value!);
 
   if (!BUCKET) {
     throw new Error("BUCKET is not set");

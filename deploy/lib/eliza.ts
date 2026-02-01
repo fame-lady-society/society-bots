@@ -15,7 +15,7 @@ function compile(entrypoint: string, options?: BuildOptions) {
     outfile,
     bundle: true,
     platform: "node",
-    target: "node20",
+    target: "node24",
     format: "esm",
     external: ["aws-sdk", "canvas", "dtrace-provider"],
     inject: [path.join(__dirname, "./esbuild/cjs-shim.ts")],
@@ -47,7 +47,7 @@ export class Eliza extends Construct {
     // const lambdaFunction = new lambda.Function(this, "ElizaLambda", {
     //   code: lambda.Code.fromAsset("path/to/your/lambda/code.zip"),
     //   handler: "index.handler",
-    //   runtime: lambda.Runtime.NODEJS_18_X,
+    //   runtime: lambda.Runtime.NODEJS_24_X,
     // });
 
     new cdk.CfnOutput(this, "ElizaStateTableName", {

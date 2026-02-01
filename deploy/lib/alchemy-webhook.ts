@@ -28,7 +28,7 @@ function compile(entrypoint: string, options?: BuildOptions) {
     outfile,
     bundle: true,
     platform: "node",
-    target: "node20",
+    target: "node24",
     format: "esm",
     external: ["aws-sdk", "canvas", "dtrace-provider"],
     inject: [path.join(__dirname, "./esbuild/cjs-shim.ts")],
@@ -53,7 +53,7 @@ export class AlchemyWebhooks extends Construct {
     } = props;
 
     const webhookSwapHandler = new lambda.Function(this, "SwapSchwing", {
-      runtime: lambda.Runtime.NODEJS_20_X,
+      runtime: lambda.Runtime.NODEJS_24_X,
       code: lambda.Code.fromAsset(
         compile(path.join(__dirname, "../../src/webhook/swap/index.ts")),
       ),
