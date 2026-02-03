@@ -15,7 +15,10 @@ export async function fetchTokenImage(
     tokenId: BigInt(tokenId),
   });
 
-  const gatewayUrl = await resolveImageUrl(imageUrl);
+  const {url: gatewayUrl, content: imageContent} = await resolveIpfsUrl(imageUrl);
+  if (imageContent) {
+    return imageContent;
+  }
   const fetchImage = await fetch(gatewayUrl);
   if (!fetchImage.ok) {
     throw new Error(
@@ -38,20 +41,37 @@ async function fetchMetadata({
     functionName: "tokenURI",
     args: [tokenId],
   });
-  const metadataResponse = await fetch(tokenURI);
+  const {url: metadataUrl, content: metadataContent} = await resolveIpfsUrl(tokenURI);
+  if (metadataContent) {
+    return JSON.parse(new TextDecoder().decode(metadataContent)) as IMetadata;
+  }
+  const metadataResponse = await fetch(metadataUrl);
   const metadata: IMetadata = await metadataResponse.json();
   return metadata;
 }
 
-async function resolveImageUrl(imageUrl: string): Promise<string> {
-  if (!imageUrl.startsWith("ipfs://")) {
-    return imageUrl;
+async function resolveIpfsUrl(url: string): Promise<{
+  url: string;
+  content: ArrayBuffer | null;
+}> {
+  if (!url.startsWith("ipfs://")) {
+    const response = await fetch(url);
+    if (response.ok) {
+      return {
+        url,
+        content: await response.arrayBuffer(),
+      };
+    }
+    return {
+      url,
+      content: null,
+    };
   }
 
-  const ipfsPath = imageUrl.slice("ipfs://".length);
+  const ipfsPath = url.slice("ipfs://".length);
   const [cid, ...pathParts] = ipfsPath.split("/");
   if (!cid) {
-    throw new Error(`Invalid ipfs image url: ${imageUrl}`);
+    throw new Error(`Invalid ipfs url: ${url}`);
   }
 
   const path = pathParts.length > 0 ? `/${pathParts.join("/")}` : "";
@@ -63,11 +83,14 @@ async function resolveImageUrl(imageUrl: string): Promise<string> {
   for (const gatewayUrl of gatewayUrls) {
     const response = await fetch(gatewayUrl);
     if (response.ok) {
-      return gatewayUrl;
+      return {
+        url: gatewayUrl,
+        content: await response.arrayBuffer(),
+      };
     }
   }
 
   throw new Error(
-    `Failed to resolve ipfs image url via gateways: ${gatewayUrls.join(", ")}`,
+    `Failed to resolve ipfs url via gateways: ${gatewayUrls.join(", ")}`,
   );
 }
