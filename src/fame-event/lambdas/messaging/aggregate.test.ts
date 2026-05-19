@@ -17,6 +17,7 @@ describe("swap event handler", () => {
   it("should handle swap event", async () => {
     const { currentUsdPrice, recipientMap } = await aggregateLogs({
       logs: arbLogs1,
+      currentUsdPrice: 1,
     });
     let output = "";
     output += `currentUsdPrice: ${currentUsdPrice}\n`;
@@ -93,6 +94,7 @@ describe("swap event handler", () => {
   it("should handle swap with nft mint event", async () => {
     const { currentUsdPrice, recipientMap } = await aggregateLogs({
       logs: swapWithNftMintLogs,
+      currentUsdPrice: 1,
     });
 
     const allNftMintEvents = Array.from(recipientMap.values()).flatMap(

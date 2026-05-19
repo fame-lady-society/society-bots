@@ -24,6 +24,7 @@ export interface Props {
   readonly discordAppId: string;
   readonly discordPublicKey: string;
   readonly discordBotToken: string;
+  readonly enableSchedules?: boolean;
 }
 
 function compile(entrypoint: string, options?: BuildOptions) {
@@ -61,6 +62,7 @@ export class EventLambdas extends Construct {
       discordAppId,
       discordBotToken,
       discordPublicKey,
+      enableSchedules = true,
     } = props;
     const domains = domain instanceof Array ? domain : [domain];
     const domainName = domains.join(".");
@@ -216,27 +218,29 @@ export class EventLambdas extends Construct {
     lastWrapperEventBlock.grantReadWriteData(wrapEventHandler);
     deferredMessageTopic.grantPublish(wrapEventHandler);
 
-    const fameEventScheduleRule = new events.Rule(
-      this,
-      "fameEventScheduleRule",
-      {
-        schedule: events.Schedule.rate(cdk.Duration.minutes(4)),
-      },
-    );
-    fameEventScheduleRule.addTarget(
-      new eventTargets.LambdaFunction(fameEventHandler),
-    );
+    if (enableSchedules) {
+      const fameEventScheduleRule = new events.Rule(
+        this,
+        "fameEventScheduleRule",
+        {
+          schedule: events.Schedule.rate(cdk.Duration.minutes(4)),
+        },
+      );
+      fameEventScheduleRule.addTarget(
+        new eventTargets.LambdaFunction(fameEventHandler),
+      );
 
-    const wrapEventScheduleRule = new events.Rule(
-      this,
-      "wrapEventScheduleRule",
-      {
-        schedule: events.Schedule.rate(cdk.Duration.minutes(6)),
-      },
-    );
-    wrapEventScheduleRule.addTarget(
-      new eventTargets.LambdaFunction(wrapEventHandler),
-    );
+      const wrapEventScheduleRule = new events.Rule(
+        this,
+        "wrapEventScheduleRule",
+        {
+          schedule: events.Schedule.rate(cdk.Duration.minutes(6)),
+        },
+      );
+      wrapEventScheduleRule.addTarget(
+        new eventTargets.LambdaFunction(wrapEventHandler),
+      );
+    }
 
     new cdk.CfnOutput(this, "LogHandlerQueueArn", {
       value: logHandlerQueue.queueArn,
