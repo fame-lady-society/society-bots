@@ -5,6 +5,123 @@ on:
     types: [opened, synchronize, labeled, unlabeled, closed]
 
 jobs:
+  deploy-dev:
+    if: contains(github.event.pull_request.labels.*.name, 'DEPLOY_DEV') && github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: society-bots-dev-deploy
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: "24"
+
+      - name: Install dependencies (CDK)
+        run: npm install -g yarn && yarn
+        working-directory: deploy/
+
+      - name: Install dependencies (App)
+        run: yarn
+
+      - name: Install AWS CDK
+        run: npm install -g aws-cdk
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v3
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-west-1
+
+      - name: Validate FAME pool-state deploy configuration
+        if: success()
+        env:
+          BASE_RPCS_JSON: ${{ secrets.BASE_RPCS_JSON }}
+          FAME_POOL_STATE_SERVICE_TOKEN: ${{ secrets.FAME_POOL_STATE_DEV_SERVICE_TOKEN }}
+        run: bash scripts/validate-fame-pool-state-deploy-config.sh
+
+      - name: Deploy CDK Dev Stack
+        if: success()
+        env:
+          STAGE: dev
+          ENABLE_EVENT_SCHEDULES: "false"
+          BASE_RPCS_JSON: ${{ secrets.BASE_RPCS_JSON }}
+          FAME_POOL_STATE_SERVICE_TOKEN: ${{ secrets.FAME_POOL_STATE_DEV_SERVICE_TOKEN }}
+          MAINNET_RPCS_JSON: ${{ secrets.MAINNET_RPCS_JSON }}
+          SEPOLIA_RPCS_JSON: ${{ secrets.SEPOLIA_RPCS_JSON }}
+          DISCORD_APP_ID: ${{ secrets.DISCORD_APP_ID }}
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_PUBLIC_KEY: ${{ secrets.DISCORD_PUBLIC_KEY }}
+          DISCORD_CHANNEL_ID: ${{ secrets.DISCORD_DEV_CHANNEL_ID }}
+          FARCASTER_APP_ID: ${{ secrets.FARCASTER_APP_ID }}
+          IMAGE_BASE_HOST_JSON: '["dev","fame.support"]'
+          IMAGE_CORS_ALLOWED_ORIGINS_JSON: '["https://dev.fame.support","http://localhost:3000"]'
+        run: cdk deploy --require-approval never --all
+        working-directory: deploy/
+
+  deploy-pool-state-dev:
+    if: contains(github.event.pull_request.labels.*.name, 'DEPLOY_POOL_STATE_DEV') && github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: society-bots-pool-state-dev-deploy
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: "24"
+
+      - name: Install dependencies (CDK)
+        run: npm install -g yarn && yarn
+        working-directory: deploy/
+
+      - name: Install dependencies (App)
+        run: yarn
+
+      - name: Install AWS CDK
+        run: npm install -g aws-cdk
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v3
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-west-1
+
+      - name: Validate FAME pool-state dev deploy configuration
+        if: success()
+        env:
+          BASE_RPCS_JSON: ${{ secrets.BASE_RPCS_JSON }}
+          FAME_POOL_STATE_SERVICE_TOKEN: ${{ secrets.FAME_POOL_STATE_DEV_SERVICE_TOKEN }}
+        run: bash scripts/validate-fame-pool-state-deploy-config.sh
+
+      - name: Bootstrap CDK
+        if: success()
+        env:
+          POOL_STATE_ONLY: "true"
+          BASE_RPCS_JSON: ${{ secrets.BASE_RPCS_JSON }}
+          FAME_POOL_STATE_DEV_SERVICE_TOKEN: ${{ secrets.FAME_POOL_STATE_DEV_SERVICE_TOKEN }}
+        run: cdk bootstrap
+        working-directory: deploy/
+
+      - name: Deploy Pool-State Dev Stack
+        if: success()
+        env:
+          POOL_STATE_ONLY: "true"
+          BASE_RPCS_JSON: ${{ secrets.BASE_RPCS_JSON }}
+          FAME_POOL_STATE_DEV_SERVICE_TOKEN: ${{ secrets.FAME_POOL_STATE_DEV_SERVICE_TOKEN }}
+        run: cdk deploy --require-approval never --all
+        working-directory: deploy/
+
   deploy:
     if: contains(github.event.pull_request.labels.*.name, 'DEPLOY') && github.event.action != 'closed'
     runs-on: ubuntu-latest
@@ -56,6 +173,13 @@ jobs:
             echo "TELEGRAM_CHAT_ID=$TELEGRAM_CHAT_ID" >> $GITHUB_ENV
           fi
 
+      - name: Validate FAME pool-state deploy configuration
+        if: success()
+        env:
+          BASE_RPCS_JSON: ${{ secrets.BASE_RPCS_JSON }}
+          FAME_POOL_STATE_SERVICE_TOKEN: ${{ secrets.FAME_POOL_STATE_PR_SERVICE_TOKEN }}
+        run: bash scripts/validate-fame-pool-state-deploy-config.sh
+
       - name: Bootstrap CDK
         if: success()
         run: cdk bootstrap || echo "CDK bootstrap already done or failed"
@@ -64,13 +188,15 @@ jobs:
       - name: Deploy CDK Stack
         if: success()
         env:
+          STAGE: PR-${{ github.event.pull_request.number }}
           ALCHEMY_WEBHOOK_SIGNING_KEY: ${{ secrets.ALCHEMY_WEBHOOK_SIGNING_KEY }}
           BASE_RPCS_JSON: ${{ secrets.BASE_RPCS_JSON }}
+          FAME_POOL_STATE_SERVICE_TOKEN: ${{ secrets.FAME_POOL_STATE_PR_SERVICE_TOKEN }}
           MAINNET_RPCS_JSON: ${{ secrets.MAINNET_RPCS_JSON }}
           SEPOLIA_RPCS_JSON: ${{ secrets.SEPOLIA_RPCS_JSON }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ env.TELEGRAM_CHAT_ID }}
-        run: cdk deploy --require-approval never -c stackName=PR-${{ github.event.pull_request.number }}
+        run: cdk deploy --require-approval never --all
         working-directory: deploy/
 
   cleanup:
@@ -81,14 +207,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: "20" # Use the appropriate Node.js version for your CDK app
-
-      - name: Install AWS CDK
-        run: npm install -g aws-cdk
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v3
         with:
@@ -97,5 +215,10 @@ jobs:
           aws-region: us-west-1
 
       - name: Destroy CDK Stack
-        run: cdk destroy --force -c stackName=PR-${{ github.event.pull_request.number }}
-        working-directory: deploy/
+        run: |
+          INFRA_STACK="Bot-PR-${{ github.event.pull_request.number }}"
+          CERT_STACK="BotCert-PR-${{ github.event.pull_request.number }}"
+          aws cloudformation delete-stack --stack-name "$INFRA_STACK" || true
+          aws cloudformation wait stack-delete-complete --stack-name "$INFRA_STACK" || true
+          aws cloudformation delete-stack --stack-name "$CERT_STACK" || true
+          aws cloudformation wait stack-delete-complete --stack-name "$CERT_STACK" || true

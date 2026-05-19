@@ -18,6 +18,54 @@ export const UniswapV2SyncEvent = {
   name: "Sync",
 } as const;
 
+export const Uint256ReserveSyncEvent = {
+  type: "event",
+  anonymous: false,
+  inputs: [
+    {
+      name: "reserve0",
+      internalType: "uint256",
+      type: "uint256",
+      indexed: false,
+    },
+    {
+      name: "reserve1",
+      internalType: "uint256",
+      type: "uint256",
+      indexed: false,
+    },
+  ],
+  name: "Sync",
+} as const;
+
+export const UniswapV2GetReservesFunction = {
+  type: "function",
+  name: "getReserves",
+  stateMutability: "view",
+  inputs: [],
+  outputs: [
+    {
+      name: "reserve0",
+      internalType: "uint112",
+      type: "uint112",
+    },
+    {
+      name: "reserve1",
+      internalType: "uint112",
+      type: "uint112",
+    },
+    {
+      name: "blockTimestampLast",
+      internalType: "uint32",
+      type: "uint32",
+    },
+  ],
+} as const;
+
+export const UniswapV2PairReserveAbi = [
+  UniswapV2GetReservesFunction,
+] as const;
+
 export const uniswapV2SwapEventAbi = {
   type: "event",
   anonymous: false,

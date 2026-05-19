@@ -1,0 +1,482 @@
+{
+  "schemaVersion": 1,
+  "status": "generated-reviewed-route-candidates",
+  "source": {
+    "repo": "www",
+    "schemaVersion": 1,
+    "pinnedBaseBlock": 45884844,
+    "poolsJsonHash": "0x7867763b3c520edb717f71186f8ee47364fb66871f82b9c8c830e7d911e3839b",
+    "poolsContentHash": "0xcf346fe2875d030a9b5872895e59e044e6e2b01613e3f3072c721c49c2234715",
+    "solverRoutesJsonHash": "0x44cd1807a871080e02630714058ccd2545746712c9b382ffe4411223feeaf218",
+    "solverRoutesContentHash": "0x053806dd44f7bf3751a0675b628dd4558a155a9608e8635f8cbdb180c48041a8"
+  },
+  "candidateDirections": [
+    {
+      "tokenIn": "0xf307e242bfe1ec1ff01a4cef2fdaa81b10a52418",
+      "tokenOut": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+    },
+    {
+      "tokenIn": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      "tokenOut": "0xf307e242bfe1ec1ff01a4cef2fdaa81b10a52418"
+    },
+    {
+      "tokenIn": "0xf307e242bfe1ec1ff01a4cef2fdaa81b10a52418",
+      "tokenOut": "0x4200000000000000000000000000000000000006"
+    },
+    {
+      "tokenIn": "0x4200000000000000000000000000000000000006",
+      "tokenOut": "0xf307e242bfe1ec1ff01a4cef2fdaa81b10a52418"
+    },
+    {
+      "tokenIn": "0xf307e242bfe1ec1ff01a4cef2fdaa81b10a52418",
+      "tokenOut": "0x0000000000000000000000000000000000000000"
+    },
+    {
+      "tokenIn": "0x0000000000000000000000000000000000000000",
+      "tokenOut": "0xf307e242bfe1ec1ff01a4cef2fdaa81b10a52418"
+    }
+  ],
+  "pools": [
+    {
+      "id": "aerodrome-v2-usdc-weth",
+      "chainId": 8453,
+      "venue": "aerodrome-v2",
+      "venueFamily": "AerodromeV2",
+      "router": "0xcf77a3ba9a5ca399b7c97c74d54e5b1beb874e43",
+      "poolAddress": "0xcdac0d6c6c59727a65f871236188350531885c43",
+      "poolKey": null,
+      "token0": "0x4200000000000000000000000000000000000006",
+      "token1": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      "stable": false,
+      "fee": {
+        "status": "available",
+        "feeBps": 30,
+        "label": "0.30%",
+        "source": "pool-metadata"
+      },
+      "capability": "quote-model",
+      "quoteModel": "constant-product-reserves",
+      "unsupportedReason": null
+    },
+    {
+      "id": "native-wrap-weth",
+      "chainId": 8453,
+      "venue": "native-wrap",
+      "venueFamily": "NativeWrap",
+      "router": "0x4200000000000000000000000000000000000006",
+      "poolAddress": null,
+      "poolKey": null,
+      "token0": "0x0000000000000000000000000000000000000000",
+      "token1": "0x4200000000000000000000000000000000000006",
+      "stable": null,
+      "fee": {
+        "status": "available",
+        "feeBps": 0,
+        "label": "0%",
+        "source": "pool-metadata"
+      },
+      "capability": "tracked-only",
+      "quoteModel": null,
+      "unsupportedReason": "native-wrap"
+    },
+    {
+      "id": "scale-equalizer-frxusd-fame",
+      "chainId": 8453,
+      "venue": "solidly",
+      "venueFamily": "Solidly",
+      "router": "0x2f87bf58d5a9b2efade55cdbd46153a0902be6fa",
+      "poolAddress": "0xeded4e8790e01199da13dfec93bf5432f1980489",
+      "poolKey": null,
+      "token0": "0xe5020a6d073a794b6e7f05678707de47986fb0b6",
+      "token1": "0xf307e242bfe1ec1ff01a4cef2fdaa81b10a52418",
+      "stable": false,
+      "fee": {
+        "status": "available",
+        "feeBps": 100,
+        "label": "1.00%",
+        "source": "pool-metadata"
+      },
+      "capability": "quote-model",
+      "quoteModel": "constant-product-reserves",
+      "unsupportedReason": null
+    },
+    {
+      "id": "scale-equalizer-scale-fame",
+      "chainId": 8453,
+      "venue": "solidly",
+      "venueFamily": "Solidly",
+      "router": "0x2f87bf58d5a9b2efade55cdbd46153a0902be6fa",
+      "poolAddress": "0xbbf6e67f14ed21884d9e12505a9b979fc42808be",
+      "poolKey": null,
+      "token0": "0x54016a4848a38f257b6e96331f7404073fd9c32c",
+      "token1": "0xf307e242bfe1ec1ff01a4cef2fdaa81b10a52418",
+      "stable": false,
+      "fee": {
+        "status": "available",
+        "feeBps": 100,
+        "label": "1.00%",
+        "source": "pool-metadata"
+      },
+      "capability": "quote-model",
+      "quoteModel": "constant-product-reserves",
+      "unsupportedReason": null
+    },
+    {
+      "id": "scale-equalizer-usdc-frxusd",
+      "chainId": 8453,
+      "venue": "solidly",
+      "venueFamily": "Solidly",
+      "router": "0x2f87bf58d5a9b2efade55cdbd46153a0902be6fa",
+      "poolAddress": "0x65d26744882857b08b69dd0b857246fda0ed5276",
+      "poolKey": null,
+      "token0": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      "token1": "0xe5020a6d073a794b6e7f05678707de47986fb0b6",
+      "stable": true,
+      "fee": {
+        "status": "available",
+        "feeBps": 4,
+        "label": "0.040%",
+        "source": "pool-metadata"
+      },
+      "capability": "tracked-only",
+      "quoteModel": null,
+      "unsupportedReason": "stable-pool"
+    },
+    {
+      "id": "scale-equalizer-usdc-scale",
+      "chainId": 8453,
+      "venue": "solidly",
+      "venueFamily": "Solidly",
+      "router": "0x2f87bf58d5a9b2efade55cdbd46153a0902be6fa",
+      "poolAddress": "0xd467b1bb20e9c5569ad8bc91d2236a8ceb574075",
+      "poolKey": null,
+      "token0": "0x54016a4848a38f257b6e96331f7404073fd9c32c",
+      "token1": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      "stable": false,
+      "fee": {
+        "status": "available",
+        "feeBps": 100,
+        "label": "1.00%",
+        "source": "pool-metadata"
+      },
+      "capability": "quote-model",
+      "quoteModel": "constant-product-reserves",
+      "unsupportedReason": null
+    },
+    {
+      "id": "scale-equalizer-weth-fame",
+      "chainId": 8453,
+      "venue": "solidly",
+      "venueFamily": "Solidly",
+      "router": "0x2f87bf58d5a9b2efade55cdbd46153a0902be6fa",
+      "poolAddress": "0x0db3a3228520fc31162c24f1b47177255cc1b82e",
+      "poolKey": null,
+      "token0": "0x4200000000000000000000000000000000000006",
+      "token1": "0xf307e242bfe1ec1ff01a4cef2fdaa81b10a52418",
+      "stable": false,
+      "fee": {
+        "status": "available",
+        "feeBps": 100,
+        "label": "1.00%",
+        "source": "pool-metadata"
+      },
+      "capability": "quote-model",
+      "quoteModel": "constant-product-reserves",
+      "unsupportedReason": null
+    },
+    {
+      "id": "slipstream-basedflick-fame",
+      "chainId": 8453,
+      "venue": "aerodrome-slipstream",
+      "venueFamily": "Slipstream",
+      "router": "0xbe6d8f0d05cc4be24d5167a3ef062215be6d18a5",
+      "poolAddress": "0xbd7e5bb5a6251f6dde2cf56afa50ed0c8b4c2cdb",
+      "poolKey": null,
+      "token0": "0x15e012abf9d32cd67fc6cf480ea0e318e9ed5926",
+      "token1": "0xf307e242bfe1ec1ff01a4cef2fdaa81b10a52418",
+      "stable": null,
+      "fee": {
+        "status": "available",
+        "feeBps": 100,
+        "label": "1.00%",
+        "source": "pool-metadata"
+      },
+      "capability": "tracked-only",
+      "quoteModel": null,
+      "unsupportedReason": "concentrated-liquidity"
+    },
+    {
+      "id": "slipstream-usdc-frxusd",
+      "chainId": 8453,
+      "venue": "aerodrome-slipstream",
+      "venueFamily": "Slipstream",
+      "router": "0xbe6d8f0d05cc4be24d5167a3ef062215be6d18a5",
+      "poolAddress": "0xd3d9f0f7d0d477e0a19222965b59233ad7f6bc6b",
+      "poolKey": null,
+      "token0": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      "token1": "0xe5020a6d073a794b6e7f05678707de47986fb0b6",
+      "stable": null,
+      "fee": {
+        "status": "available",
+        "feeBps": 5,
+        "label": "0.050%",
+        "source": "pool-metadata"
+      },
+      "capability": "tracked-only",
+      "quoteModel": null,
+      "unsupportedReason": "concentrated-liquidity"
+    },
+    {
+      "id": "slipstream-usdc-weth-100",
+      "chainId": 8453,
+      "venue": "aerodrome-slipstream",
+      "venueFamily": "Slipstream",
+      "router": "0xbe6d8f0d05cc4be24d5167a3ef062215be6d18a5",
+      "poolAddress": "0xb2cc224c1c9fee385f8ad6a55b4d94e92359dc59",
+      "poolKey": null,
+      "token0": "0x4200000000000000000000000000000000000006",
+      "token1": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      "stable": null,
+      "fee": {
+        "status": "available",
+        "feeBps": 6.34,
+        "label": "0.063%",
+        "source": "pool-metadata"
+      },
+      "capability": "tracked-only",
+      "quoteModel": null,
+      "unsupportedReason": "concentrated-liquidity"
+    },
+    {
+      "id": "slipstream-zora-usdc",
+      "chainId": 8453,
+      "venue": "aerodrome-slipstream",
+      "venueFamily": "Slipstream",
+      "router": "0xbe6d8f0d05cc4be24d5167a3ef062215be6d18a5",
+      "poolAddress": "0x3f53f1fd5b7723ddf38d93a584d280b9b94c3111",
+      "poolKey": null,
+      "token0": "0x1111111111166b7fe7bd91427724b487980afc69",
+      "token1": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      "stable": null,
+      "fee": {
+        "status": "available",
+        "feeBps": 30,
+        "label": "0.30%",
+        "source": "pool-metadata"
+      },
+      "capability": "tracked-only",
+      "quoteModel": null,
+      "unsupportedReason": "concentrated-liquidity"
+    },
+    {
+      "id": "slipstream-zora-weth",
+      "chainId": 8453,
+      "venue": "aerodrome-slipstream",
+      "venueFamily": "Slipstream",
+      "router": "0xbe6d8f0d05cc4be24d5167a3ef062215be6d18a5",
+      "poolAddress": "0xadb8fb846dbd3bd6a23335cee65bb610c1cf0ea3",
+      "poolKey": null,
+      "token0": "0x1111111111166b7fe7bd91427724b487980afc69",
+      "token1": "0x4200000000000000000000000000000000000006",
+      "stable": null,
+      "fee": {
+        "status": "available",
+        "feeBps": 30,
+        "label": "0.30%",
+        "source": "pool-metadata"
+      },
+      "capability": "tracked-only",
+      "quoteModel": null,
+      "unsupportedReason": "concentrated-liquidity"
+    },
+    {
+      "id": "uniswap-v2-fame-direct",
+      "chainId": 8453,
+      "venue": "uniswap-v2",
+      "venueFamily": "UniswapV2",
+      "router": "0x4752ba5dbc23f44d87826276bf6fd6b1c372ad24",
+      "poolAddress": "0x3e2cab55bebf41719148b4e6b63f6644b18ae49c",
+      "poolKey": null,
+      "token0": "0x4200000000000000000000000000000000000006",
+      "token1": "0xf307e242bfe1ec1ff01a4cef2fdaa81b10a52418",
+      "stable": null,
+      "fee": {
+        "status": "available",
+        "feeBps": 30,
+        "label": "0.30%",
+        "source": "pool-metadata"
+      },
+      "capability": "quote-model",
+      "quoteModel": "constant-product-reserves",
+      "unsupportedReason": null
+    },
+    {
+      "id": "uniswap-v2-usdc-weth",
+      "chainId": 8453,
+      "venue": "uniswap-v2",
+      "venueFamily": "UniswapV2",
+      "router": "0x4752ba5dbc23f44d87826276bf6fd6b1c372ad24",
+      "poolAddress": "0x88a43bbdf9d098eec7bceda4e2494615dfd9bb9c",
+      "poolKey": null,
+      "token0": "0x4200000000000000000000000000000000000006",
+      "token1": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      "stable": null,
+      "fee": {
+        "status": "available",
+        "feeBps": 30,
+        "label": "0.30%",
+        "source": "pool-metadata"
+      },
+      "capability": "quote-model",
+      "quoteModel": "constant-product-reserves",
+      "unsupportedReason": null
+    },
+    {
+      "id": "uniswap-v3-usdc-weth-30bps",
+      "chainId": 8453,
+      "venue": "uniswap-v3",
+      "venueFamily": "UniswapV3",
+      "router": "0x6ff5693b99212da76ad316178a184ab56d299b43",
+      "poolAddress": "0x6c561b446416e1a00e8e93e221854d6ea4171372",
+      "poolKey": null,
+      "token0": "0x4200000000000000000000000000000000000006",
+      "token1": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      "stable": null,
+      "fee": {
+        "status": "available",
+        "feeBps": 30,
+        "label": "0.30%",
+        "source": "pool-metadata"
+      },
+      "capability": "tracked-only",
+      "quoteModel": null,
+      "unsupportedReason": "concentrated-liquidity"
+    },
+    {
+      "id": "uniswap-v3-usdc-weth-5bps",
+      "chainId": 8453,
+      "venue": "uniswap-v3",
+      "venueFamily": "UniswapV3",
+      "router": "0x6ff5693b99212da76ad316178a184ab56d299b43",
+      "poolAddress": "0xd0b53d9277642d899df5c87a3966a349a798f224",
+      "poolKey": null,
+      "token0": "0x4200000000000000000000000000000000000006",
+      "token1": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      "stable": null,
+      "fee": {
+        "status": "available",
+        "feeBps": 5,
+        "label": "0.050%",
+        "source": "pool-metadata"
+      },
+      "capability": "tracked-only",
+      "quoteModel": null,
+      "unsupportedReason": "concentrated-liquidity"
+    },
+    {
+      "id": "uniswap-v3-zora-usdc",
+      "chainId": 8453,
+      "venue": "uniswap-v3",
+      "venueFamily": "UniswapV3",
+      "router": "0x6ff5693b99212da76ad316178a184ab56d299b43",
+      "poolAddress": "0xedc625b74537ee3a10874f53d170e9c17a906b9c",
+      "poolKey": null,
+      "token0": "0x1111111111166b7fe7bd91427724b487980afc69",
+      "token1": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      "stable": null,
+      "fee": {
+        "status": "available",
+        "feeBps": 30,
+        "label": "0.30%",
+        "source": "pool-metadata"
+      },
+      "capability": "tracked-only",
+      "quoteModel": null,
+      "unsupportedReason": "concentrated-liquidity"
+    },
+    {
+      "id": "uniswap-v3-zora-weth",
+      "chainId": 8453,
+      "venue": "uniswap-v3",
+      "venueFamily": "UniswapV3",
+      "router": "0x6ff5693b99212da76ad316178a184ab56d299b43",
+      "poolAddress": "0xa0ca5bebc42cdbf3623b1c09206ae4e3975b0fc7",
+      "poolKey": null,
+      "token0": "0x1111111111166b7fe7bd91427724b487980afc69",
+      "token1": "0x4200000000000000000000000000000000000006",
+      "stable": null,
+      "fee": {
+        "status": "available",
+        "feeBps": 30,
+        "label": "0.30%",
+        "source": "pool-metadata"
+      },
+      "capability": "tracked-only",
+      "quoteModel": null,
+      "unsupportedReason": "concentrated-liquidity"
+    },
+    {
+      "id": "uniswap-v4-basedflick-zora",
+      "chainId": 8453,
+      "venue": "uniswap-v4",
+      "venueFamily": "UniswapV4",
+      "router": "0x6ff5693b99212da76ad316178a184ab56d299b43",
+      "poolAddress": null,
+      "poolKey": "0x0fe6333346fcd0ffa4be3fda91f271bda52c6755f604b06483b709666d363628",
+      "token0": "0x1111111111166b7fe7bd91427724b487980afc69",
+      "token1": "0x15e012abf9d32cd67fc6cf480ea0e318e9ed5926",
+      "stable": null,
+      "fee": {
+        "status": "available",
+        "feeBps": 300,
+        "label": "3.00%",
+        "source": "pool-metadata"
+      },
+      "capability": "tracked-only",
+      "quoteModel": null,
+      "unsupportedReason": "concentrated-liquidity"
+    },
+    {
+      "id": "uniswap-v4-usdc-eth",
+      "chainId": 8453,
+      "venue": "uniswap-v4",
+      "venueFamily": "UniswapV4",
+      "router": "0x6ff5693b99212da76ad316178a184ab56d299b43",
+      "poolAddress": null,
+      "poolKey": "0xe070797535b13431808f8fc81fdbe7b41362960ed0b55bc2b6117c49c51b7eb9",
+      "token0": "0x0000000000000000000000000000000000000000",
+      "token1": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      "stable": null,
+      "fee": {
+        "status": "available",
+        "feeBps": 30,
+        "label": "0.30%",
+        "source": "pool-metadata"
+      },
+      "capability": "tracked-only",
+      "quoteModel": null,
+      "unsupportedReason": "concentrated-liquidity"
+    },
+    {
+      "id": "uniswap-v4-zora-eth",
+      "chainId": 8453,
+      "venue": "uniswap-v4",
+      "venueFamily": "UniswapV4",
+      "router": "0x6ff5693b99212da76ad316178a184ab56d299b43",
+      "poolAddress": null,
+      "poolKey": "0xd694bd7285eeeee19d3d5da38f613859168c422d628def88a0c95dad12071f3a",
+      "token0": "0x0000000000000000000000000000000000000000",
+      "token1": "0x1111111111166b7fe7bd91427724b487980afc69",
+      "stable": null,
+      "fee": {
+        "status": "available",
+        "feeBps": 30,
+        "label": "0.30%",
+        "source": "pool-metadata"
+      },
+      "capability": "tracked-only",
+      "quoteModel": null,
+      "unsupportedReason": "concentrated-liquidity"
+    }
+  ]
+}
