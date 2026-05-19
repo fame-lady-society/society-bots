@@ -5,6 +5,7 @@ import { ImageLambdas } from "./image-lambdas.js";
 import { Distribution } from "./distribution.js";
 import { Certificates } from "./certificates.js";
 import { EventLambdas } from "./events-lambdas.js";
+import { FamePoolState } from "./fame-pool-state.js";
 import { HttpApi } from "./http-api.js";
 import { Eliza } from "./eliza.js";
 
@@ -34,6 +35,15 @@ export class DeployInfraStack extends cdk.Stack {
       discordAppId: process.env.DISCORD_APP_ID!,
       discordBotToken: process.env.DISCORD_BOT_TOKEN!,
       discordPublicKey: process.env.DISCORD_PUBLIC_KEY!,
+      enableSchedules: process.env.ENABLE_EVENT_SCHEDULES !== "false",
+    });
+
+    const {
+      apiAuthorizerLambda: famePoolStateApiAuthorizerLambda,
+      apiLambda: famePoolStateApiLambda,
+    } = new FamePoolState(this, "FamePoolState", {
+      baseRpcsJson: process.env.BASE_RPCS_JSON,
+      serviceToken: process.env.FAME_POOL_STATE_SERVICE_TOKEN ?? "",
     });
 
     const { httpApi } = new HttpApi(this, "SocietyBotREST", {
@@ -43,6 +53,8 @@ export class DeployInfraStack extends cdk.Stack {
       flsImageThumbHandler: flsImageThumbLambda,
       flsImageMosaicHandler: flsImageMosaicLambda,
       discordInteractionHandler: notificationLambda,
+      famePoolStateAuthorizerHandler: famePoolStateApiAuthorizerLambda,
+      famePoolStateHandler: famePoolStateApiLambda,
     });
 
     new Distribution(this, "ImageDistribution", {

@@ -37,11 +37,19 @@ jobs:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-west-1
+
+      - name: Validate FAME pool-state deploy configuration
+        env:
+          BASE_RPCS_JSON: ${{ secrets.BASE_RPCS_JSON }}
+          FAME_POOL_STATE_SERVICE_TOKEN: ${{ secrets.FAME_POOL_STATE_SERVICE_TOKEN }}
+        run: bash scripts/validate-fame-pool-state-deploy-config.sh
+
       - name: Deploy CDK Stack
         env:
           STAGE: prod
           ALCHEMY_WEBHOOK_SIGNING_KEY: ${{ secrets.ALCHEMY_WEBHOOK_SIGNING_KEY }}
           BASE_RPCS_JSON: ${{ secrets.BASE_RPCS_JSON }}
+          FAME_POOL_STATE_SERVICE_TOKEN: ${{ secrets.FAME_POOL_STATE_SERVICE_TOKEN }}
           MAINNET_RPCS_JSON: ${{ secrets.MAINNET_RPCS_JSON }}
           SEPOLIA_RPCS_JSON: ${{ secrets.SEPOLIA_RPCS_JSON }}
           OPTIMISM_RPCS_JSON: ${{ secrets.OPTIMISM_RPCS_JSON }}

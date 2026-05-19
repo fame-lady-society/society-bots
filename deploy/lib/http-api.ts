@@ -6,14 +6,21 @@ import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as route53 from "aws-cdk-lib/aws-route53";
 import * as route53Targets from "aws-cdk-lib/aws-route53-targets";
 import { HttpLambdaIntegration } from "aws-cdk-lib/aws-apigatewayv2-integrations";
+import {
+  HttpLambdaAuthorizer,
+  HttpLambdaResponseType,
+} from "aws-cdk-lib/aws-apigatewayv2-authorizers";
 
 export interface Props {
   readonly domain: [string, string] | string;
+  readonly hostedZone?: route53.IHostedZone;
   readonly fameImageThumbHandler: lambda.IFunction;
   readonly fameImageMosaicHandler: lambda.IFunction;
   readonly flsImageThumbHandler: lambda.IFunction;
   readonly flsImageMosaicHandler: lambda.IFunction;
   readonly discordInteractionHandler: lambda.IFunction;
+  readonly famePoolStateAuthorizerHandler: lambda.IFunction;
+  readonly famePoolStateHandler: lambda.IFunction;
 }
 
 export class HttpApi extends Construct {
@@ -28,13 +35,17 @@ export class HttpApi extends Construct {
       flsImageThumbHandler,
       flsImageMosaicHandler,
       discordInteractionHandler,
+      famePoolStateAuthorizerHandler,
+      famePoolStateHandler,
     } = props;
 
     const domains = domain instanceof Array ? domain : [domain];
     const domainName = domains.join(".");
-    const hostedZone = route53.HostedZone.fromLookup(this, "HostedZone", {
-      domainName: domain.length === 2 ? domains[1] : domains[0],
-    });
+    const hostedZone =
+      props.hostedZone ??
+      route53.HostedZone.fromLookup(this, "HostedZone", {
+        domainName: domain.length === 2 ? domains[1] : domains[0],
+      });
 
     const apiDomainName = new apigw2.DomainName(this, "DomainName", {
       domainName: `api.${domainName}`,
@@ -84,6 +95,25 @@ export class HttpApi extends Construct {
         "discord",
         discordInteractionHandler,
       ),
+    });
+
+    const famePoolStateAuthorizer = new HttpLambdaAuthorizer(
+      "FamePoolStateAuthorizer",
+      famePoolStateAuthorizerHandler,
+      {
+        responseTypes: [HttpLambdaResponseType.SIMPLE],
+        identitySource: ["$request.header.Authorization"],
+      },
+    );
+
+    httpApi.addRoutes({
+      path: "/fame/pool-state",
+      methods: [apigw2.HttpMethod.POST],
+      integration: new HttpLambdaIntegration(
+        "fame-pool-state",
+        famePoolStateHandler,
+      ),
+      authorizer: famePoolStateAuthorizer,
     });
 
     new route53.ARecord(this, "AliasIPv4Record", {

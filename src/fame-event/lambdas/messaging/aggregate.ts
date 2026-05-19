@@ -472,16 +472,8 @@ function updateBalanceDeltaFromV3SwapEvent(
   );
 }
 
-export async function aggregateLogs({
-  logs,
-}: {
-  logs: {
-    address: `0x${string}`; // contract address
-    data: `0x${string}`;
-    topics: [] | [signature: `0x${string}`, ...args: `0x${string}`[]];
-  }[];
-}) {
-  const currentUsdPrice = Number(
+async function getCurrentUsdPrice(): Promise<number> {
+  return Number(
     formatPrice(
       await baseClient.readContract({
         abi: chainlinkUsdcEthAbi,
@@ -491,6 +483,20 @@ export async function aggregateLogs({
       8
     )
   );
+}
+
+export async function aggregateLogs({
+  logs,
+  currentUsdPrice,
+}: {
+  logs: {
+    address: `0x${string}`; // contract address
+    data: `0x${string}`;
+    topics: [] | [signature: `0x${string}`, ...args: `0x${string}`[]];
+  }[];
+  currentUsdPrice?: number;
+}) {
+  const resolvedCurrentUsdPrice = currentUsdPrice ?? await getCurrentUsdPrice();
   const recipientMap = new Map<`0x${string}`, CompleteSwapEvent>();
   function getOrCreateRecipient(recipient: `0x${string}`) {
     recipient = recipient.toLowerCase() as `0x${string}`;
@@ -594,7 +600,7 @@ export async function aggregateLogs({
   }
   return {
     recipientMap,
-    currentUsdPrice,
+    currentUsdPrice: resolvedCurrentUsdPrice,
   };
 }
 
