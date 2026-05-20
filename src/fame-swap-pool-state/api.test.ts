@@ -3,8 +3,12 @@ import type { Address } from "viem";
 import { handleFamePoolStateBatchRequest } from "./api.ts";
 import { poolStateRequestAuthorized } from "./auth.ts";
 import {
+  latestClHeadStateFromSnapshot,
   latestPoolStateKey,
   latestStateFromReserves,
+  sourceRegistryIdFor,
+  type FameClHeadLatestState,
+  type FameClHeadSnapshotRegistryEntry,
   type FamePoolLatestState,
   type PoolStateDocumentClient,
   type PoolStateDynamoResponse,
@@ -17,7 +21,12 @@ type SentCommand = Parameters<PoolStateDocumentClient["send"]>[0];
 class BatchStateDb implements PoolStateDocumentClient {
   public readCount = 0;
 
-  constructor(private readonly states: readonly FamePoolLatestState[]) {}
+  constructor(
+    private readonly states: readonly (
+      | FameClHeadLatestState
+      | FamePoolLatestState
+    )[],
+  ) {}
 
   async send(command: SentCommand): Promise<PoolStateDynamoResponse> {
     if (command.constructor.name !== "BatchGetCommand") {
@@ -55,7 +64,9 @@ class IncompleteBatchStateDb implements PoolStateDocumentClient {
   }
 }
 
-function recordFromState(state: FamePoolLatestState): Record<string, unknown> {
+function recordFromState(
+  state: FameClHeadLatestState | FamePoolLatestState,
+): Record<string, unknown> {
   return { ...state };
 }
 
@@ -69,6 +80,22 @@ function quotePool(
   return {
     ...entry,
     poolAddress: entry.poolAddress,
+  };
+}
+
+function clHeadPool(id: string): FameClHeadSnapshotRegistryEntry {
+  const entry = famePoolStateRegistry.pools.find((pool) => pool.id === id);
+  if (
+    !entry ||
+    entry.stateSurface !== "cl-head-snapshot" ||
+    entry.tickSpacing === null
+  ) {
+    throw new Error(`Missing CL head pool ${id}.`);
+  }
+  return {
+    ...entry,
+    stateSurface: entry.stateSurface,
+    tickSpacing: entry.tickSpacing,
   };
 }
 
@@ -90,6 +117,23 @@ function stateForPool(
     source: "getReserves",
     sourceRegistryId: "unit",
     updatedAt: "2026-05-17T00:00:00.000Z",
+  });
+}
+
+function clHeadStateForPool(
+  pool: FameClHeadSnapshotRegistryEntry,
+  observedThroughBlock: number,
+  sourceRegistryId = sourceRegistryIdFor(famePoolStateRegistry.source),
+): FameClHeadLatestState {
+  return latestClHeadStateFromSnapshot({
+    pool,
+    sqrtPriceX96: 2n ** 96n,
+    tick: -11,
+    liquidity: 555n,
+    observedThroughBlock,
+    source: pool.venue === "uniswap-v4" ? "v4-state-view" : "pool-slot0-liquidity",
+    sourceRegistryId,
+    updatedAt: "2026-05-19T00:00:00.000Z",
   });
 }
 
@@ -164,6 +208,100 @@ describe("FAME pool-state API contract", () => {
         unsupportedReason: "concentrated-liquidity",
       }),
     ]);
+  });
+
+  test("returns fresh CL head state for CL-capable requests", async () => {
+    const pool = clHeadPool("uniswap-v3-usdc-weth-5bps");
+    const response = await handleFamePoolStateBatchRequest({
+      request: {
+        currentBlock: 125,
+        stateSurfaces: ["cl-head-snapshot"],
+        pools: [{ poolId: pool.id }],
+      },
+      tableName: "PoolState",
+      db: new BatchStateDb([clHeadStateForPool(pool, 120)]),
+      producerMaxFreshnessBlocks: 120,
+    });
+
+    expect(response.pools[0]).toMatchObject({
+      status: "fresh",
+      stateKind: "cl-head-snapshot",
+      poolId: pool.id,
+      poolAddress: pool.poolAddress,
+      poolKey: null,
+      sqrtPriceX96: (2n ** 96n).toString(),
+      tick: -11,
+      liquidity: "555",
+      observedThroughBlock: 120,
+      source: "pool-slot0-liquidity",
+      sourceRegistryId: sourceRegistryIdFor(famePoolStateRegistry.source),
+      maxFreshnessBlocks: 120,
+    });
+  });
+
+  test("returns unknown for CL head state from a different registry source", async () => {
+    const pool = clHeadPool("uniswap-v3-usdc-weth-5bps");
+    const response = await handleFamePoolStateBatchRequest({
+      request: {
+        currentBlock: 125,
+        stateSurfaces: ["cl-head-snapshot"],
+        pools: [{ poolId: pool.id }],
+      },
+      tableName: "PoolState",
+      db: new BatchStateDb([clHeadStateForPool(pool, 120, "stale-registry")]),
+      producerMaxFreshnessBlocks: 120,
+    });
+
+    expect(response.pools[0]).toEqual({
+      status: "unknown",
+      requested: { poolId: pool.id },
+      reason: "missing-indexed-state",
+    });
+  });
+
+  test("returns unknown for CL head state whose metadata no longer matches the registry", async () => {
+    const pool = clHeadPool("uniswap-v3-usdc-weth-5bps");
+    const response = await handleFamePoolStateBatchRequest({
+      request: {
+        currentBlock: 125,
+        stateSurfaces: ["cl-head-snapshot"],
+        pools: [{ poolId: pool.id }],
+      },
+      tableName: "PoolState",
+      db: new BatchStateDb([
+        {
+          ...clHeadStateForPool(pool, 120),
+          token1: pool.token0,
+        },
+      ]),
+      producerMaxFreshnessBlocks: 120,
+    });
+
+    expect(response.pools[0]).toEqual({
+      status: "unknown",
+      requested: { poolId: pool.id },
+      reason: "missing-indexed-state",
+    });
+  });
+
+  test("treats future CL head state as stale", async () => {
+    const pool = clHeadPool("uniswap-v3-usdc-weth-5bps");
+    const response = await handleFamePoolStateBatchRequest({
+      request: {
+        currentBlock: 125,
+        stateSurfaces: ["cl-head-snapshot"],
+        pools: [{ poolId: pool.id }],
+      },
+      tableName: "PoolState",
+      db: new BatchStateDb([clHeadStateForPool(pool, 130)]),
+      producerMaxFreshnessBlocks: 120,
+    });
+
+    expect(response.pools[0]).toMatchObject({
+      status: "stale",
+      stateKind: "cl-head-snapshot",
+      observedThroughBlock: 130,
+    });
   });
 
   test("honors stricter caller freshness without loosening producer freshness", async () => {

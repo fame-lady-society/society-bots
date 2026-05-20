@@ -1,12 +1,18 @@
 import { describe, expect, test } from "@jest/globals";
 import type { Address, Hex } from "viem";
 import {
+  batchGetLatestClHeadStates,
   batchGetLatestPoolStates,
   comparePoolStateEventVersions,
+  getLatestClHeadState,
   getLatestPoolState,
+  latestClHeadStateFromSnapshot,
+  latestClHeadStateKey,
   latestPoolStateKey,
   latestStateFromReserves,
+  putLatestClHeadState,
   putLatestPoolState,
+  type FameClHeadSnapshotRegistryEntry,
   type PoolStateDocumentClient,
   type PoolStateDynamoResponse,
 } from "./pool-state.ts";
@@ -76,6 +82,20 @@ class MalformedLatestItemDb implements PoolStateDocumentClient {
   }
 }
 
+class ItemDb implements PoolStateDocumentClient {
+  constructor(private readonly item: Record<string, unknown>) {}
+
+  async send(command: SentCommand): Promise<PoolStateDynamoResponse> {
+    if (command.constructor.name !== "GetCommand") {
+      throw new Error(`Unexpected command ${command.constructor.name}.`);
+    }
+
+    return {
+      Item: this.item,
+    };
+  }
+}
+
 function quoteModelPool(id: string): FamePoolStateRegistryEntry & { poolAddress: Address } {
   const pool = famePoolStateRegistry.pools.find((entry) => entry.id === id);
   if (!pool || pool.poolAddress === null) {
@@ -84,6 +104,40 @@ function quoteModelPool(id: string): FamePoolStateRegistryEntry & { poolAddress:
   return {
     ...pool,
     poolAddress: pool.poolAddress,
+  };
+}
+
+function clHeadPool(id: string): FameClHeadSnapshotRegistryEntry {
+  const pool = famePoolStateRegistry.pools.find((entry) => entry.id === id);
+  if (
+    !pool ||
+    pool.stateSurface !== "cl-head-snapshot" ||
+    pool.tickSpacing === null
+  ) {
+    throw new Error(`Missing CL head pool ${id}.`);
+  }
+  return {
+    ...pool,
+    stateSurface: pool.stateSurface,
+    tickSpacing: pool.tickSpacing,
+  };
+}
+
+function firstV4ClHeadPool(): FameClHeadSnapshotRegistryEntry {
+  const pool = famePoolStateRegistry.pools.find(
+    (entry) => entry.venue === "uniswap-v4",
+  );
+  if (
+    !pool ||
+    pool.stateSurface !== "cl-head-snapshot" ||
+    pool.tickSpacing === null
+  ) {
+    throw new Error("Missing V4 CL head pool.");
+  }
+  return {
+    ...pool,
+    stateSurface: pool.stateSurface,
+    tickSpacing: pool.tickSpacing,
   };
 }
 
@@ -115,6 +169,69 @@ describe("FAME pool-state DynamoDB mapping", () => {
       observedThroughBlock: 123,
       source: "sync-event",
     });
+  });
+
+  test("round-trips address-backed CL head rows", async () => {
+    const pool = clHeadPool("uniswap-v3-usdc-weth-5bps");
+    const state = latestClHeadStateFromSnapshot({
+      pool,
+      sqrtPriceX96: 2n ** 96n,
+      tick: -42,
+      liquidity: 123_456n,
+      observedThroughBlock: 456,
+      source: "pool-slot0-liquidity",
+      sourceRegistryId: "unit",
+      updatedAt: "2026-05-19T00:00:00.000Z",
+    });
+
+    expect(state).toMatchObject({
+      ...latestClHeadStateKey(pool),
+      stateKind: "cl-head-snapshot",
+      poolId: "uniswap-v3-usdc-weth-5bps",
+      poolAddress: pool.poolAddress,
+      poolKey: null,
+      sqrtPriceX96: (2n ** 96n).toString(),
+      tick: -42,
+      liquidity: "123456",
+      observedThroughBlock: 456,
+      source: "pool-slot0-liquidity",
+    });
+    await expect(
+      getLatestClHeadState({
+        db: new ItemDb({ ...state }),
+        tableName: "PoolState",
+        pool,
+      }),
+    ).resolves.toEqual(state);
+  });
+
+  test("round-trips V4 CL head rows by pool key", async () => {
+    const pool = firstV4ClHeadPool();
+    const state = latestClHeadStateFromSnapshot({
+      pool,
+      sqrtPriceX96: 99n,
+      tick: 7,
+      liquidity: 1_000n,
+      observedThroughBlock: 789,
+      source: "v4-state-view",
+      sourceRegistryId: "unit",
+      updatedAt: "2026-05-19T00:00:00.000Z",
+    });
+
+    expect(state).toMatchObject({
+      ...latestClHeadStateKey(pool),
+      poolAddress: null,
+      poolKey: pool.poolKey,
+      stateViewAddress: pool.stateViewAddress,
+      source: "v4-state-view",
+    });
+    await expect(
+      getLatestClHeadState({
+        db: new ItemDb({ ...state }),
+        tableName: "PoolState",
+        pool,
+      }),
+    ).resolves.toEqual(state);
   });
 
   test("orders event versions by block, transaction index, then log index", () => {
@@ -171,6 +288,18 @@ describe("FAME pool-state DynamoDB mapping", () => {
     ).rejects.toThrow(/unprocessed keys/);
   });
 
+  test("rejects incomplete CL head batch reads with unprocessed keys", async () => {
+    const pool = clHeadPool("uniswap-v3-usdc-weth-5bps");
+
+    await expect(
+      batchGetLatestClHeadStates({
+        db: new UnprocessedBatchDb(),
+        tableName: "PoolState",
+        pools: [pool],
+      }),
+    ).rejects.toThrow(/unprocessed keys/);
+  });
+
   test("returns an empty batch without reading DynamoDB", async () => {
     const db = new ThrowingBatchDb();
 
@@ -195,5 +324,52 @@ describe("FAME pool-state DynamoDB mapping", () => {
         poolAddress: pool.poolAddress,
       }),
     ).rejects.toThrow(/Invalid latest pool-state DynamoDB item/);
+  });
+
+  test("rejects malformed persisted CL head items", async () => {
+    const pool = clHeadPool("uniswap-v3-usdc-weth-5bps");
+    const state = latestClHeadStateFromSnapshot({
+      pool,
+      sqrtPriceX96: 2n ** 96n,
+      tick: -42,
+      liquidity: 123_456n,
+      observedThroughBlock: 456,
+      source: "pool-slot0-liquidity",
+      sourceRegistryId: "unit",
+      updatedAt: "2026-05-19T00:00:00.000Z",
+    });
+
+    await expect(
+      getLatestClHeadState({
+        db: new ItemDb({
+          ...state,
+          liquidity: undefined,
+        }),
+        tableName: "PoolState",
+        pool,
+      }),
+    ).rejects.toThrow(/Invalid latest CL head-state DynamoDB item/);
+  });
+
+  test("returns ignored for stale CL head conditional writes", async () => {
+    const db = new ConditionalFailureDb();
+    const pool = clHeadPool("uniswap-v3-usdc-weth-5bps");
+    const result = await putLatestClHeadState({
+      db,
+      tableName: "PoolState",
+      state: latestClHeadStateFromSnapshot({
+        pool,
+        sqrtPriceX96: 2n ** 96n,
+        tick: 1,
+        liquidity: 100n,
+        observedThroughBlock: 123,
+        source: "pool-slot0-liquidity",
+        sourceRegistryId: "unit",
+        updatedAt: "2026-05-19T00:00:00.000Z",
+      }),
+    });
+
+    expect(result).toBe("ignored");
+    expect(db.commands).toHaveLength(1);
   });
 });

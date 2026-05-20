@@ -1,6 +1,6 @@
 import type { Address, Hex } from "viem";
 
-export const FAME_POOL_STATE_REGISTRY_SCHEMA_VERSION = 1;
+export const FAME_POOL_STATE_REGISTRY_SCHEMA_VERSION = 2;
 
 export type FamePoolStateVenue =
   | "aerodrome-slipstream"
@@ -22,8 +22,14 @@ export type FamePoolStateVenueFamily =
   | "UniswapV3"
   | "UniswapV4";
 
-export type FamePoolStateCapability = "quote-model" | "tracked-only";
+export type FamePoolStateCapability =
+  | "market-state"
+  | "quote-model"
+  | "tracked-only";
 export type FamePoolStateQuoteModel = "constant-product-reserves";
+export type FamePoolStateSurface =
+  | "cl-head-snapshot"
+  | "constant-product-reserves";
 export type FamePoolStateUnsupportedReason =
   | "concentrated-liquidity"
   | "missing-fee-metadata"
@@ -70,7 +76,10 @@ export interface FamePoolStateRegistryEntry {
   token1: Address;
   stable: boolean | null;
   fee: FamePoolStateFeeDescriptor;
+  tickSpacing: number | null;
+  stateViewAddress: Address | null;
   capability: FamePoolStateCapability;
+  stateSurface: FamePoolStateSurface | null;
   quoteModel: FamePoolStateQuoteModel | null;
   unsupportedReason: FamePoolStateUnsupportedReason | null;
 }

@@ -1,12 +1,12 @@
 # FAME Pool-State Index Handoff
 
-This repo now owns the `society-bots` side of the FAME pool-state read model used by `www` quote solving. The goal is to keep fast, fresh latest-reserve state available for the reviewed FAME swap pool universe, while leaving route authority and quote correctness tests in `www`.
+This repo now owns the `society-bots` side of the FAME pool-state read model used by `www` quote solving. The goal is to keep fast, fresh latest reserve and concentrated-liquidity head state available for the reviewed FAME swap pool universe, while leaving route authority and quote correctness tests in `www`.
 
 ## Cross-Repo Contract
 
 - `www` remains authoritative for reviewed pool metadata, route candidates, venue capability, and quote parity.
-- `society-bots` consumes a generated registry artifact from `www` and indexes current Base reserve state for the quote-model-capable pools in that artifact.
-- `www` calls the authenticated `society-bots` API from server-side quote paths. If indexed state is stale, unknown, unsupported, or malformed, `www` falls back to its existing live quote adapter.
+- `society-bots` consumes a generated registry artifact from `www` and indexes current Base reserve state for quote-model-capable pools plus CL head snapshots for reviewed CL pools in that artifact.
+- `www` calls the authenticated `society-bots` API from server-side quote paths. If indexed state is stale, unknown, unsupported, malformed, or not a quote model the caller can replay, `www` falls back to its existing live quote adapter.
 
 Primary `www` references:
 
@@ -41,7 +41,9 @@ The `society-bots` implementation adds a new `src/fame-swap-pool-state` module p
 - Structured indexer/API logs for freshness, status counts, registry id, and block coverage.
 - Passive operational health signals: SQS-backed async failure destinations plus no-action CloudWatch alarms for indexer Lambda errors, indexer Lambda throttles, missed invocations, and failure queue depth.
 
-The first indexed quote-model pool set covers Uniswap V2 constant-product pools plus volatile Solidly/Equalizer and volatile Aerodrome V2 pools. Stable pools, native wrapping, Slipstream, Uniswap V3, Uniswap V4, and unknown invariants stay visible as tracked-only or unsupported; this repo must not pretend those are locally replayable until `www` adds authoritative math and tests.
+The indexed quote-model pool set covers Uniswap V2 constant-product pools plus volatile Solidly/Equalizer and volatile Aerodrome V2 pools. Stable pools, native wrapping, pools missing reviewed CL metadata, and unknown invariants stay visible as tracked-only or unsupported.
+
+Slipstream, Slipstream2, Uniswap V3, and Uniswap V4 pools with reviewed metadata now have complete CL head snapshots: identity, fee metadata, tick spacing, state-view address where relevant, `sqrtPriceX96`, current tick, active liquidity, source, registry provenance, and `observedThroughBlock`. These rows are not local CL replay authority, do not carry tick-boundary warnings, and must not make `www` skip live reads for CL quote math.
 
 ## Final Review Notes
 
@@ -122,7 +124,7 @@ Status meanings:
 - `fresh`: indexed state exists and satisfies the effective freshness bound.
 - `stale`: indexed state exists but is too far behind the requested block context.
 - `unknown`: the pool is absent from the registry or has no latest row yet.
-- `unsupported`: the pool is reviewed but not eligible for v1 local reserve replay.
+- `unsupported`: the pool is reviewed but not eligible for the requested indexed state surface.
 
 The producer freshness default is configured by `FAME_POOL_STATE_DEFAULT_MAX_FRESHNESS_BLOCKS`. Callers may ask for stricter freshness, but cannot loosen the producer default.
 
@@ -154,6 +156,7 @@ The scheduled indexer failure destination and passive alarms are intended for in
 - `getReserves` reconciliation uses the safe block after log processing, so quiet pools stay fresh and missed/mismatched Sync-derived reserves are repaired without adding a historical backfill system.
 - Unknown Sync logs are treated as fatal before cursor advancement.
 - API freshness fails safe: if an indexed row is somehow observed through a block greater than the caller's `currentBlock`, the response is `stale`.
+- CL head snapshots are complete head-state rows, but they intentionally stop before boundary-window indexing, tick bitmap reads, or local CL quote replay. Fallback remains a normal client decision based on state kind, freshness, helper availability, and parser validity rather than a boundary warning bit.
 - API requests accept exactly one key shape per pool: `{ poolId }` or `{ chainId, poolAddress }`. Mixed key shapes are rejected.
 - API transport errors and malformed indexed quote responses are expected to make `www` fall back to live reads, not to produce a best-effort quote from bad state.
 - DynamoDB `UnprocessedKeys` are treated as incomplete helper reads, not as missing pool state.
@@ -191,9 +194,12 @@ Attach durable release evidence before enabling `www` production helper env:
 ## Durable Follow-Ups
 
 - Fix PR cleanup so `BotCert-PR-<number>` is deleted in `us-east-1`, and stop swallowing unexpected CloudFormation delete/wait failures with blanket `|| true`.
+- Make malformed V4 registry rows impossible or explicitly rejected when they contain both `poolAddress` and `poolKey`; V4 CL head state should remain pool-key keyed instead of address keyed.
+- Parallelize the independent reserve-state and CL head-state DynamoDB `BatchGet` calls if helper latency from CL opt-in becomes material.
 
 ## Next Safe Extensions
 
 - Add SPX/FAME and cbBTC/FAME only after the authoritative `www` route metadata includes those pools.
 - Add stricter freshness or faster ingestion only after scheduled indexing proves useful in route-lab evidence.
 - Add stable or concentrated-liquidity local replay only after `www` owns the math and parity tests.
+- Extend CL indexing toward tick windows or boundary-adjacent quote assistance only after the current complete head snapshot surface proves useful.
