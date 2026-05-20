@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "status": "generated-reviewed-route-candidates",
   "source": {
     "repo": "www",
@@ -54,7 +54,10 @@
         "label": "0.30%",
         "source": "pool-metadata"
       },
+      "tickSpacing": null,
+      "stateViewAddress": null,
       "capability": "quote-model",
+      "stateSurface": "constant-product-reserves",
       "quoteModel": "constant-product-reserves",
       "unsupportedReason": null
     },
@@ -75,7 +78,10 @@
         "label": "0%",
         "source": "pool-metadata"
       },
+      "tickSpacing": null,
+      "stateViewAddress": null,
       "capability": "tracked-only",
+      "stateSurface": null,
       "quoteModel": null,
       "unsupportedReason": "native-wrap"
     },
@@ -96,7 +102,10 @@
         "label": "1.00%",
         "source": "pool-metadata"
       },
+      "tickSpacing": null,
+      "stateViewAddress": null,
       "capability": "quote-model",
+      "stateSurface": "constant-product-reserves",
       "quoteModel": "constant-product-reserves",
       "unsupportedReason": null
     },
@@ -117,7 +126,10 @@
         "label": "1.00%",
         "source": "pool-metadata"
       },
+      "tickSpacing": null,
+      "stateViewAddress": null,
       "capability": "quote-model",
+      "stateSurface": "constant-product-reserves",
       "quoteModel": "constant-product-reserves",
       "unsupportedReason": null
     },
@@ -138,7 +150,10 @@
         "label": "0.040%",
         "source": "pool-metadata"
       },
+      "tickSpacing": null,
+      "stateViewAddress": null,
       "capability": "tracked-only",
+      "stateSurface": null,
       "quoteModel": null,
       "unsupportedReason": "stable-pool"
     },
@@ -159,7 +174,10 @@
         "label": "1.00%",
         "source": "pool-metadata"
       },
+      "tickSpacing": null,
+      "stateViewAddress": null,
       "capability": "quote-model",
+      "stateSurface": "constant-product-reserves",
       "quoteModel": "constant-product-reserves",
       "unsupportedReason": null
     },
@@ -180,7 +198,10 @@
         "label": "1.00%",
         "source": "pool-metadata"
       },
+      "tickSpacing": null,
+      "stateViewAddress": null,
       "capability": "quote-model",
+      "stateSurface": "constant-product-reserves",
       "quoteModel": "constant-product-reserves",
       "unsupportedReason": null
     },
@@ -201,9 +222,12 @@
         "label": "1.00%",
         "source": "pool-metadata"
       },
-      "capability": "tracked-only",
+      "tickSpacing": 2000,
+      "stateViewAddress": null,
+      "capability": "market-state",
+      "stateSurface": "cl-head-snapshot",
       "quoteModel": null,
-      "unsupportedReason": "concentrated-liquidity"
+      "unsupportedReason": null
     },
     {
       "id": "slipstream-usdc-frxusd",
@@ -222,9 +246,12 @@
         "label": "0.050%",
         "source": "pool-metadata"
       },
-      "capability": "tracked-only",
+      "tickSpacing": 1,
+      "stateViewAddress": null,
+      "capability": "market-state",
+      "stateSurface": "cl-head-snapshot",
       "quoteModel": null,
-      "unsupportedReason": "concentrated-liquidity"
+      "unsupportedReason": null
     },
     {
       "id": "slipstream-usdc-weth-100",
@@ -243,9 +270,12 @@
         "label": "0.063%",
         "source": "pool-metadata"
       },
-      "capability": "tracked-only",
+      "tickSpacing": 100,
+      "stateViewAddress": null,
+      "capability": "market-state",
+      "stateSurface": "cl-head-snapshot",
       "quoteModel": null,
-      "unsupportedReason": "concentrated-liquidity"
+      "unsupportedReason": null
     },
     {
       "id": "slipstream-zora-usdc",
@@ -264,9 +294,12 @@
         "label": "0.30%",
         "source": "pool-metadata"
       },
-      "capability": "tracked-only",
+      "tickSpacing": 100,
+      "stateViewAddress": null,
+      "capability": "market-state",
+      "stateSurface": "cl-head-snapshot",
       "quoteModel": null,
-      "unsupportedReason": "concentrated-liquidity"
+      "unsupportedReason": null
     },
     {
       "id": "slipstream-zora-weth",
@@ -285,9 +318,12 @@
         "label": "0.30%",
         "source": "pool-metadata"
       },
-      "capability": "tracked-only",
+      "tickSpacing": 100,
+      "stateViewAddress": null,
+      "capability": "market-state",
+      "stateSurface": "cl-head-snapshot",
       "quoteModel": null,
-      "unsupportedReason": "concentrated-liquidity"
+      "unsupportedReason": null
     },
     {
       "id": "uniswap-v2-fame-direct",
@@ -306,7 +342,10 @@
         "label": "0.30%",
         "source": "pool-metadata"
       },
+      "tickSpacing": null,
+      "stateViewAddress": null,
       "capability": "quote-model",
+      "stateSurface": "constant-product-reserves",
       "quoteModel": "constant-product-reserves",
       "unsupportedReason": null
     },
@@ -327,7 +366,10 @@
         "label": "0.30%",
         "source": "pool-metadata"
       },
+      "tickSpacing": null,
+      "stateViewAddress": null,
       "capability": "quote-model",
+      "stateSurface": "constant-product-reserves",
       "quoteModel": "constant-product-reserves",
       "unsupportedReason": null
     },
@@ -348,9 +390,12 @@
         "label": "0.30%",
         "source": "pool-metadata"
       },
-      "capability": "tracked-only",
+      "tickSpacing": 60,
+      "stateViewAddress": null,
+      "capability": "market-state",
+      "stateSurface": "cl-head-snapshot",
       "quoteModel": null,
-      "unsupportedReason": "concentrated-liquidity"
+      "unsupportedReason": null
     },
     {
       "id": "uniswap-v3-usdc-weth-5bps",
@@ -369,9 +414,12 @@
         "label": "0.050%",
         "source": "pool-metadata"
       },
-      "capability": "tracked-only",
+      "tickSpacing": 10,
+      "stateViewAddress": null,
+      "capability": "market-state",
+      "stateSurface": "cl-head-snapshot",
       "quoteModel": null,
-      "unsupportedReason": "concentrated-liquidity"
+      "unsupportedReason": null
     },
     {
       "id": "uniswap-v3-zora-usdc",
@@ -390,9 +438,12 @@
         "label": "0.30%",
         "source": "pool-metadata"
       },
-      "capability": "tracked-only",
+      "tickSpacing": 60,
+      "stateViewAddress": null,
+      "capability": "market-state",
+      "stateSurface": "cl-head-snapshot",
       "quoteModel": null,
-      "unsupportedReason": "concentrated-liquidity"
+      "unsupportedReason": null
     },
     {
       "id": "uniswap-v3-zora-weth",
@@ -411,9 +462,12 @@
         "label": "0.30%",
         "source": "pool-metadata"
       },
-      "capability": "tracked-only",
+      "tickSpacing": 60,
+      "stateViewAddress": null,
+      "capability": "market-state",
+      "stateSurface": "cl-head-snapshot",
       "quoteModel": null,
-      "unsupportedReason": "concentrated-liquidity"
+      "unsupportedReason": null
     },
     {
       "id": "uniswap-v4-basedflick-zora",
@@ -432,9 +486,12 @@
         "label": "3.00%",
         "source": "pool-metadata"
       },
-      "capability": "tracked-only",
+      "tickSpacing": 200,
+      "stateViewAddress": "0xa3c0c9b65bad0b08107aa264b0f3db444b867a71",
+      "capability": "market-state",
+      "stateSurface": "cl-head-snapshot",
       "quoteModel": null,
-      "unsupportedReason": "concentrated-liquidity"
+      "unsupportedReason": null
     },
     {
       "id": "uniswap-v4-usdc-eth",
@@ -453,9 +510,12 @@
         "label": "0.30%",
         "source": "pool-metadata"
       },
-      "capability": "tracked-only",
+      "tickSpacing": 60,
+      "stateViewAddress": "0xa3c0c9b65bad0b08107aa264b0f3db444b867a71",
+      "capability": "market-state",
+      "stateSurface": "cl-head-snapshot",
       "quoteModel": null,
-      "unsupportedReason": "concentrated-liquidity"
+      "unsupportedReason": null
     },
     {
       "id": "uniswap-v4-zora-eth",
@@ -474,9 +534,12 @@
         "label": "0.30%",
         "source": "pool-metadata"
       },
-      "capability": "tracked-only",
+      "tickSpacing": 60,
+      "stateViewAddress": "0xa3c0c9b65bad0b08107aa264b0f3db444b867a71",
+      "capability": "market-state",
+      "stateSurface": "cl-head-snapshot",
       "quoteModel": null,
-      "unsupportedReason": "concentrated-liquidity"
+      "unsupportedReason": null
     }
   ]
 }

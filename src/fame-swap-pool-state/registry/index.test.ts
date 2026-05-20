@@ -35,6 +35,14 @@ describe("FAME swap pool-state registry", () => {
       "uniswap-v2-usdc-weth",
     ]);
     expect(trackedOnlyPools.length).toBeGreaterThan(0);
+    expect(
+      quoteModelPools.every(
+        (pool) =>
+          pool.stateSurface === "constant-product-reserves" &&
+          pool.quoteModel === "constant-product-reserves" &&
+          pool.unsupportedReason === null,
+      ),
+    ).toBe(true);
   });
 
   test("looks up entries by pool id and chain pool address", () => {
@@ -58,6 +66,38 @@ describe("FAME swap pool-state registry", () => {
 
     expect(stable?.capability).toBe("tracked-only");
     expect(stable?.unsupportedReason).toBe("stable-pool");
+    expect(stable?.stateSurface).toBeNull();
+  });
+
+  test("keeps CL head-snapshot pools eligible for market state", () => {
+    const uniswapV3 = getFamePoolStateRegistryEntry({
+      poolId: "uniswap-v3-usdc-weth-5bps",
+    });
+    const slipstream = famePoolStateRegistry.pools.find(
+      (pool) => pool.venue === "aerodrome-slipstream",
+    );
+    const slipstream2 = famePoolStateRegistry.pools.find(
+      (pool) => pool.venue === "aerodrome-slipstream2",
+    );
+    const uniswapV4 = famePoolStateRegistry.pools.find(
+      (pool) => pool.venue === "uniswap-v4",
+    );
+
+    expect(uniswapV3?.capability).toBe("market-state");
+    expect(uniswapV3?.stateSurface).toBe("cl-head-snapshot");
+    expect(uniswapV3?.poolAddress).not.toBeNull();
+    expect(uniswapV3?.tickSpacing).not.toBeNull();
+    expect(slipstream?.capability).toBe("market-state");
+    expect(slipstream?.stateSurface).toBe("cl-head-snapshot");
+    if (slipstream2) {
+      expect(slipstream2.capability).toBe("market-state");
+      expect(slipstream2.stateSurface).toBe("cl-head-snapshot");
+    }
+    expect(uniswapV4?.capability).toBe("market-state");
+    expect(uniswapV4?.stateSurface).toBe("cl-head-snapshot");
+    expect(uniswapV4?.poolAddress).toBeNull();
+    expect(uniswapV4?.poolKey).not.toBeNull();
+    expect(uniswapV4?.stateViewAddress).not.toBeNull();
   });
 
   test("rejects malformed generated registry rows", () => {
@@ -80,6 +120,26 @@ describe("FAME swap pool-state registry", () => {
 
     expect(() => parseFamePoolStateRegistry(broken)).toThrow(
       /quote-model pool must have fee metadata/
+    );
+  });
+
+  test("rejects market-state rows without complete reader metadata", () => {
+    const clPool = famePoolStateRegistry.pools.find(
+      (pool) => pool.capability === "market-state" && pool.venue !== "uniswap-v4",
+    );
+    if (!clPool) throw new Error("Generated registry has no address-backed CL pool.");
+    const broken = {
+      ...famePoolStateRegistry,
+      pools: [
+        {
+          ...clPool,
+          poolAddress: null,
+        },
+      ],
+    };
+
+    expect(() => parseFamePoolStateRegistry(broken)).toThrow(
+      /address-backed market-state pool must have poolAddress/,
     );
   });
 });

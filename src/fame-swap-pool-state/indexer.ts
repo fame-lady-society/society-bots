@@ -6,13 +6,18 @@ import {
 } from "@/events.ts";
 import type { baseClient } from "@/viem.ts";
 import {
+  batchGetLatestClHeadStates,
   batchGetLatestPoolStates,
   getPoolStateCursor,
+  latestClHeadStateFromSnapshot,
   latestStateFromReserves,
   markPoolObservedThroughBlock,
+  putLatestClHeadState,
   putLatestPoolState,
   setPoolStateCursor,
   sourceRegistryIdFor,
+  type FameClHeadSnapshotRegistryEntry,
+  type FameClHeadSource,
   type PoolStateDocumentClient,
 } from "./dynamodb/pool-state.ts";
 import { famePoolStateRegistry } from "./registry/index.ts";
@@ -22,7 +27,78 @@ import type {
 } from "./types.ts";
 
 type QuoteModelPool = FamePoolStateRegistryEntry & { poolAddress: Address };
+type ClHeadPool = FameClHeadSnapshotRegistryEntry;
 type FamePoolStateSyncEventKind = "uint112-reserves" | "uint256-reserves";
+
+const SlipstreamSlot0Abi = [
+  {
+    type: "function",
+    name: "slot0",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [
+      { name: "sqrtPriceX96", type: "uint160" },
+      { name: "tick", type: "int24" },
+      { name: "observationIndex", type: "uint16" },
+      { name: "observationCardinality", type: "uint16" },
+      { name: "observationCardinalityNext", type: "uint16" },
+      { name: "unlocked", type: "bool" },
+    ],
+  },
+] as const;
+
+const UniswapV3Slot0Abi = [
+  {
+    type: "function",
+    name: "slot0",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [
+      { name: "sqrtPriceX96", type: "uint160" },
+      { name: "tick", type: "int24" },
+      { name: "observationIndex", type: "uint16" },
+      { name: "observationCardinality", type: "uint16" },
+      { name: "observationCardinalityNext", type: "uint16" },
+      { name: "feeProtocol", type: "uint8" },
+      { name: "unlocked", type: "bool" },
+    ],
+  },
+] as const;
+
+const ConcentratedPoolLiquidityAbi = [
+  {
+    type: "function",
+    name: "liquidity",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "liquidity", type: "uint128" }],
+  },
+] as const;
+
+const UniswapV4StateViewSlot0Abi = [
+  {
+    type: "function",
+    name: "getSlot0",
+    stateMutability: "view",
+    inputs: [{ name: "poolId", type: "bytes32" }],
+    outputs: [
+      { name: "sqrtPriceX96", type: "uint160" },
+      { name: "tick", type: "int24" },
+      { name: "protocolFee", type: "uint24" },
+      { name: "lpFee", type: "uint24" },
+    ],
+  },
+] as const;
+
+const UniswapV4StateViewLiquidityAbi = [
+  {
+    type: "function",
+    name: "getLiquidity",
+    stateMutability: "view",
+    inputs: [{ name: "poolId", type: "bytes32" }],
+    outputs: [{ name: "liquidity", type: "uint128" }],
+  },
+] as const;
 
 export interface FamePoolStateSyncLog {
   address: Address;
@@ -50,6 +126,22 @@ export interface FamePoolStateIndexerClient {
     poolAddress: Address;
     blockNumber: bigint;
   }): Promise<readonly [bigint, bigint, number]>;
+  getClHeadSnapshot(options: {
+    pool: ClHeadPool;
+    blockNumber: bigint;
+  }): Promise<FameClHeadSnapshotRead>;
+}
+
+export interface FameClHeadSnapshotRead {
+  sqrtPriceX96: bigint;
+  tick: number;
+  liquidity: bigint;
+  source: FameClHeadSource;
+}
+
+export interface FameClHeadSnapshotFailure {
+  poolId: string;
+  message: string;
 }
 
 export interface FamePoolStateIndexerResult {
@@ -63,6 +155,10 @@ export interface FamePoolStateIndexerResult {
   seededPools: number;
   reconciledPools: number;
   observedPools: number;
+  clHeadSnapshots: number;
+  clHeadWrittenPools: number;
+  clHeadFailedPools: number;
+  clHeadFailures: FameClHeadSnapshotFailure[];
   sourceRegistryId: string;
 }
 
@@ -72,6 +168,13 @@ function quoteModelPools(
   return registry.pools.filter(
     (pool): pool is QuoteModelPool =>
       pool.capability === "quote-model" && pool.poolAddress !== null,
+  );
+}
+
+function clHeadPools(registry: FamePoolStateRegistryFile): ClHeadPool[] {
+  return registry.pools.filter(
+    (pool): pool is ClHeadPool =>
+      pool.stateSurface === "cl-head-snapshot" && pool.tickSpacing !== null,
   );
 }
 
@@ -102,6 +205,29 @@ function safeHeadBlock(
   return latestBlock > confirmations
     ? latestBlock - confirmations
     : latestBlock;
+}
+
+function requirePoolAddress(pool: ClHeadPool): Address {
+  if (pool.poolAddress === null) {
+    throw new Error(`${pool.id} must have a poolAddress for pool head reads.`);
+  }
+  return pool.poolAddress;
+}
+
+function requirePoolKey(pool: ClHeadPool): Hex {
+  if (pool.poolKey === null) {
+    throw new Error(`${pool.id} must have a poolKey for V4 head reads.`);
+  }
+  return pool.poolKey;
+}
+
+function requireStateViewAddress(pool: ClHeadPool): Address {
+  if (pool.stateViewAddress === null) {
+    throw new Error(
+      `${pool.id} must have a StateView address for V4 head reads.`,
+    );
+  }
+  return pool.stateViewAddress;
 }
 
 function sortedLogs(
@@ -154,6 +280,14 @@ function stateNeedsReconciliation({
     latest.poolId !== pool.id ||
     latest.sourceRegistryId !== sourceRegistryId
   );
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error && error.message.length > 0) {
+    return error.message.split("\n", 1)[0] ?? "Unknown error";
+  }
+  if (typeof error === "string" && error.length > 0) return error;
+  return "Unknown error";
 }
 
 export function createViemPoolStateIndexerClient(
@@ -213,6 +347,81 @@ export function createViemPoolStateIndexerClient(
         blockNumber,
       });
     },
+    async getClHeadSnapshot({ pool, blockNumber }) {
+      if (
+        pool.venue === "aerodrome-slipstream" ||
+        pool.venue === "aerodrome-slipstream2"
+      ) {
+        const poolAddress = requirePoolAddress(pool);
+        const [sqrtPriceX96, tick] = await client.readContract({
+          address: poolAddress,
+          abi: SlipstreamSlot0Abi,
+          functionName: "slot0",
+          blockNumber,
+        });
+        const liquidity = await client.readContract({
+          address: poolAddress,
+          abi: ConcentratedPoolLiquidityAbi,
+          functionName: "liquidity",
+          blockNumber,
+        });
+        return {
+          sqrtPriceX96,
+          tick,
+          liquidity,
+          source: "pool-slot0-liquidity",
+        };
+      }
+
+      if (pool.venue === "uniswap-v3") {
+        const poolAddress = requirePoolAddress(pool);
+        const [sqrtPriceX96, tick] = await client.readContract({
+          address: poolAddress,
+          abi: UniswapV3Slot0Abi,
+          functionName: "slot0",
+          blockNumber,
+        });
+        const liquidity = await client.readContract({
+          address: poolAddress,
+          abi: ConcentratedPoolLiquidityAbi,
+          functionName: "liquidity",
+          blockNumber,
+        });
+        return {
+          sqrtPriceX96,
+          tick,
+          liquidity,
+          source: "pool-slot0-liquidity",
+        };
+      }
+
+      if (pool.venue === "uniswap-v4") {
+        const poolKey = requirePoolKey(pool);
+        const stateViewAddress = requireStateViewAddress(pool);
+        const [sqrtPriceX96, tick] = await client.readContract({
+          address: stateViewAddress,
+          abi: UniswapV4StateViewSlot0Abi,
+          functionName: "getSlot0",
+          args: [poolKey],
+          blockNumber,
+        });
+        const liquidity = await client.readContract({
+          address: stateViewAddress,
+          abi: UniswapV4StateViewLiquidityAbi,
+          functionName: "getLiquidity",
+          args: [poolKey],
+          blockNumber,
+        });
+        return {
+          sqrtPriceX96,
+          tick,
+          liquidity,
+          source: "v4-state-view",
+        };
+      }
+
+      throw new Error(`${pool.id} has no CL head reader.`);
+    },
   };
 }
 
@@ -233,6 +442,7 @@ export async function indexFamePoolStates({
 }): Promise<FamePoolStateIndexerResult> {
   const startedAtMs = Date.now();
   const pools = quoteModelPools(registry);
+  const clPools = clHeadPools(registry);
   const sourceRegistryId = sourceRegistryIdFor(registry.source);
   const latestBlock = await client.getBlockNumber();
   const safeBlock = safeHeadBlock(latestBlock, confirmationBlocks);
@@ -383,6 +593,73 @@ export async function indexFamePoolStates({
     updatedAt,
   });
 
+  const latestClHeadStates = await batchGetLatestClHeadStates({
+    db,
+    tableName,
+    pools: clPools,
+  });
+  const latestClHeadByPoolId = new Map(
+    latestClHeadStates.map((state) => [state.poolId, state]),
+  );
+  const clHeadReads = await Promise.allSettled(
+    clPools.map(async (pool) => {
+      const snapshot = await client.getClHeadSnapshot({
+        pool,
+        blockNumber: safeBlock,
+      });
+      return {
+        pool,
+        snapshot,
+      };
+    }),
+  );
+  const clHeadSnapshots: {
+    pool: ClHeadPool;
+    snapshot: FameClHeadSnapshotRead;
+  }[] = [];
+  const clHeadFailures: FameClHeadSnapshotFailure[] = [];
+  clHeadReads.forEach((result, index) => {
+    if (result.status === "fulfilled") {
+      clHeadSnapshots.push(result.value);
+      return;
+    }
+    const pool = clPools[index];
+    if (!pool) throw new Error("CL head read result missing pool.");
+    clHeadFailures.push({
+      poolId: pool.id,
+      message: errorMessage(result.reason),
+    });
+  });
+  let clHeadWrittenPools = 0;
+  for (const { pool, snapshot } of clHeadSnapshots) {
+    const latest = latestClHeadByPoolId.get(pool.id);
+    if (
+      latest &&
+      latest.sqrtPriceX96 === snapshot.sqrtPriceX96.toString() &&
+      latest.tick === snapshot.tick &&
+      latest.liquidity === snapshot.liquidity.toString() &&
+      latest.sourceRegistryId === sourceRegistryId &&
+      latest.observedThroughBlock >= observedThroughBlock
+    ) {
+      continue;
+    }
+    const result = await putLatestClHeadState({
+      db,
+      tableName,
+      state: latestClHeadStateFromSnapshot({
+        pool,
+        sqrtPriceX96: snapshot.sqrtPriceX96,
+        tick: snapshot.tick,
+        liquidity: snapshot.liquidity,
+        observedThroughBlock,
+        source: snapshot.source,
+        sourceRegistryId,
+        updatedAt,
+      }),
+    });
+    if (result === "written") clHeadWrittenPools += 1;
+  }
+
   return {
     chainId: client.chain.id,
     durationMs: Date.now() - startedAtMs,
@@ -394,6 +671,10 @@ export async function indexFamePoolStates({
     seededPools,
     reconciledPools,
     observedPools,
+    clHeadSnapshots: clHeadSnapshots.length,
+    clHeadWrittenPools,
+    clHeadFailedPools: clHeadFailures.length,
+    clHeadFailures,
     sourceRegistryId,
   };
 }

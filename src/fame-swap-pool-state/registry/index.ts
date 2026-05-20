@@ -9,6 +9,7 @@ import {
   type FamePoolStateRegistryEntry,
   type FamePoolStateRegistryFile,
   type FamePoolStateRegistrySource,
+  type FamePoolStateSurface,
   type FamePoolStateUnsupportedReason,
   type FamePoolStateVenue,
   type FamePoolStateVenueFamily,
@@ -37,6 +38,7 @@ const venueFamilyValues = [
 ] as const satisfies readonly FamePoolStateVenueFamily[];
 
 const capabilityValues = [
+  "market-state",
   "quote-model",
   "tracked-only",
 ] as const satisfies readonly FamePoolStateCapability[];
@@ -44,6 +46,11 @@ const capabilityValues = [
 const quoteModelValues = [
   "constant-product-reserves",
 ] as const satisfies readonly FamePoolStateQuoteModel[];
+
+const stateSurfaceValues = [
+  "cl-head-snapshot",
+  "constant-product-reserves",
+] as const satisfies readonly FamePoolStateSurface[];
 
 const unsupportedReasonValues = [
   "concentrated-liquidity",
@@ -95,6 +102,10 @@ function parseInteger(value: unknown, path: string): number {
     registryError(path, "expected an integer");
   }
   return parsed;
+}
+
+function parseIntegerOrNull(value: unknown, path: string): number | null {
+  return value === null ? null : parseInteger(value, path);
 }
 
 function parseBooleanOrNull(value: unknown, path: string): boolean | null {
@@ -243,7 +254,20 @@ function parseEntry(value: unknown, path: string): FamePoolStateRegistryEntry {
     token1: parseAddress(field(record, "token1", path), `${path}.token1`),
     stable: parseBooleanOrNull(field(record, "stable", path), `${path}.stable`),
     fee: parseFee(field(record, "fee", path), `${path}.fee`),
+    tickSpacing: parseIntegerOrNull(
+      field(record, "tickSpacing", path),
+      `${path}.tickSpacing`,
+    ),
+    stateViewAddress: parseAddressOrNull(
+      field(record, "stateViewAddress", path),
+      `${path}.stateViewAddress`,
+    ),
     capability,
+    stateSurface: parseNullableEnum(
+      field(record, "stateSurface", path),
+      `${path}.stateSurface`,
+      stateSurfaceValues,
+    ),
     quoteModel: parseNullableEnum(
       field(record, "quoteModel", path),
       `${path}.quoteModel`,
@@ -263,15 +287,53 @@ function parseEntry(value: unknown, path: string): FamePoolStateRegistryEntry {
     if (entry.quoteModel !== "constant-product-reserves") {
       registryError(path, "quote-model pool must use constant-product reserves");
     }
+    if (entry.stateSurface !== "constant-product-reserves") {
+      registryError(path, "quote-model pool must use reserve state surface");
+    }
     if (entry.unsupportedReason !== null) {
       registryError(path, "quote-model pool cannot have unsupportedReason");
     }
     if (entry.poolAddress === null) {
       registryError(path, "quote-model pool must have a poolAddress");
     }
+    if (entry.stateViewAddress !== null) {
+      registryError(path, "quote-model pool cannot have stateViewAddress");
+    }
+  } else if (entry.capability === "market-state") {
+    if (entry.fee.status !== "available") {
+      registryError(path, "market-state pool must have fee metadata");
+    }
+    if (entry.quoteModel !== null) {
+      registryError(path, "market-state pool cannot have quoteModel");
+    }
+    if (entry.unsupportedReason !== null) {
+      registryError(path, "market-state pool cannot have unsupportedReason");
+    }
+    if (entry.stateSurface !== "cl-head-snapshot") {
+      registryError(path, "market-state pool must use CL head state surface");
+    }
+    if (entry.tickSpacing === null) {
+      registryError(path, "market-state pool must have tickSpacing");
+    }
+    if (entry.venue === "uniswap-v4") {
+      if (entry.poolKey === null) {
+        registryError(path, "Uniswap V4 market-state pool must have poolKey");
+      }
+      if (entry.stateViewAddress === null) {
+        registryError(
+          path,
+          "Uniswap V4 market-state pool must have stateViewAddress",
+        );
+      }
+    } else if (entry.poolAddress === null) {
+      registryError(path, "address-backed market-state pool must have poolAddress");
+    }
   } else {
     if (entry.quoteModel !== null) {
       registryError(path, "tracked-only pool cannot have quoteModel");
+    }
+    if (entry.stateSurface !== null) {
+      registryError(path, "tracked-only pool cannot have stateSurface");
     }
     if (entry.unsupportedReason === null) {
       registryError(path, "tracked-only pool must have unsupportedReason");

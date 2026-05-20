@@ -7,7 +7,10 @@ import {
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { isAddress, isHex, type Address, type Hex } from "viem";
-import type { FamePoolStateRegistryEntry } from "../types.ts";
+import type {
+  FamePoolStateRegistryEntry,
+  FamePoolStateVenueFamily,
+} from "../types.ts";
 
 type PoolStateCommand =
   | BatchGetCommand
@@ -68,6 +71,32 @@ export interface FamePoolLatestState {
   updatedAt: string;
 }
 
+export type FameClHeadSource = "pool-slot0-liquidity" | "v4-state-view";
+
+export interface FameClHeadLatestState {
+  pk: string;
+  sk: "cl-head-snapshot-v1";
+  stateKind: "cl-head-snapshot";
+  poolId: string;
+  chainId: number;
+  poolAddress: Address | null;
+  poolKey: Hex | null;
+  token0: Address;
+  token1: Address;
+  venueFamily: FamePoolStateVenueFamily;
+  feeBps: number;
+  feeLabel: string;
+  tickSpacing: number;
+  stateViewAddress: Address | null;
+  sqrtPriceX96: string;
+  tick: number;
+  liquidity: string;
+  observedThroughBlock: number;
+  source: FameClHeadSource;
+  sourceRegistryId: string;
+  updatedAt: string;
+}
+
 export interface FamePoolStateCursor {
   pk: string;
   sk: "cursor";
@@ -78,6 +107,11 @@ export interface FamePoolStateCursor {
 }
 
 export type PutLatestPoolStateResult = "written" | "ignored";
+
+export type FameClHeadSnapshotRegistryEntry = FamePoolStateRegistryEntry & {
+  stateSurface: "cl-head-snapshot";
+  tickSpacing: number;
+};
 
 export class PoolStateIncompleteBatchReadError extends Error {
   constructor(tableName: string, unprocessedKeyCount: number) {
@@ -102,6 +136,23 @@ export function latestPoolStateKey(
   return {
     pk: `pool:${chainId.toString()}:${poolAddress.toLowerCase()}`,
     sk: "latest",
+  };
+}
+
+function clHeadPoolIdentity(pool: FameClHeadSnapshotRegistryEntry): string {
+  if (pool.poolAddress !== null) {
+    return `address:${pool.poolAddress.toLowerCase()}`;
+  }
+  if (pool.poolKey !== null) return `pool-key:${pool.poolKey.toLowerCase()}`;
+  throw new Error(`CL head pool ${pool.id} must have poolAddress or poolKey.`);
+}
+
+export function latestClHeadStateKey(
+  pool: FameClHeadSnapshotRegistryEntry,
+): { pk: string; sk: "cl-head-snapshot-v1" } {
+  return {
+    pk: `pool:${pool.chainId.toString()}:${clHeadPoolIdentity(pool)}`,
+    sk: "cl-head-snapshot-v1",
   };
 }
 
@@ -132,7 +183,9 @@ export function comparePoolStateEventVersions(
 }
 
 function isConditionalCheckFailed(error: unknown): boolean {
-  return error instanceof Error && error.name === "ConditionalCheckFailedException";
+  return (
+    error instanceof Error && error.name === "ConditionalCheckFailedException"
+  );
 }
 
 function itemToLatestPoolState(
@@ -145,6 +198,12 @@ function itemToCursor(
   item?: Record<string, unknown> | null,
 ): FamePoolStateCursor | null {
   return item ? parseCursorItem(item) : null;
+}
+
+function itemToLatestClHeadState(
+  item?: Record<string, unknown> | null,
+): FameClHeadLatestState | null {
+  return item ? parseLatestClHeadStateItem(item) : null;
 }
 
 function invalidItem(recordType: string, field: string, message: string): never {
@@ -175,6 +234,30 @@ function numberField(
   return value;
 }
 
+function integerField(
+  item: Record<string, unknown>,
+  recordType: string,
+  field: string,
+): number {
+  const value = item[field];
+  if (typeof value !== "number" || !Number.isSafeInteger(value)) {
+    invalidItem(recordType, field, "expected a safe integer");
+  }
+  return value;
+}
+
+function finiteNumberField(
+  item: Record<string, unknown>,
+  recordType: string,
+  field: string,
+): number {
+  const value = item[field];
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    invalidItem(recordType, field, "expected a finite number");
+  }
+  return value;
+}
+
 function literalField<const Value extends string>(
   item: Record<string, unknown>,
   recordType: string,
@@ -200,6 +283,43 @@ function sourceField(
   return value;
 }
 
+function clHeadSourceField(
+  item: Record<string, unknown>,
+  recordType: string,
+  field: string,
+): FameClHeadSource {
+  const value = item[field];
+  if (value !== "pool-slot0-liquidity" && value !== "v4-state-view") {
+    invalidItem(
+      recordType,
+      field,
+      "expected pool-slot0-liquidity or v4-state-view",
+    );
+  }
+  return value;
+}
+
+function venueFamilyField(
+  item: Record<string, unknown>,
+  recordType: string,
+  field: string,
+): FamePoolStateVenueFamily {
+  const value = item[field];
+  if (
+    value !== "AerodromeV2" &&
+    value !== "NativeWrap" &&
+    value !== "Slipstream" &&
+    value !== "Slipstream2" &&
+    value !== "Solidly" &&
+    value !== "UniswapV2" &&
+    value !== "UniswapV3" &&
+    value !== "UniswapV4"
+  ) {
+    invalidItem(recordType, field, "expected a FAME pool venue family");
+  }
+  return value;
+}
+
 function addressField(
   item: Record<string, unknown>,
   recordType: string,
@@ -210,6 +330,16 @@ function addressField(
     invalidItem(recordType, field, "expected an EVM address");
   }
   return value as Address;
+}
+
+function nullableAddressField(
+  item: Record<string, unknown>,
+  recordType: string,
+  field: string,
+): Address | null {
+  const value = item[field];
+  if (value === null) return null;
+  return addressField(item, recordType, field);
 }
 
 function nullableHexField(
@@ -258,6 +388,35 @@ function parseLatestPoolStateItem(
     ),
     observedThroughBlock: numberField(item, recordType, "observedThroughBlock"),
     source: sourceField(item, recordType, "source"),
+    sourceRegistryId: stringField(item, recordType, "sourceRegistryId"),
+    updatedAt: stringField(item, recordType, "updatedAt"),
+  };
+}
+
+function parseLatestClHeadStateItem(
+  item: Record<string, unknown>,
+): FameClHeadLatestState {
+  const recordType = "latest CL head-state";
+  return {
+    pk: stringField(item, recordType, "pk"),
+    sk: literalField(item, recordType, "sk", "cl-head-snapshot-v1"),
+    stateKind: literalField(item, recordType, "stateKind", "cl-head-snapshot"),
+    poolId: stringField(item, recordType, "poolId"),
+    chainId: numberField(item, recordType, "chainId"),
+    poolAddress: nullableAddressField(item, recordType, "poolAddress"),
+    poolKey: nullableHexField(item, recordType, "poolKey"),
+    token0: addressField(item, recordType, "token0"),
+    token1: addressField(item, recordType, "token1"),
+    venueFamily: venueFamilyField(item, recordType, "venueFamily"),
+    feeBps: finiteNumberField(item, recordType, "feeBps"),
+    feeLabel: stringField(item, recordType, "feeLabel"),
+    tickSpacing: numberField(item, recordType, "tickSpacing"),
+    stateViewAddress: nullableAddressField(item, recordType, "stateViewAddress"),
+    sqrtPriceX96: stringField(item, recordType, "sqrtPriceX96"),
+    tick: integerField(item, recordType, "tick"),
+    liquidity: stringField(item, recordType, "liquidity"),
+    observedThroughBlock: numberField(item, recordType, "observedThroughBlock"),
+    source: clHeadSourceField(item, recordType, "source"),
     sourceRegistryId: stringField(item, recordType, "sourceRegistryId"),
     updatedAt: stringField(item, recordType, "updatedAt"),
   };
@@ -315,6 +474,44 @@ export function latestStateFromReserves(options: {
   };
 }
 
+export function latestClHeadStateFromSnapshot(options: {
+  pool: FameClHeadSnapshotRegistryEntry;
+  sqrtPriceX96: bigint;
+  tick: number;
+  liquidity: bigint;
+  observedThroughBlock: number;
+  source: FameClHeadSource;
+  sourceRegistryId: string;
+  updatedAt: string;
+}): FameClHeadLatestState {
+  if (options.pool.fee.status !== "available") {
+    throw new Error(`CL head pool ${options.pool.id} must have fee metadata.`);
+  }
+  const key = latestClHeadStateKey(options.pool);
+  return {
+    ...key,
+    stateKind: "cl-head-snapshot",
+    poolId: options.pool.id,
+    chainId: options.pool.chainId,
+    poolAddress: options.pool.poolAddress,
+    poolKey: options.pool.poolKey,
+    token0: options.pool.token0,
+    token1: options.pool.token1,
+    venueFamily: options.pool.venueFamily,
+    feeBps: options.pool.fee.feeBps,
+    feeLabel: options.pool.fee.label,
+    tickSpacing: options.pool.tickSpacing,
+    stateViewAddress: options.pool.stateViewAddress,
+    sqrtPriceX96: options.sqrtPriceX96.toString(),
+    tick: options.tick,
+    liquidity: options.liquidity.toString(),
+    observedThroughBlock: options.observedThroughBlock,
+    source: options.source,
+    sourceRegistryId: options.sourceRegistryId,
+    updatedAt: options.updatedAt,
+  };
+}
+
 export async function getLatestPoolState({
   db = defaultDb,
   tableName,
@@ -365,6 +562,52 @@ export async function batchGetLatestPoolStates({
     .filter((item): item is FamePoolLatestState => item !== null);
 }
 
+export async function getLatestClHeadState({
+  db = defaultDb,
+  tableName,
+  pool,
+}: {
+  db?: PoolStateDocumentClient;
+  tableName: string;
+  pool: FameClHeadSnapshotRegistryEntry;
+}): Promise<FameClHeadLatestState | null> {
+  const response = await db.send(
+    new GetCommand({
+      TableName: tableName,
+      Key: latestClHeadStateKey(pool),
+    }),
+  );
+  return itemToLatestClHeadState(response.Item);
+}
+
+export async function batchGetLatestClHeadStates({
+  db = defaultDb,
+  tableName,
+  pools,
+}: {
+  db?: PoolStateDocumentClient;
+  tableName: string;
+  pools: readonly FameClHeadSnapshotRegistryEntry[];
+}): Promise<FameClHeadLatestState[]> {
+  if (pools.length === 0) return [];
+  const response = await db.send(
+    new BatchGetCommand({
+      RequestItems: {
+        [tableName]: {
+          Keys: pools.map((pool) => latestClHeadStateKey(pool)),
+        },
+      },
+    }),
+  );
+  const incompleteKeyCount = unprocessedKeyCount(response, tableName);
+  if (incompleteKeyCount > 0) {
+    throw new PoolStateIncompleteBatchReadError(tableName, incompleteKeyCount);
+  }
+  return (response.Responses?.[tableName] ?? [])
+    .map(itemToLatestClHeadState)
+    .filter((item): item is FameClHeadLatestState => item !== null);
+}
+
 export async function putLatestPoolState({
   db = defaultDb,
   tableName,
@@ -386,6 +629,35 @@ export async function putLatestPoolState({
           ":block": state.lastReserveChangeBlock,
           ":transactionIndex": state.lastEventTransactionIndex,
           ":logIndex": state.lastEventLogIndex,
+        },
+      }),
+    );
+    return "written";
+  } catch (error) {
+    if (isConditionalCheckFailed(error)) return "ignored";
+    throw error;
+  }
+}
+
+export async function putLatestClHeadState({
+  db = defaultDb,
+  tableName,
+  state,
+}: {
+  db?: PoolStateDocumentClient;
+  tableName: string;
+  state: FameClHeadLatestState;
+}): Promise<PutLatestPoolStateResult> {
+  try {
+    await db.send(
+      new PutCommand({
+        TableName: tableName,
+        Item: state,
+        ConditionExpression:
+          "attribute_not_exists(pk) OR observedThroughBlock < :observedThroughBlock OR (observedThroughBlock = :observedThroughBlock AND sourceRegistryId = :sourceRegistryId)",
+        ExpressionAttributeValues: {
+          ":observedThroughBlock": state.observedThroughBlock,
+          ":sourceRegistryId": state.sourceRegistryId,
         },
       }),
     );

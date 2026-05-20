@@ -1,13 +1,16 @@
 import { describe, expect, test } from "@jest/globals";
-import type { Address } from "viem";
+import type { Address, Hex } from "viem";
 import {
   indexFamePoolStates,
+  type FameClHeadSnapshotRead,
   type FamePoolStateIndexerClient,
   type FamePoolStateSyncLog,
 } from "./indexer.ts";
 import {
   cursorKey,
+  latestClHeadStateKey,
   latestPoolStateKey,
+  type FameClHeadSnapshotRegistryEntry,
   type PoolStateDocumentClient,
   type PoolStateDynamoResponse,
 } from "./dynamodb/pool-state.ts";
@@ -63,6 +66,27 @@ class InMemoryPoolStateDb implements PoolStateDocumentClient {
           throwConditionalFailure();
         }
       }
+      if (
+        condition ===
+          "attribute_not_exists(pk) OR observedThroughBlock < :observedThroughBlock OR (observedThroughBlock = :observedThroughBlock AND sourceRegistryId = :sourceRegistryId)" &&
+        existing
+      ) {
+        const values = parseItem(input.ExpressionAttributeValues);
+        const currentBlock = numberField(existing, "observedThroughBlock");
+        const incomingBlock = numberField(values, ":observedThroughBlock");
+        const currentSourceRegistryId = stringField(existing, "sourceRegistryId");
+        const incomingSourceRegistryId = stringField(
+          values,
+          ":sourceRegistryId",
+        );
+        if (
+          currentBlock > incomingBlock ||
+          (currentBlock === incomingBlock &&
+            currentSourceRegistryId !== incomingSourceRegistryId)
+        ) {
+          throwConditionalFailure();
+        }
+      }
       if (condition.includes("lastReserveChangeBlock") && existing) {
         const values = parseItem(input.ExpressionAttributeValues);
         if (
@@ -107,6 +131,10 @@ class InMemoryPoolStateDb implements PoolStateDocumentClient {
     );
   }
 
+  getLatestClHead(pool: FameClHeadSnapshotRegistryEntry) {
+    return this.items.get(keyFromValue(latestClHeadStateKey(pool)));
+  }
+
   getCursor(chainId: number) {
     return this.items.get(keyFromValue(cursorKey(chainId)));
   }
@@ -118,7 +146,9 @@ class FakePoolStateClient implements FamePoolStateIndexerClient {
     string,
     readonly [bigint, bigint, number]
   >();
+  public clHeadSnapshotsByPoolId = new Map<string, FameClHeadSnapshotRead>();
   public failingReserveAddress: Address | null = null;
+  public failingClHeadPoolId: string | null = null;
 
   constructor(
     private readonly logs: readonly FamePoolStateSyncLog[],
@@ -156,6 +186,25 @@ class FakePoolStateClient implements FamePoolStateIndexerClient {
         2_000n,
         0,
       ]
+    );
+  }
+
+  async getClHeadSnapshot(options: {
+    pool: FameClHeadSnapshotRegistryEntry;
+  }): Promise<FameClHeadSnapshotRead> {
+    if (options.pool.id === this.failingClHeadPoolId) {
+      throw new Error("CL head read failed");
+    }
+    return (
+      this.clHeadSnapshotsByPoolId.get(options.pool.id) ?? {
+        sqrtPriceX96: 2n ** 96n,
+        tick: 0,
+        liquidity: 1_000n,
+        source:
+          options.pool.venue === "uniswap-v4"
+            ? "v4-state-view"
+            : "pool-slot0-liquidity",
+      }
     );
   }
 }
@@ -234,14 +283,41 @@ function quotePool(
   };
 }
 
+function clHeadPool(id: string): FameClHeadSnapshotRegistryEntry {
+  const entry = registryEntry(id);
+  if (entry.stateSurface !== "cl-head-snapshot" || entry.tickSpacing === null) {
+    throw new Error(`${id} is not CL head-snapshot eligible.`);
+  }
+  return {
+    ...entry,
+    stateSurface: entry.stateSurface,
+    tickSpacing: entry.tickSpacing,
+  };
+}
+
 function registryFixture(): FamePoolStateRegistryFile {
   return {
     ...famePoolStateRegistry,
     pools: [
       quotePool("uniswap-v2-fame-direct"),
       quotePool("scale-equalizer-weth-fame"),
+      clHeadPool("uniswap-v3-usdc-weth-5bps"),
       registryEntry("scale-equalizer-usdc-frxusd"),
     ],
+  };
+}
+
+function registryWithPools(
+  pools: readonly FamePoolStateRegistryEntry[],
+  poolsJsonHash: Hex = famePoolStateRegistry.source.poolsJsonHash,
+): FamePoolStateRegistryFile {
+  return {
+    ...famePoolStateRegistry,
+    source: {
+      ...famePoolStateRegistry.source,
+      poolsJsonHash,
+    },
+    pools: [...pools],
   };
 }
 
@@ -330,6 +406,41 @@ describe("FAME pool-state indexer", () => {
       k: "2000000",
       source: "getReserves",
       observedThroughBlock: 118,
+    });
+  });
+
+  test("writes complete CL head snapshots at the safe block", async () => {
+    const clPool = clHeadPool("uniswap-v3-usdc-weth-5bps");
+    const db = new InMemoryPoolStateDb();
+    const client = new FakePoolStateClient([], 120n);
+    client.clHeadSnapshotsByPoolId.set(clPool.id, {
+      sqrtPriceX96: 2n ** 96n,
+      tick: -12,
+      liquidity: 9_999n,
+      source: "pool-slot0-liquidity",
+    });
+
+    const result = await indexFamePoolStates({
+      client,
+      db,
+      tableName: "PoolState",
+      registry: registryFixture(),
+      now: new Date("2026-05-19T00:00:00.000Z"),
+    });
+
+    expect(result).toMatchObject({
+      clHeadSnapshots: 1,
+      clHeadWrittenPools: 1,
+      observedThroughBlock: 118,
+    });
+    expect(db.getLatestClHead(clPool)).toMatchObject({
+      stateKind: "cl-head-snapshot",
+      poolId: clPool.id,
+      sqrtPriceX96: (2n ** 96n).toString(),
+      tick: -12,
+      liquidity: "9999",
+      observedThroughBlock: 118,
+      source: "pool-slot0-liquidity",
     });
   });
 
@@ -443,6 +554,115 @@ describe("FAME pool-state indexer", () => {
 
     expect(db.getLatest(uniswapPool)).toBeUndefined();
     expect(db.getCursor(8453)).toBeUndefined();
+  });
+
+  test("records failed CL head reads while writing successful snapshots", async () => {
+    const quoteModelPool = quotePool("uniswap-v2-fame-direct");
+    const failedClPool = clHeadPool("uniswap-v3-usdc-weth-5bps");
+    const writtenClPool = clHeadPool("uniswap-v4-usdc-eth");
+    const db = new InMemoryPoolStateDb();
+    const client = new FakePoolStateClient([], 120n);
+    client.failingClHeadPoolId = failedClPool.id;
+    client.clHeadSnapshotsByPoolId.set(writtenClPool.id, {
+      sqrtPriceX96: 123n,
+      tick: 5,
+      liquidity: 456n,
+      source: "v4-state-view",
+    });
+
+    const result = await indexFamePoolStates({
+      client,
+      db,
+      tableName: "PoolState",
+      registry: registryWithPools([
+        quoteModelPool,
+        failedClPool,
+        writtenClPool,
+      ]),
+      now: new Date("2026-05-19T00:00:00.000Z"),
+    });
+
+    expect(result).toMatchObject({
+      clHeadSnapshots: 1,
+      clHeadWrittenPools: 1,
+      clHeadFailedPools: 1,
+      clHeadFailures: [
+        {
+          poolId: failedClPool.id,
+          message: "CL head read failed",
+        },
+      ],
+    });
+    expect(db.getLatest(quoteModelPool)).toMatchObject({
+      observedThroughBlock: 118,
+    });
+    expect(db.getCursor(8453)).toMatchObject({
+      observedThroughBlock: 118,
+    });
+    expect(db.getLatestClHead(failedClPool)).toBeUndefined();
+    expect(db.getLatestClHead(writtenClPool)).toMatchObject({
+      tick: 5,
+      liquidity: "456",
+      source: "v4-state-view",
+    });
+  });
+
+  test("does not overwrite same-block CL head state from a different registry source", async () => {
+    const clPool = clHeadPool("uniswap-v3-usdc-weth-5bps");
+    const db = new InMemoryPoolStateDb();
+    const newerClient = new FakePoolStateClient([], 120n);
+    newerClient.clHeadSnapshotsByPoolId.set(clPool.id, {
+      sqrtPriceX96: 111n,
+      tick: 1,
+      liquidity: 222n,
+      source: "pool-slot0-liquidity",
+    });
+
+    await indexFamePoolStates({
+      client: newerClient,
+      db,
+      tableName: "PoolState",
+      registry: registryWithPools(
+        [clPool],
+        "0x2000000000000000000000000000000000000000000000000000000000000000",
+      ),
+      now: new Date("2026-05-19T00:00:00.000Z"),
+    });
+    const firstState = db.getLatestClHead(clPool);
+    expect(firstState).toMatchObject({
+      tick: 1,
+      liquidity: "222",
+    });
+    const firstSourceRegistryId = stringField(
+      parseItem(firstState),
+      "sourceRegistryId",
+    );
+
+    const staleClient = new FakePoolStateClient([], 120n);
+    staleClient.clHeadSnapshotsByPoolId.set(clPool.id, {
+      sqrtPriceX96: 333n,
+      tick: 9,
+      liquidity: 444n,
+      source: "pool-slot0-liquidity",
+    });
+
+    const result = await indexFamePoolStates({
+      client: staleClient,
+      db,
+      tableName: "PoolState",
+      registry: registryWithPools(
+        [clPool],
+        "0x1000000000000000000000000000000000000000000000000000000000000000",
+      ),
+      now: new Date("2026-05-19T00:01:00.000Z"),
+    });
+
+    expect(result.clHeadWrittenPools).toBe(0);
+    expect(db.getLatestClHead(clPool)).toMatchObject({
+      sourceRegistryId: firstSourceRegistryId,
+      tick: 1,
+      liquidity: "222",
+    });
   });
 
   test("rewrites quiet rows when registry identity changes", async () => {

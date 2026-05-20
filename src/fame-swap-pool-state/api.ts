@@ -1,7 +1,10 @@
-import { isAddress, type Address } from "viem";
+import { isAddress, type Address, type Hex } from "viem";
 import {
+  batchGetLatestClHeadStates,
   batchGetLatestPoolStates,
   sourceRegistryIdFor,
+  type FameClHeadLatestState,
+  type FameClHeadSnapshotRegistryEntry,
   type FamePoolLatestState,
   type PoolStateDocumentClient,
 } from "./dynamodb/pool-state.ts";
@@ -10,9 +13,11 @@ import type {
   FamePoolStateRegistryEntry,
   FamePoolStateRegistryFile,
   FamePoolStateUnsupportedReason,
+  FamePoolStateVenueFamily,
 } from "./types.ts";
 
 export type FamePoolStateStatus = "fresh" | "stale" | "unknown" | "unsupported";
+export type FamePoolStateRequestStateSurface = "cl-head-snapshot";
 
 export type FamePoolStateRequestKey =
   | {
@@ -29,6 +34,7 @@ export type FamePoolStateRequestKey =
 export interface FamePoolStateBatchRequest {
   currentBlock: number;
   maxFreshnessBlocks?: number;
+  stateSurfaces?: FamePoolStateRequestStateSurface[];
   pools: FamePoolStateRequestKey[];
 }
 
@@ -47,6 +53,28 @@ export type FamePoolStateResponseEntry =
       lastReserveChangeBlock: number;
       source: FamePoolLatestState["source"];
       quoteModel: "constant-product-reserves";
+      maxFreshnessBlocks: number;
+    }
+  | {
+      status: Extract<FamePoolStateStatus, "fresh" | "stale">;
+      stateKind: "cl-head-snapshot";
+      poolId: string;
+      chainId: number;
+      poolAddress: Address | null;
+      poolKey: Hex | null;
+      token0: Address;
+      token1: Address;
+      venueFamily: FamePoolStateVenueFamily;
+      feeBps: number;
+      feeLabel: string;
+      tickSpacing: number;
+      stateViewAddress: Address | null;
+      sqrtPriceX96: string;
+      tick: number;
+      liquidity: string;
+      observedThroughBlock: number;
+      source: FameClHeadLatestState["source"];
+      sourceRegistryId: string;
       maxFreshnessBlocks: number;
     }
   | {
@@ -71,6 +99,7 @@ export interface FamePoolStateBatchResponse {
 }
 
 type QuoteModelPool = FamePoolStateRegistryEntry & { poolAddress: Address };
+type ClHeadPool = FameClHeadSnapshotRegistryEntry;
 
 export class FamePoolStateRequestError extends Error {
   constructor(message: string) {
@@ -166,6 +195,22 @@ function parsePoolKey(value: unknown, path: string): FamePoolStateRequestKey {
   );
 }
 
+function parseStateSurfaces(
+  value: unknown,
+  path: string,
+): FamePoolStateRequestStateSurface[] {
+  if (!Array.isArray(value)) {
+    apiError(path, "expected an array");
+  }
+  return value.map((item, index) => {
+    const parsed = parseString(item, `${path}[${index.toString()}]`);
+    if (parsed !== "cl-head-snapshot") {
+      apiError(`${path}[${index.toString()}]`, "expected cl-head-snapshot");
+    }
+    return parsed;
+  });
+}
+
 export function parseFamePoolStateBatchRequest(
   value: unknown,
 ): FamePoolStateBatchRequest {
@@ -176,6 +221,7 @@ export function parseFamePoolStateBatchRequest(
   }
 
   const maxFreshnessBlocks = optionalField(record, "maxFreshnessBlocks");
+  const stateSurfaces = optionalField(record, "stateSurfaces");
   return {
     currentBlock: parseInteger(
       optionalField(record, "currentBlock"),
@@ -187,6 +233,14 @@ export function parseFamePoolStateBatchRequest(
           maxFreshnessBlocks: parseInteger(
             maxFreshnessBlocks,
             "$.maxFreshnessBlocks",
+          ),
+        }),
+    ...(stateSurfaces === undefined
+      ? {}
+      : {
+          stateSurfaces: parseStateSurfaces(
+            stateSurfaces,
+            "$.stateSurfaces",
           ),
         }),
     pools: poolsValue.map((pool, index) =>
@@ -231,8 +285,12 @@ function isQuoteModelPool(
   return pool.capability === "quote-model" && pool.poolAddress !== null;
 }
 
+function isClHeadPool(pool: FamePoolStateRegistryEntry): pool is ClHeadPool {
+  return pool.stateSurface === "cl-head-snapshot" && pool.tickSpacing !== null;
+}
+
 function freshnessStatus(options: {
-  state: FamePoolLatestState;
+  state: { observedThroughBlock: number };
   currentBlock: number;
   maxFreshnessBlocks: number;
 }): Extract<FamePoolStateStatus, "fresh" | "stale"> {
@@ -247,6 +305,48 @@ function freshnessStatus(options: {
 
 function addressStateKey(chainId: number, poolAddress: Address): string {
   return `${chainId.toString()}:${poolAddress.toLowerCase()}`;
+}
+
+function nullableHexEqual(
+  left: Address | Hex | null,
+  right: Address | Hex | null,
+): boolean {
+  if (left === null || right === null) return left === right;
+  return left.toLowerCase() === right.toLowerCase();
+}
+
+function clHeadStateMatchesRegistry({
+  state,
+  entry,
+  sourceRegistryId,
+}: {
+  state: FameClHeadLatestState;
+  entry: ClHeadPool;
+  sourceRegistryId: string;
+}): boolean {
+  if (entry.fee.status !== "available") return false;
+  return (
+    state.sourceRegistryId === sourceRegistryId &&
+    state.poolId === entry.id &&
+    state.chainId === entry.chainId &&
+    nullableHexEqual(state.poolAddress, entry.poolAddress) &&
+    nullableHexEqual(state.poolKey, entry.poolKey) &&
+    state.token0.toLowerCase() === entry.token0.toLowerCase() &&
+    state.token1.toLowerCase() === entry.token1.toLowerCase() &&
+    state.venueFamily === entry.venueFamily &&
+    state.feeBps === entry.fee.feeBps &&
+    state.feeLabel === entry.fee.label &&
+    state.tickSpacing === entry.tickSpacing &&
+    nullableHexEqual(state.stateViewAddress, entry.stateViewAddress)
+  );
+}
+
+function unsupportedReasonForEntry(
+  entry: FamePoolStateRegistryEntry,
+): FamePoolStateUnsupportedReason {
+  if (entry.unsupportedReason) return entry.unsupportedReason;
+  if (entry.stateSurface === "cl-head-snapshot") return "concentrated-liquidity";
+  return "unsupported-venue";
 }
 
 export async function handleFamePoolStateBatchRequest({
@@ -274,6 +374,8 @@ export async function handleFamePoolStateBatchRequest({
     producerMaxFreshnessBlocks,
   );
   const maps = registryMaps(registry);
+  const includeClHeadSnapshots =
+    parsed.stateSurfaces?.includes("cl-head-snapshot") ?? false;
   const entries = parsed.pools.map((pool) => ({
     request: pool,
     entry: registryEntryFor(pool, maps),
@@ -287,10 +389,26 @@ export async function handleFamePoolStateBatchRequest({
       )
       .map((entry) => [entry.id, entry]),
   );
+  const clHeadPoolsById = new Map(
+    includeClHeadSnapshots
+      ? entries
+          .map(({ entry }) => entry)
+          .filter(
+            (entry): entry is ClHeadPool =>
+              entry !== undefined && isClHeadPool(entry),
+          )
+          .map((entry) => [entry.id, entry])
+      : [],
+  );
   const states = await batchGetLatestPoolStates({
     db,
     tableName,
     pools: [...quoteModelPoolsById.values()],
+  });
+  const clHeadStates = await batchGetLatestClHeadStates({
+    db,
+    tableName,
+    pools: [...clHeadPoolsById.values()],
   });
   const statesByAddress = new Map(
     states.map((state) => [
@@ -298,9 +416,14 @@ export async function handleFamePoolStateBatchRequest({
       state,
     ]),
   );
+  const clHeadStatesByPoolId = new Map(
+    clHeadStates.map((state) => [state.poolId, state]),
+  );
+
+  const sourceRegistryId = sourceRegistryIdFor(registry.source);
 
   return {
-    sourceRegistryId: sourceRegistryIdFor(registry.source),
+    sourceRegistryId,
     currentBlock: parsed.currentBlock,
     producerMaxFreshnessBlocks,
     effectiveMaxFreshnessBlocks,
@@ -312,13 +435,53 @@ export async function handleFamePoolStateBatchRequest({
           reason: "missing-registry-entry",
         };
       }
+      if (includeClHeadSnapshots && isClHeadPool(entry)) {
+        const state = clHeadStatesByPoolId.get(entry.id);
+        if (
+          !state ||
+          !clHeadStateMatchesRegistry({ state, entry, sourceRegistryId })
+        ) {
+          return {
+            status: "unknown",
+            requested,
+            reason: "missing-indexed-state",
+          };
+        }
+
+        return {
+          status: freshnessStatus({
+            state,
+            currentBlock: parsed.currentBlock,
+            maxFreshnessBlocks: effectiveMaxFreshnessBlocks,
+          }),
+          stateKind: "cl-head-snapshot",
+          poolId: entry.id,
+          chainId: entry.chainId,
+          poolAddress: state.poolAddress,
+          poolKey: state.poolKey,
+          token0: state.token0,
+          token1: state.token1,
+          venueFamily: state.venueFamily,
+          feeBps: state.feeBps,
+          feeLabel: state.feeLabel,
+          tickSpacing: state.tickSpacing,
+          stateViewAddress: state.stateViewAddress,
+          sqrtPriceX96: state.sqrtPriceX96,
+          tick: state.tick,
+          liquidity: state.liquidity,
+          observedThroughBlock: state.observedThroughBlock,
+          source: state.source,
+          sourceRegistryId: state.sourceRegistryId,
+          maxFreshnessBlocks: effectiveMaxFreshnessBlocks,
+        };
+      }
       if (!isQuoteModelPool(entry)) {
         return {
           status: "unsupported",
           poolId: entry.id,
           chainId: entry.chainId,
           poolAddress: entry.poolAddress,
-          unsupportedReason: entry.unsupportedReason ?? "unsupported-venue",
+          unsupportedReason: unsupportedReasonForEntry(entry),
         };
       }
 
