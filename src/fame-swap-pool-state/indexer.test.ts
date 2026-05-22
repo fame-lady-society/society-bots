@@ -1,7 +1,9 @@
 import { describe, expect, test } from "@jest/globals";
+import { decodeFunctionResult, encodeAbiParameters } from "viem";
 import type { Address, Hex } from "viem";
 import {
   indexFamePoolStates,
+  SlipstreamTicksAbi,
   type FameClHeadSnapshotRead,
   type FameClReplaySnapshotRead,
   type FamePoolStateIndexerClient,
@@ -378,6 +380,29 @@ function registryWithPools(
 }
 
 describe("FAME pool-state indexer", () => {
+  test("decodes Aerodrome Slipstream tick state with staked and reward fields", () => {
+    const result = decodeFunctionResult({
+      abi: SlipstreamTicksAbi,
+      functionName: "ticks",
+      data: encodeAbiParameters(SlipstreamTicksAbi[0].outputs, [
+        25n,
+        15n,
+        0n,
+        101n,
+        202n,
+        303n,
+        -404n,
+        1_234_567n,
+        88,
+        true,
+      ]),
+    });
+
+    expect(result[0]).toBe(25n);
+    expect(result[1]).toBe(15n);
+    expect(result[9]).toBe(true);
+  });
+
   test("writes Sync reserves, k, observed-through block, and cursor", async () => {
     const pool = quotePool("uniswap-v2-fame-direct");
     const db = new InMemoryPoolStateDb();

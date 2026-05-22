@@ -110,7 +110,7 @@ const SlipstreamTickBitmapAbi = [
   },
 ] as const;
 
-const SlipstreamTicksAbi = [
+export const SlipstreamTicksAbi = [
   {
     type: "function",
     name: "ticks",
@@ -119,8 +119,10 @@ const SlipstreamTicksAbi = [
     outputs: [
       { name: "liquidityGross", type: "uint128" },
       { name: "liquidityNet", type: "int128" },
+      { name: "stakedLiquidityNet", type: "int128" },
       { name: "feeGrowthOutside0X128", type: "uint256" },
       { name: "feeGrowthOutside1X128", type: "uint256" },
+      { name: "rewardGrowthOutsideX128", type: "uint256" },
       { name: "tickCumulativeOutside", type: "int56" },
       { name: "secondsPerLiquidityOutsideX128", type: "uint160" },
       { name: "secondsOutside", type: "uint32" },
@@ -750,6 +752,8 @@ export function createViemPoolStateIndexerClient(
           const [
             liquidityGross,
             liquidityNet,
+            ,
+            ,
             ,
             ,
             ,
