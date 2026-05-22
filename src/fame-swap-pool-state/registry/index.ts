@@ -5,6 +5,7 @@ import {
   type FamePoolStateCapability,
   type FamePoolStateFeeDescriptor,
   type FamePoolStateQuoteModel,
+  type FamePoolStateReplaySurface,
   type FamePoolStateRegistryDirection,
   type FamePoolStateRegistryEntry,
   type FamePoolStateRegistryFile,
@@ -52,6 +53,10 @@ const stateSurfaceValues = [
   "constant-product-reserves",
 ] as const satisfies readonly FamePoolStateSurface[];
 
+const replaySurfaceValues = [
+  "cl-replay-v1",
+] as const satisfies readonly FamePoolStateReplaySurface[];
+
 const unsupportedReasonValues = [
   "concentrated-liquidity",
   "missing-fee-metadata",
@@ -80,6 +85,13 @@ function field(
     registryError(`${path}.${key}`, "missing required field");
   }
   return record[key];
+}
+
+function optionalField(
+  record: Record<string, unknown>,
+  key: string,
+): unknown | undefined {
+  return Object.hasOwn(record, key) ? record[key] : undefined;
 }
 
 function parseString(value: unknown, path: string): string {
@@ -268,6 +280,14 @@ function parseEntry(value: unknown, path: string): FamePoolStateRegistryEntry {
       `${path}.stateSurface`,
       stateSurfaceValues,
     ),
+    replaySurface:
+      optionalField(record, "replaySurface") === undefined
+        ? null
+        : parseNullableEnum(
+            optionalField(record, "replaySurface"),
+            `${path}.replaySurface`,
+            replaySurfaceValues,
+          ),
     quoteModel: parseNullableEnum(
       field(record, "quoteModel", path),
       `${path}.quoteModel`,
@@ -292,6 +312,9 @@ function parseEntry(value: unknown, path: string): FamePoolStateRegistryEntry {
     }
     if (entry.unsupportedReason !== null) {
       registryError(path, "quote-model pool cannot have unsupportedReason");
+    }
+    if (entry.replaySurface !== null) {
+      registryError(path, "quote-model pool cannot have replaySurface");
     }
     if (entry.poolAddress === null) {
       registryError(path, "quote-model pool must have a poolAddress");
@@ -328,12 +351,29 @@ function parseEntry(value: unknown, path: string): FamePoolStateRegistryEntry {
     } else if (entry.poolAddress === null) {
       registryError(path, "address-backed market-state pool must have poolAddress");
     }
+    if (entry.replaySurface !== null) {
+      if (entry.id !== "slipstream-usdc-weth-100") {
+        registryError(path, "only slipstream-usdc-weth-100 can have replaySurface");
+      }
+      if (entry.venue !== "aerodrome-slipstream") {
+        registryError(path, "replaySurface pool must be Slipstream");
+      }
+      if (entry.poolAddress === null) {
+        registryError(path, "replaySurface pool must have poolAddress");
+      }
+      if (entry.stateSurface !== "cl-head-snapshot") {
+        registryError(path, "replaySurface pool must keep CL head state surface");
+      }
+    }
   } else {
     if (entry.quoteModel !== null) {
       registryError(path, "tracked-only pool cannot have quoteModel");
     }
     if (entry.stateSurface !== null) {
       registryError(path, "tracked-only pool cannot have stateSurface");
+    }
+    if (entry.replaySurface !== null) {
+      registryError(path, "tracked-only pool cannot have replaySurface");
     }
     if (entry.unsupportedReason === null) {
       registryError(path, "tracked-only pool must have unsupportedReason");
@@ -373,6 +413,22 @@ function assertUniquePools(pools: readonly FamePoolStateRegistryEntry[]): void {
   }
 }
 
+function assertReplaySurfaceScope(
+  pools: readonly FamePoolStateRegistryEntry[],
+): void {
+  const replayPools = pools.filter((pool) => pool.replaySurface !== null);
+  if (
+    replayPools.length !== 1 ||
+    replayPools[0]?.id !== "slipstream-usdc-weth-100" ||
+    replayPools[0].replaySurface !== "cl-replay-v1"
+  ) {
+    registryError(
+      "pools",
+      "expected exactly slipstream-usdc-weth-100 to have cl-replay-v1",
+    );
+  }
+}
+
 export function parseFamePoolStateRegistry(
   value: unknown,
 ): FamePoolStateRegistryFile {
@@ -402,6 +458,7 @@ export function parseFamePoolStateRegistry(
     pools: parseArray(field(record, "pools", "$"), "$.pools", parseEntry),
   };
   assertUniquePools(registry.pools);
+  assertReplaySurfaceScope(registry.pools);
   return registry;
 }
 

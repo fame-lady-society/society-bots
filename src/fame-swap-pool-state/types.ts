@@ -27,6 +27,7 @@ export type FamePoolStateCapability =
   | "quote-model"
   | "tracked-only";
 export type FamePoolStateQuoteModel = "constant-product-reserves";
+export type FamePoolStateReplaySurface = "cl-replay-v1";
 export type FamePoolStateSurface =
   | "cl-head-snapshot"
   | "constant-product-reserves";
@@ -80,6 +81,7 @@ export interface FamePoolStateRegistryEntry {
   stateViewAddress: Address | null;
   capability: FamePoolStateCapability;
   stateSurface: FamePoolStateSurface | null;
+  replaySurface: FamePoolStateReplaySurface | null;
   quoteModel: FamePoolStateQuoteModel | null;
   unsupportedReason: FamePoolStateUnsupportedReason | null;
 }
