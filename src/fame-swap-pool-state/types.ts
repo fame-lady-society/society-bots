@@ -1,6 +1,6 @@
 import type { Address, Hex } from "viem";
 
-export const FAME_POOL_STATE_REGISTRY_SCHEMA_VERSION = 2;
+export const FAME_POOL_STATE_REGISTRY_SCHEMA_VERSION = 3;
 
 export type FamePoolStateVenue =
   | "aerodrome-slipstream"

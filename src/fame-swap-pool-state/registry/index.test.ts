@@ -18,10 +18,10 @@ function registryWithFirstPool(overrides: Record<string, unknown>): unknown {
 describe("FAME swap pool-state registry", () => {
   test("loads the generated www registry with quote-model and tracked-only pools", () => {
     const quoteModelPools = famePoolStateRegistry.pools.filter(
-      (pool) => pool.capability === "quote-model"
+      (pool) => pool.capability === "quote-model",
     );
     const trackedOnlyPools = famePoolStateRegistry.pools.filter(
-      (pool) => pool.capability === "tracked-only"
+      (pool) => pool.capability === "tracked-only",
     );
 
     expect(famePoolStateRegistry.source.repo).toBe("www");
@@ -123,7 +123,23 @@ describe("FAME swap pool-state registry", () => {
     });
 
     expect(() => parseFamePoolStateRegistry(broken)).toThrow(
-      /poolAddress: must be an EVM address/
+      /poolAddress: must be an EVM address/,
+    );
+  });
+
+  test("requires explicit replaySurface fields in schema v3 rows", () => {
+    const [firstPool, ...remainingPools] = famePoolStateRegistry.pools;
+    if (!firstPool) throw new Error("Generated registry has no pools.");
+    const poolWithoutReplaySurface: Record<string, unknown> = { ...firstPool };
+    delete poolWithoutReplaySurface.replaySurface;
+
+    const broken = {
+      ...famePoolStateRegistry,
+      pools: [poolWithoutReplaySurface, ...remainingPools],
+    };
+
+    expect(() => parseFamePoolStateRegistry(broken)).toThrow(
+      /replaySurface: missing required field/,
     );
   });
 
@@ -136,15 +152,17 @@ describe("FAME swap pool-state registry", () => {
     });
 
     expect(() => parseFamePoolStateRegistry(broken)).toThrow(
-      /quote-model pool must have fee metadata/
+      /quote-model pool must have fee metadata/,
     );
   });
 
   test("rejects market-state rows without complete reader metadata", () => {
     const clPool = famePoolStateRegistry.pools.find(
-      (pool) => pool.capability === "market-state" && pool.venue !== "uniswap-v4",
+      (pool) =>
+        pool.capability === "market-state" && pool.venue !== "uniswap-v4",
     );
-    if (!clPool) throw new Error("Generated registry has no address-backed CL pool.");
+    if (!clPool)
+      throw new Error("Generated registry has no address-backed CL pool.");
     const broken = {
       ...famePoolStateRegistry,
       pools: [

@@ -1,9 +1,4 @@
-import {
-  encodeAbiParameters,
-  keccak256,
-  type Address,
-  type Hex,
-} from "viem";
+import { encodeAbiParameters, keccak256, type Address, type Hex } from "viem";
 import {
   Uint256ReserveSyncEvent,
   UniswapV2PairReserveAbi,
@@ -192,6 +187,47 @@ export interface FamePoolStateIndexerClient {
   }): Promise<FameClReplaySnapshotRead>;
 }
 
+export interface SlipstreamReplayReadClient {
+  getBlock(options: {
+    blockNumber: bigint;
+  }): Promise<{ hash: Hex | null; parentHash: Hex }>;
+  getSlot0(options: {
+    poolAddress: Address;
+    blockNumber: bigint;
+  }): Promise<readonly [bigint, number, number, number, number, boolean]>;
+  getLiquidity(options: {
+    poolAddress: Address;
+    blockNumber: bigint;
+  }): Promise<bigint>;
+  getFee(options: {
+    poolAddress: Address;
+    blockNumber: bigint;
+  }): Promise<bigint | number>;
+  getTickBitmap(options: {
+    poolAddress: Address;
+    wordPosition: number;
+    blockNumber: bigint;
+  }): Promise<bigint>;
+  getTick(options: {
+    poolAddress: Address;
+    tick: number;
+    blockNumber: bigint;
+  }): Promise<
+    readonly [
+      bigint,
+      bigint,
+      bigint,
+      bigint,
+      bigint,
+      bigint,
+      bigint,
+      bigint,
+      number,
+      boolean,
+    ]
+  >;
+}
+
 export interface FameClHeadSnapshotRead {
   sqrtPriceX96: bigint;
   tick: number;
@@ -265,6 +301,28 @@ export interface FamePoolStateIndexerResult {
   clReplayFailures: FameClReplaySnapshotFailure[];
   clReplayMetrics: FameClReplaySnapshotMetric[];
   sourceRegistryId: string;
+}
+
+export class FameClReplaySnapshotIndexingError extends Error {
+  constructor(failures: readonly FameClReplaySnapshotFailure[]) {
+    super(
+      `CL replay snapshot failed for ${failures
+        .map((failure) => `${failure.poolId}: ${failure.message}`)
+        .join("; ")}`,
+    );
+    this.name = "FameClReplaySnapshotIndexingError";
+  }
+}
+
+export function assertNoClReplaySnapshotFailures(
+  result: Pick<
+    FamePoolStateIndexerResult,
+    "clReplayFailedPools" | "clReplayFailures"
+  >,
+): void {
+  if (result.clReplayFailedPools > 0) {
+    throw new FameClReplaySnapshotIndexingError(result.clReplayFailures);
+  }
 }
 
 function quoteModelPools(
@@ -391,7 +449,9 @@ async function mapInBatches<Input, Output>(
   const outputs: Output[] = [];
   for (let index = 0; index < values.length; index += batchSize) {
     outputs.push(
-      ...(await Promise.all(values.slice(index, index + batchSize).map(mapper))),
+      ...(await Promise.all(
+        values.slice(index, index + batchSize).map(mapper),
+      )),
     );
   }
   return outputs;
@@ -401,12 +461,14 @@ function clReplaySnapshotId({
   poolId,
   observedThroughBlock,
   blockHash,
+  sourceRegistryId,
 }: {
   poolId: string;
   observedThroughBlock: number;
   blockHash: Hex;
+  sourceRegistryId: string;
 }): string {
-  return `cl-replay-v1:${poolId}:${observedThroughBlock.toString()}:${blockHash}`;
+  return `cl-replay-v1:${poolId}:${observedThroughBlock.toString()}:${blockHash}:${sourceRegistryId}`;
 }
 
 function clReplayStateHash({
@@ -492,6 +554,7 @@ function clReplayRowsFromSnapshot({
       poolId: pool.id,
       observedThroughBlock,
       blockHash: snapshot.blockHash,
+      sourceRegistryId,
     }),
     stateHash: clReplayStateHash({ snapshot, observedThroughBlock }),
     sourceRegistryId,
@@ -559,6 +622,106 @@ function errorMessage(error: unknown): string {
   }
   if (typeof error === "string" && error.length > 0) return error;
   return "Unknown error";
+}
+
+export async function getSlipstreamClReplaySnapshot({
+  client,
+  pool,
+  blockNumber,
+}: {
+  client: SlipstreamReplayReadClient;
+  pool: ClReplayPool;
+  blockNumber: bigint;
+}): Promise<FameClReplaySnapshotRead> {
+  const startedAtMs = Date.now();
+  const poolAddress = pool.poolAddress;
+  const blockBefore = await client.getBlock({ blockNumber });
+  if (blockBefore.hash === null) {
+    throw new Error(`Block ${blockNumber.toString()} has no hash.`);
+  }
+
+  const [[sqrtPriceX96, tick], liquidity, fee] = await Promise.all([
+    client.getSlot0({
+      poolAddress,
+      blockNumber,
+    }),
+    client.getLiquidity({
+      poolAddress,
+      blockNumber,
+    }),
+    client.getFee({
+      poolAddress,
+      blockNumber,
+    }),
+  ]);
+
+  const wordPositions = tickBitmapWordPositions(pool.tickSpacing);
+  const wordReads = await mapInBatches(
+    wordPositions,
+    CL_REPLAY_PROVIDER_READ_BATCH_SIZE,
+    async (wordPosition) => ({
+      wordPosition,
+      bitmap: await client.getTickBitmap({
+        poolAddress,
+        wordPosition,
+        blockNumber,
+      }),
+    }),
+  );
+  const bitmapWords = wordReads.filter((word) => word.bitmap !== 0n);
+  const initializedTickIndexes = bitmapWords.flatMap((word) =>
+    initializedTicksForBitmapWord({
+      wordPosition: word.wordPosition,
+      bitmap: word.bitmap,
+      tickSpacing: pool.tickSpacing,
+    }),
+  );
+  const initializedTicks = await mapInBatches(
+    initializedTickIndexes,
+    CL_REPLAY_PROVIDER_READ_BATCH_SIZE,
+    async (initializedTick) => {
+      const [liquidityGross, liquidityNet, , , , , , , , initialized] =
+        await client.getTick({
+          poolAddress,
+          tick: initializedTick,
+          blockNumber,
+        });
+      if (!initialized) {
+        throw new Error(
+          `Tick bitmap marked ${initializedTick.toString()} initialized but ticks() did not.`,
+        );
+      }
+      return {
+        tick: initializedTick,
+        liquidityGross,
+        liquidityNet,
+      };
+    },
+  );
+
+  const blockAfter = await client.getBlock({ blockNumber });
+  if (
+    blockAfter.hash !== blockBefore.hash ||
+    blockAfter.parentHash !== blockBefore.parentHash
+  ) {
+    throw new Error(
+      `Block identity changed while reading ${pool.id} replay snapshot.`,
+    );
+  }
+
+  return {
+    sqrtPriceX96,
+    tick,
+    liquidity,
+    fee: BigInt(fee),
+    blockHash: blockBefore.hash,
+    parentHash: blockBefore.parentHash,
+    bitmapWords,
+    initializedTicks,
+    providerReadCount:
+      2 + 3 + wordPositions.length + initializedTickIndexes.length,
+    durationMs: Date.now() - startedAtMs,
+  };
 }
 
 export function createViemPoolStateIndexerClient(
@@ -694,115 +857,61 @@ export function createViemPoolStateIndexerClient(
       throw new Error(`${pool.id} has no CL head reader.`);
     },
     async getClReplaySnapshot({ pool, blockNumber }) {
-      const startedAtMs = Date.now();
-      const poolAddress = pool.poolAddress;
-      const blockBefore = await client.getBlock({ blockNumber });
-      if (blockBefore.hash === null) {
-        throw new Error(`Block ${blockNumber.toString()} has no hash.`);
-      }
-
-      const [[sqrtPriceX96, tick], liquidity, fee] = await Promise.all([
-        client.readContract({
-          address: poolAddress,
-          abi: SlipstreamSlot0Abi,
-          functionName: "slot0",
-          blockNumber,
-        }),
-        client.readContract({
-          address: poolAddress,
-          abi: ConcentratedPoolLiquidityAbi,
-          functionName: "liquidity",
-          blockNumber,
-        }),
-        client.readContract({
-          address: poolAddress,
-          abi: SlipstreamFeeAbi,
-          functionName: "fee",
-          blockNumber,
-        }),
-      ]);
-
-      const wordPositions = tickBitmapWordPositions(pool.tickSpacing);
-      const wordReads = await mapInBatches(
-        wordPositions,
-        CL_REPLAY_PROVIDER_READ_BATCH_SIZE,
-        async (wordPosition) => ({
-          wordPosition,
-          bitmap: await client.readContract({
-            address: poolAddress,
-            abi: SlipstreamTickBitmapAbi,
-            functionName: "tickBitmap",
-            args: [wordPosition],
-            blockNumber,
-          }),
-        }),
-      );
-      const bitmapWords = wordReads.filter((word) => word.bitmap !== 0n);
-      const initializedTickIndexes = bitmapWords.flatMap((word) =>
-        initializedTicksForBitmapWord({
-          wordPosition: word.wordPosition,
-          bitmap: word.bitmap,
-          tickSpacing: pool.tickSpacing,
-        }),
-      );
-      const initializedTicks = await mapInBatches(
-        initializedTickIndexes,
-        CL_REPLAY_PROVIDER_READ_BATCH_SIZE,
-        async (initializedTick) => {
-          const [
-            liquidityGross,
-            liquidityNet,
-            ,
-            ,
-            ,
-            ,
-            ,
-            ,
-            ,
-            initialized,
-          ] = await client.readContract({
-            address: poolAddress,
-            abi: SlipstreamTicksAbi,
-            functionName: "ticks",
-            args: [initializedTick],
-            blockNumber,
-          });
-          if (!initialized) {
-            throw new Error(
-              `Tick bitmap marked ${initializedTick.toString()} initialized but ticks() did not.`,
-            );
-          }
-          return {
-            tick: initializedTick,
-            liquidityGross,
-            liquidityNet,
-          };
+      return getSlipstreamClReplaySnapshot({
+        client: {
+          getBlock(options) {
+            return client.getBlock(options);
+          },
+          getSlot0({ poolAddress, blockNumber: readBlockNumber }) {
+            return client.readContract({
+              address: poolAddress,
+              abi: SlipstreamSlot0Abi,
+              functionName: "slot0",
+              blockNumber: readBlockNumber,
+            });
+          },
+          getLiquidity({ poolAddress, blockNumber: readBlockNumber }) {
+            return client.readContract({
+              address: poolAddress,
+              abi: ConcentratedPoolLiquidityAbi,
+              functionName: "liquidity",
+              blockNumber: readBlockNumber,
+            });
+          },
+          getFee({ poolAddress, blockNumber: readBlockNumber }) {
+            return client.readContract({
+              address: poolAddress,
+              abi: SlipstreamFeeAbi,
+              functionName: "fee",
+              blockNumber: readBlockNumber,
+            });
+          },
+          getTickBitmap({
+            poolAddress,
+            wordPosition,
+            blockNumber: readBlockNumber,
+          }) {
+            return client.readContract({
+              address: poolAddress,
+              abi: SlipstreamTickBitmapAbi,
+              functionName: "tickBitmap",
+              args: [wordPosition],
+              blockNumber: readBlockNumber,
+            });
+          },
+          getTick({ poolAddress, tick, blockNumber: readBlockNumber }) {
+            return client.readContract({
+              address: poolAddress,
+              abi: SlipstreamTicksAbi,
+              functionName: "ticks",
+              args: [tick],
+              blockNumber: readBlockNumber,
+            });
+          },
         },
-      );
-
-      const blockAfter = await client.getBlock({ blockNumber });
-      if (
-        blockAfter.hash !== blockBefore.hash ||
-        blockAfter.parentHash !== blockBefore.parentHash
-      ) {
-        throw new Error(
-          `Block identity changed while reading ${pool.id} replay snapshot.`,
-        );
-      }
-
-      return {
-        sqrtPriceX96,
-        tick,
-        liquidity,
-        fee: BigInt(fee),
-        blockHash: blockBefore.hash,
-        parentHash: blockBefore.parentHash,
-        bitmapWords,
-        initializedTicks,
-        providerReadCount:
-          2 + 3 + wordPositions.length + initializedTickIndexes.length,
-        durationMs: Date.now() - startedAtMs,
-      };
+        pool,
+        blockNumber,
+      });
     },
   };
 }

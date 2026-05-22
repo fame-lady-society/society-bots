@@ -3,6 +3,7 @@ import { BatchGetCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
 import type { Address, Hex } from "viem";
 import {
   batchGetLatestClReplayStates,
+  CL_REPLAY_CHUNK_TTL_SECONDS,
   batchGetLatestClHeadStates,
   batchGetLatestPoolStates,
   clReplayStateRowsFromSnapshot,
@@ -17,6 +18,7 @@ import {
   latestStateFromReserves,
   putLatestClHeadState,
   putLatestPoolState,
+  sourceRegistryIdFor,
   type FameClReplayRegistryEntry,
   type FameClHeadSnapshotRegistryEntry,
   type PoolStateDocumentClient,
@@ -120,6 +122,18 @@ function keyFromKey(key: Record<string, unknown>): string {
   return `${pk}\u0000${sk}`;
 }
 
+function stringField(item: Record<string, unknown>, key: string): string {
+  const value = item[key];
+  if (typeof value !== "string") throw new Error(`${key} must be a string.`);
+  return value;
+}
+
+function numberField(item: Record<string, unknown>, key: string): number {
+  const value = item[key];
+  if (typeof value !== "number") throw new Error(`${key} must be a number.`);
+  return value;
+}
+
 class ReplayStateDb implements PoolStateDocumentClient {
   public readonly commands: SentCommand[] = [];
   public readonly items = new Map<string, Record<string, unknown>>();
@@ -133,6 +147,39 @@ class ReplayStateDb implements PoolStateDocumentClient {
     if (command instanceof PutCommand) {
       const item = command.input.Item;
       if (!item) throw new Error("PutCommand fixture is missing Item.");
+      const condition = String(command.input.ConditionExpression ?? "");
+      const existing = this.items.get(keyFromItem(item));
+      if (
+        condition ===
+          "attribute_not_exists(pk) OR observedThroughBlock < :observedThroughBlock OR (observedThroughBlock = :observedThroughBlock AND sourceRegistryId = :sourceRegistryId)" &&
+        existing
+      ) {
+        const values = command.input.ExpressionAttributeValues;
+        if (!values) {
+          throw new Error(
+            "PutCommand fixture is missing ExpressionAttributeValues.",
+          );
+        }
+        const incomingBlock = numberField(values, ":observedThroughBlock");
+        const incomingSourceRegistryId = stringField(
+          values,
+          ":sourceRegistryId",
+        );
+        const currentBlock = numberField(existing, "observedThroughBlock");
+        const currentSourceRegistryId = stringField(
+          existing,
+          "sourceRegistryId",
+        );
+        if (
+          currentBlock > incomingBlock ||
+          (currentBlock === incomingBlock &&
+            currentSourceRegistryId !== incomingSourceRegistryId)
+        ) {
+          const error = new Error("conditional");
+          error.name = "ConditionalCheckFailedException";
+          throw error;
+        }
+      }
       this.items.set(keyFromItem(item), item);
       return {};
     }
@@ -153,7 +200,9 @@ class ReplayStateDb implements PoolStateDocumentClient {
   }
 }
 
-function quoteModelPool(id: string): FamePoolStateRegistryEntry & { poolAddress: Address } {
+function quoteModelPool(
+  id: string,
+): FamePoolStateRegistryEntry & { poolAddress: Address } {
   const pool = famePoolStateRegistry.pools.find((entry) => entry.id === id);
   if (!pool || pool.poolAddress === null) {
     throw new Error(`Missing quote-model pool ${id}.`);
@@ -223,6 +272,12 @@ function clReplayPool(): FameClReplayRegistryEntry {
 }
 
 describe("FAME pool-state DynamoDB mapping", () => {
+  test("includes the helper registry contract version in source registry ids", () => {
+    expect(sourceRegistryIdFor(famePoolStateRegistry.source)).toMatch(
+      /^pool-state-registry-v3:0x[0-9a-f]{64}:0x[0-9a-f]{64}$/,
+    );
+  });
+
   test("builds latest-state rows with token-ordered reserves and k", () => {
     const pool = quoteModelPool("uniswap-v2-fame-direct");
     const state = latestStateFromReserves({
@@ -235,7 +290,8 @@ describe("FAME pool-state DynamoDB mapping", () => {
         transactionIndex: 2,
         logIndex: 7,
       },
-      transactionHash: "0x0000000000000000000000000000000000000000000000000000000000000001",
+      transactionHash:
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
       source: "sync-event",
       sourceRegistryId: "unit",
       updatedAt: "2026-05-17T00:00:00.000Z",
@@ -324,10 +380,13 @@ describe("FAME pool-state DynamoDB mapping", () => {
       liquidity: 123_456_789n,
       fee: 100n,
       observedThroughBlock: 321,
-      blockHash: "0x1111111111111111111111111111111111111111111111111111111111111111",
-      parentHash: "0x2222222222222222222222222222222222222222222222222222222222222222",
+      blockHash:
+        "0x1111111111111111111111111111111111111111111111111111111111111111",
+      parentHash:
+        "0x2222222222222222222222222222222222222222222222222222222222222222",
       snapshotId: "unit-snapshot-321",
-      stateHash: "0x3333333333333333333333333333333333333333333333333333333333333333",
+      stateHash:
+        "0x3333333333333333333333333333333333333333333333333333333333333333",
       sourceRegistryId: "unit-registry",
       updatedAt: "2026-05-20T00:00:00.000Z",
       bitmapWords: [
@@ -388,6 +447,92 @@ describe("FAME pool-state DynamoDB mapping", () => {
       minTick: 199_800,
       maxTick: 200_000,
     });
+    expect(rows.latest).not.toHaveProperty("expiresAt");
+    expect(rows.bitmapChunks[0]?.expiresAt).toBe(
+      Math.floor(Date.parse("2026-05-20T00:00:00.000Z") / 1_000) +
+        CL_REPLAY_CHUNK_TTL_SECONDS,
+    );
+    expect(rows.tickChunks[0]?.expiresAt).toBe(rows.bitmapChunks[0]?.expiresAt);
+  });
+
+  test("keeps the published replay capsule when a same-block registry write is ignored", async () => {
+    const pool = clReplayPool();
+    const publishedRows = clReplayStateRowsFromSnapshot({
+      pool,
+      sqrtPriceX96: 2n ** 96n,
+      tick: 199_900,
+      liquidity: 1_000n,
+      fee: 100n,
+      observedThroughBlock: 321,
+      blockHash:
+        "0x1111111111111111111111111111111111111111111111111111111111111111",
+      parentHash:
+        "0x2222222222222222222222222222222222222222222222222222222222222222",
+      snapshotId: "unit-snapshot-321:registry-a",
+      stateHash:
+        "0x3333333333333333333333333333333333333333333333333333333333333333",
+      sourceRegistryId: "registry-a",
+      updatedAt: "2026-05-20T00:00:00.000Z",
+      bitmapWords: [{ wordPosition: 7, bitmap: 1n }],
+      initializedTicks: [
+        { tick: 199_900, liquidityGross: 25n, liquidityNet: 15n },
+      ],
+    });
+    const rejectedRows = clReplayStateRowsFromSnapshot({
+      pool,
+      sqrtPriceX96: 2n ** 96n,
+      tick: 199_900,
+      liquidity: 1_000n,
+      fee: 100n,
+      observedThroughBlock: 321,
+      blockHash:
+        "0x1111111111111111111111111111111111111111111111111111111111111111",
+      parentHash:
+        "0x2222222222222222222222222222222222222222222222222222222222222222",
+      snapshotId: "unit-snapshot-321:registry-b",
+      stateHash:
+        "0x4444444444444444444444444444444444444444444444444444444444444444",
+      sourceRegistryId: "registry-b",
+      updatedAt: "2026-05-20T00:01:00.000Z",
+      bitmapWords: [{ wordPosition: 7, bitmap: 1n }],
+      initializedTicks: [
+        { tick: 199_900, liquidityGross: 50n, liquidityNet: 30n },
+      ],
+    });
+    const db = new ReplayStateDb();
+
+    await expect(
+      putLatestClReplayState({
+        db,
+        tableName: "PoolState",
+        rows: publishedRows,
+      }),
+    ).resolves.toBe("written");
+    await expect(
+      putLatestClReplayState({
+        db,
+        tableName: "PoolState",
+        rows: rejectedRows,
+      }),
+    ).resolves.toBe("ignored");
+
+    await expect(
+      batchGetLatestClReplayStates({
+        db,
+        tableName: "PoolState",
+        pools: [pool],
+      }),
+    ).resolves.toEqual([
+      {
+        latest: publishedRows.latest,
+        bitmapWords: publishedRows.bitmapChunks.flatMap(
+          (chunk) => chunk.bitmapWords,
+        ),
+        initializedTicks: publishedRows.tickChunks.flatMap(
+          (chunk) => chunk.initializedTicks,
+        ),
+      },
+    ]);
   });
 
   test("returns no CL replay capsule when an expected chunk is missing", async () => {
@@ -399,14 +544,19 @@ describe("FAME pool-state DynamoDB mapping", () => {
       liquidity: 1_000n,
       fee: 100n,
       observedThroughBlock: 321,
-      blockHash: "0x1111111111111111111111111111111111111111111111111111111111111111",
-      parentHash: "0x2222222222222222222222222222222222222222222222222222222222222222",
+      blockHash:
+        "0x1111111111111111111111111111111111111111111111111111111111111111",
+      parentHash:
+        "0x2222222222222222222222222222222222222222222222222222222222222222",
       snapshotId: "unit-snapshot-321",
-      stateHash: "0x3333333333333333333333333333333333333333333333333333333333333333",
+      stateHash:
+        "0x3333333333333333333333333333333333333333333333333333333333333333",
       sourceRegistryId: "unit-registry",
       updatedAt: "2026-05-20T00:00:00.000Z",
       bitmapWords: [{ wordPosition: 7, bitmap: 1n }],
-      initializedTicks: [{ tick: 199_900, liquidityGross: 25n, liquidityNet: 15n }],
+      initializedTicks: [
+        { tick: 199_900, liquidityGross: 25n, liquidityNet: 15n },
+      ],
       bitmapChunkSize: 1,
       tickChunkSize: 1,
     });
@@ -430,14 +580,19 @@ describe("FAME pool-state DynamoDB mapping", () => {
       liquidity: 1_000n,
       fee: 100n,
       observedThroughBlock: 321,
-      blockHash: "0x1111111111111111111111111111111111111111111111111111111111111111",
-      parentHash: "0x2222222222222222222222222222222222222222222222222222222222222222",
+      blockHash:
+        "0x1111111111111111111111111111111111111111111111111111111111111111",
+      parentHash:
+        "0x2222222222222222222222222222222222222222222222222222222222222222",
       snapshotId: "unit-snapshot-321",
-      stateHash: "0x3333333333333333333333333333333333333333333333333333333333333333",
+      stateHash:
+        "0x3333333333333333333333333333333333333333333333333333333333333333",
       sourceRegistryId: "unit-registry",
       updatedAt: "2026-05-20T00:00:00.000Z",
       bitmapWords: [{ wordPosition: 7, bitmap: 1n }],
-      initializedTicks: [{ tick: 199_900, liquidityGross: 25n, liquidityNet: 15n }],
+      initializedTicks: [
+        { tick: 199_900, liquidityGross: 25n, liquidityNet: 15n },
+      ],
       bitmapChunkSize: 1,
       tickChunkSize: 1,
     });
@@ -470,14 +625,19 @@ describe("FAME pool-state DynamoDB mapping", () => {
       liquidity: 1_000n,
       fee: 100n,
       observedThroughBlock: 321,
-      blockHash: "0x1111111111111111111111111111111111111111111111111111111111111111",
-      parentHash: "0x2222222222222222222222222222222222222222222222222222222222222222",
+      blockHash:
+        "0x1111111111111111111111111111111111111111111111111111111111111111",
+      parentHash:
+        "0x2222222222222222222222222222222222222222222222222222222222222222",
       snapshotId: "unit-snapshot-321",
-      stateHash: "0x3333333333333333333333333333333333333333333333333333333333333333",
+      stateHash:
+        "0x3333333333333333333333333333333333333333333333333333333333333333",
       sourceRegistryId: "unit-registry",
       updatedAt: "2026-05-20T00:00:00.000Z",
       bitmapWords: [{ wordPosition: 7, bitmap: 1n }],
-      initializedTicks: [{ tick: 199_900, liquidityGross: 25n, liquidityNet: 15n }],
+      initializedTicks: [
+        { tick: 199_900, liquidityGross: 25n, liquidityNet: 15n },
+      ],
       bitmapChunkSize: 1,
       tickChunkSize: 1,
     });
@@ -497,7 +657,10 @@ describe("FAME pool-state DynamoDB mapping", () => {
       batchGetLatestClReplayStates({
         db: new ReplayStateDb([
           rows.latest,
-          { ...rows.bitmapChunks[0], bitmapWords: [{ wordPosition: 7, bitmap: "0x1" }] },
+          {
+            ...rows.bitmapChunks[0],
+            bitmapWords: [{ wordPosition: 7, bitmap: "0x1" }],
+          },
           ...rows.tickChunks,
         ]),
         tableName: "PoolState",

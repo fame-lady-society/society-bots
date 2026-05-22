@@ -1,6 +1,7 @@
 import { isAddress, type Address, type Hex } from "viem";
 import {
-  batchGetLatestClReplayStates,
+  batchGetClReplayStateCapsules,
+  batchGetLatestClReplayPointers,
   batchGetLatestClHeadStates,
   batchGetLatestPoolStates,
   sourceRegistryIdFor,
@@ -8,6 +9,7 @@ import {
   type FameClHeadSnapshotRegistryEntry,
   type FameClReplayRegistryEntry,
   type FameClReplayStateCapsule,
+  type FameClReplayLatestState,
   type FamePoolLatestState,
   type PoolStateDocumentClient,
 } from "./dynamodb/pool-state.ts";
@@ -41,6 +43,55 @@ export interface FamePoolStateBatchRequest {
   maxFreshnessBlocks?: number;
   stateSurfaces?: FamePoolStateRequestStateSurface[];
   pools: FamePoolStateRequestKey[];
+}
+
+interface FameClReplayResponseBase {
+  stateKind: "cl-replay-v1";
+  poolId: string;
+  chainId: number;
+  poolAddress: Address;
+  token0: Address;
+  token1: Address;
+  venueFamily: FamePoolStateVenueFamily;
+  tickSpacing: number;
+  sqrtPriceX96: string;
+  tick: number;
+  liquidity: string;
+  fee: string;
+  feeSource: "pool-fee";
+  observedThroughBlock: number;
+  blockHash: Hex;
+  parentHash: Hex;
+  snapshotId: string;
+  stateHash: Hex;
+  source: "slipstream-pool-state";
+  sourceRegistryId: string;
+  maxFreshnessBlocks: number;
+  bitmapWordCount: number;
+  initializedTickCount: number;
+  bitmapChunkCount: number;
+  tickChunkCount: number;
+  minWordPosition: number | null;
+  maxWordPosition: number | null;
+  minTick: number | null;
+  maxTick: number | null;
+}
+
+interface FameClReplayFreshResponseEntry extends FameClReplayResponseBase {
+  status: "fresh";
+  bitmapWords: {
+    wordPosition: number;
+    bitmap: Hex;
+  }[];
+  initializedTicks: {
+    tick: number;
+    liquidityGross: string;
+    liquidityNet: string;
+  }[];
+}
+
+interface FameClReplayStaleResponseEntry extends FameClReplayResponseBase {
+  status: "stale";
 }
 
 export type FamePoolStateResponseEntry =
@@ -82,47 +133,8 @@ export type FamePoolStateResponseEntry =
       sourceRegistryId: string;
       maxFreshnessBlocks: number;
     }
-  | {
-      status: Extract<FamePoolStateStatus, "fresh" | "stale">;
-      stateKind: "cl-replay-v1";
-      poolId: string;
-      chainId: number;
-      poolAddress: Address;
-      token0: Address;
-      token1: Address;
-      venueFamily: FamePoolStateVenueFamily;
-      tickSpacing: number;
-      sqrtPriceX96: string;
-      tick: number;
-      liquidity: string;
-      fee: string;
-      feeSource: "pool-fee";
-      observedThroughBlock: number;
-      blockHash: Hex;
-      parentHash: Hex;
-      snapshotId: string;
-      stateHash: Hex;
-      source: "slipstream-pool-state";
-      sourceRegistryId: string;
-      maxFreshnessBlocks: number;
-      bitmapWordCount: number;
-      initializedTickCount: number;
-      bitmapChunkCount: number;
-      tickChunkCount: number;
-      minWordPosition: number | null;
-      maxWordPosition: number | null;
-      minTick: number | null;
-      maxTick: number | null;
-      bitmapWords: {
-        wordPosition: number;
-        bitmap: Hex;
-      }[];
-      initializedTicks: {
-        tick: number;
-        liquidityGross: string;
-        liquidityNet: string;
-      }[];
-    }
+  | FameClReplayFreshResponseEntry
+  | FameClReplayStaleResponseEntry
   | {
       status: Extract<FamePoolStateStatus, "unsupported">;
       poolId: string;
@@ -288,10 +300,7 @@ export function parseFamePoolStateBatchRequest(
     ...(stateSurfaces === undefined
       ? {}
       : {
-          stateSurfaces: parseStateSurfaces(
-            stateSurfaces,
-            "$.stateSurfaces",
-          ),
+          stateSurfaces: parseStateSurfaces(stateSurfaces, "$.stateSurfaces"),
         }),
     pools: poolsValue.map((pool, index) =>
       parsePoolKey(pool, `$.pools[${index}]`),
@@ -339,7 +348,9 @@ function isClHeadPool(pool: FamePoolStateRegistryEntry): pool is ClHeadPool {
   return pool.stateSurface === "cl-head-snapshot" && pool.tickSpacing !== null;
 }
 
-function isClReplayPool(pool: FamePoolStateRegistryEntry): pool is ClReplayPool {
+function isClReplayPool(
+  pool: FamePoolStateRegistryEntry,
+): pool is ClReplayPool {
   return (
     pool.replaySurface === "cl-replay-v1" &&
     pool.stateSurface === "cl-head-snapshot" &&
@@ -401,6 +412,27 @@ function clHeadStateMatchesRegistry({
   );
 }
 
+function clReplayLatestStateMatchesRegistry({
+  latest,
+  entry,
+  sourceRegistryId,
+}: {
+  latest: FameClReplayLatestState;
+  entry: ClReplayPool;
+  sourceRegistryId: string;
+}): boolean {
+  return (
+    latest.sourceRegistryId === sourceRegistryId &&
+    latest.poolId === entry.id &&
+    latest.chainId === entry.chainId &&
+    latest.poolAddress.toLowerCase() === entry.poolAddress.toLowerCase() &&
+    latest.token0.toLowerCase() === entry.token0.toLowerCase() &&
+    latest.token1.toLowerCase() === entry.token1.toLowerCase() &&
+    latest.venueFamily === entry.venueFamily &&
+    latest.tickSpacing === entry.tickSpacing
+  );
+}
+
 function clReplayStateMatchesRegistry({
   state,
   entry,
@@ -412,24 +444,58 @@ function clReplayStateMatchesRegistry({
 }): boolean {
   const latest = state.latest;
   return (
-    latest.sourceRegistryId === sourceRegistryId &&
-    latest.poolId === entry.id &&
-    latest.chainId === entry.chainId &&
-    latest.poolAddress.toLowerCase() === entry.poolAddress.toLowerCase() &&
-    latest.token0.toLowerCase() === entry.token0.toLowerCase() &&
-    latest.token1.toLowerCase() === entry.token1.toLowerCase() &&
-    latest.venueFamily === entry.venueFamily &&
-    latest.tickSpacing === entry.tickSpacing &&
+    clReplayLatestStateMatchesRegistry({ latest, entry, sourceRegistryId }) &&
     latest.bitmapWordCount === state.bitmapWords.length &&
     latest.initializedTickCount === state.initializedTicks.length
   );
+}
+
+function clReplayResponseBase({
+  latest,
+  maxFreshnessBlocks,
+}: {
+  latest: FameClReplayLatestState;
+  maxFreshnessBlocks: number;
+}): FameClReplayResponseBase {
+  return {
+    stateKind: "cl-replay-v1",
+    poolId: latest.poolId,
+    chainId: latest.chainId,
+    poolAddress: latest.poolAddress,
+    token0: latest.token0,
+    token1: latest.token1,
+    venueFamily: latest.venueFamily,
+    tickSpacing: latest.tickSpacing,
+    sqrtPriceX96: latest.sqrtPriceX96,
+    tick: latest.tick,
+    liquidity: latest.liquidity,
+    fee: latest.fee,
+    feeSource: latest.feeSource,
+    observedThroughBlock: latest.observedThroughBlock,
+    blockHash: latest.blockHash,
+    parentHash: latest.parentHash,
+    snapshotId: latest.snapshotId,
+    stateHash: latest.stateHash,
+    source: latest.source,
+    sourceRegistryId: latest.sourceRegistryId,
+    maxFreshnessBlocks,
+    bitmapWordCount: latest.bitmapWordCount,
+    initializedTickCount: latest.initializedTickCount,
+    bitmapChunkCount: latest.bitmapChunkCount,
+    tickChunkCount: latest.tickChunkCount,
+    minWordPosition: latest.minWordPosition,
+    maxWordPosition: latest.maxWordPosition,
+    minTick: latest.minTick,
+    maxTick: latest.maxTick,
+  };
 }
 
 function unsupportedReasonForEntry(
   entry: FamePoolStateRegistryEntry,
 ): FamePoolStateUnsupportedReason {
   if (entry.unsupportedReason) return entry.unsupportedReason;
-  if (entry.stateSurface === "cl-head-snapshot") return "concentrated-liquidity";
+  if (entry.stateSurface === "cl-head-snapshot")
+    return "concentrated-liquidity";
   return "unsupported-venue";
 }
 
@@ -457,10 +523,12 @@ export async function handleFamePoolStateBatchRequest({
     parsed.maxFreshnessBlocks ?? producerMaxFreshnessBlocks,
     producerMaxFreshnessBlocks,
   );
+  const sourceRegistryId = sourceRegistryIdFor(registry.source);
   const maps = registryMaps(registry);
   const includeClHeadSnapshots =
     parsed.stateSurfaces?.includes("cl-head-snapshot") ?? false;
-  const includeClReplay = parsed.stateSurfaces?.includes("cl-replay-v1") ?? false;
+  const includeClReplay =
+    parsed.stateSurfaces?.includes("cl-replay-v1") ?? false;
   const entries = parsed.pools.map((pool) => ({
     request: pool,
     entry: registryEntryFor(pool, maps),
@@ -506,10 +574,27 @@ export async function handleFamePoolStateBatchRequest({
     tableName,
     pools: [...clHeadPoolsById.values()],
   });
-  const clReplayStates = await batchGetLatestClReplayStates({
+  const clReplayLatestStates = await batchGetLatestClReplayPointers({
     db,
     tableName,
     pools: [...clReplayPoolsById.values()],
+  });
+  const freshClReplayLatestStates = clReplayLatestStates.filter((latest) => {
+    const entry = clReplayPoolsById.get(latest.poolId);
+    return (
+      entry !== undefined &&
+      clReplayLatestStateMatchesRegistry({ latest, entry, sourceRegistryId }) &&
+      freshnessStatus({
+        state: latest,
+        currentBlock: parsed.currentBlock,
+        maxFreshnessBlocks: effectiveMaxFreshnessBlocks,
+      }) === "fresh"
+    );
+  });
+  const clReplayStates = await batchGetClReplayStateCapsules({
+    db,
+    tableName,
+    latestStates: freshClReplayLatestStates,
   });
   const statesByAddress = new Map(
     states.map((state) => [
@@ -523,8 +608,9 @@ export async function handleFamePoolStateBatchRequest({
   const clReplayStatesByPoolId = new Map(
     clReplayStates.map((state) => [state.latest.poolId, state]),
   );
-
-  const sourceRegistryId = sourceRegistryIdFor(registry.source);
+  const clReplayLatestStatesByPoolId = new Map(
+    clReplayLatestStates.map((state) => [state.poolId, state]),
+  );
 
   return {
     sourceRegistryId,
@@ -540,6 +626,39 @@ export async function handleFamePoolStateBatchRequest({
         };
       }
       if (includeClReplay && isClReplayPool(entry)) {
+        const latest = clReplayLatestStatesByPoolId.get(entry.id);
+        if (
+          !latest ||
+          !clReplayLatestStateMatchesRegistry({
+            latest,
+            entry,
+            sourceRegistryId,
+          })
+        ) {
+          return {
+            status: "unknown",
+            requested,
+            reason: "missing-indexed-state",
+          };
+        }
+        const status = freshnessStatus({
+          state: latest,
+          currentBlock: parsed.currentBlock,
+          maxFreshnessBlocks: effectiveMaxFreshnessBlocks,
+        });
+
+        const baseReplayResponse = clReplayResponseBase({
+          latest,
+          maxFreshnessBlocks: effectiveMaxFreshnessBlocks,
+        });
+
+        if (status === "stale") {
+          return {
+            status,
+            ...baseReplayResponse,
+          };
+        }
+
         const state = clReplayStatesByPoolId.get(entry.id);
         if (
           !state ||
@@ -551,43 +670,10 @@ export async function handleFamePoolStateBatchRequest({
             reason: "missing-indexed-state",
           };
         }
-        const latest = state.latest;
 
         return {
-          status: freshnessStatus({
-            state: latest,
-            currentBlock: parsed.currentBlock,
-            maxFreshnessBlocks: effectiveMaxFreshnessBlocks,
-          }),
-          stateKind: "cl-replay-v1",
-          poolId: entry.id,
-          chainId: entry.chainId,
-          poolAddress: latest.poolAddress,
-          token0: latest.token0,
-          token1: latest.token1,
-          venueFamily: latest.venueFamily,
-          tickSpacing: latest.tickSpacing,
-          sqrtPriceX96: latest.sqrtPriceX96,
-          tick: latest.tick,
-          liquidity: latest.liquidity,
-          fee: latest.fee,
-          feeSource: latest.feeSource,
-          observedThroughBlock: latest.observedThroughBlock,
-          blockHash: latest.blockHash,
-          parentHash: latest.parentHash,
-          snapshotId: latest.snapshotId,
-          stateHash: latest.stateHash,
-          source: latest.source,
-          sourceRegistryId: latest.sourceRegistryId,
-          maxFreshnessBlocks: effectiveMaxFreshnessBlocks,
-          bitmapWordCount: latest.bitmapWordCount,
-          initializedTickCount: latest.initializedTickCount,
-          bitmapChunkCount: latest.bitmapChunkCount,
-          tickChunkCount: latest.tickChunkCount,
-          minWordPosition: latest.minWordPosition,
-          maxWordPosition: latest.maxWordPosition,
-          minTick: latest.minTick,
-          maxTick: latest.maxTick,
+          status,
+          ...baseReplayResponse,
           bitmapWords: state.bitmapWords,
           initializedTicks: state.initializedTicks,
         };

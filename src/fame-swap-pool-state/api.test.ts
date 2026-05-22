@@ -200,7 +200,8 @@ function clHeadStateForPool(
     tick: -11,
     liquidity: 555n,
     observedThroughBlock,
-    source: pool.venue === "uniswap-v4" ? "v4-state-view" : "pool-slot0-liquidity",
+    source:
+      pool.venue === "uniswap-v4" ? "v4-state-view" : "pool-slot0-liquidity",
     sourceRegistryId,
     updatedAt: "2026-05-19T00:00:00.000Z",
   });
@@ -415,6 +416,62 @@ describe("FAME pool-state API contract", () => {
       requested: { poolId: pool.id },
       reason: "missing-indexed-state",
     });
+  });
+
+  test("returns stale CL replay metadata without loading tick chunks", async () => {
+    const pool = clReplayPool();
+    const rows = clReplayRowsForPool(pool);
+    const db = new BatchStateDb([rows.latest]);
+    const response = await handleFamePoolStateBatchRequest({
+      request: {
+        currentBlock: 500,
+        stateSurfaces: ["cl-replay-v1"],
+        pools: [{ poolId: pool.id }],
+      },
+      tableName: "PoolState",
+      db,
+      producerMaxFreshnessBlocks: 120,
+    });
+
+    expect(response.pools[0]).toMatchObject({
+      status: "stale",
+      stateKind: "cl-replay-v1",
+      poolId: pool.id,
+      observedThroughBlock: 120,
+      bitmapWordCount: 2,
+      initializedTickCount: 2,
+    });
+    expect(response.pools[0]).not.toHaveProperty("bitmapWords");
+    expect(response.pools[0]).not.toHaveProperty("initializedTicks");
+    expect(db.readCount).toBe(1);
+  });
+
+  test("returns future CL replay metadata as stale without loading tick chunks", async () => {
+    const pool = clReplayPool();
+    const rows = clReplayRowsForPool(pool);
+    const db = new BatchStateDb([
+      { ...rows.latest, observedThroughBlock: 130 },
+    ]);
+    const response = await handleFamePoolStateBatchRequest({
+      request: {
+        currentBlock: 125,
+        stateSurfaces: ["cl-replay-v1"],
+        pools: [{ poolId: pool.id }],
+      },
+      tableName: "PoolState",
+      db,
+      producerMaxFreshnessBlocks: 120,
+    });
+
+    expect(response.pools[0]).toMatchObject({
+      status: "stale",
+      stateKind: "cl-replay-v1",
+      poolId: pool.id,
+      observedThroughBlock: 130,
+    });
+    expect(response.pools[0]).not.toHaveProperty("bitmapWords");
+    expect(response.pools[0]).not.toHaveProperty("initializedTicks");
+    expect(db.readCount).toBe(1);
   });
 
   test("does not expose CL replay arrays without replay opt-in", async () => {

@@ -87,13 +87,6 @@ function field(
   return record[key];
 }
 
-function optionalField(
-  record: Record<string, unknown>,
-  key: string,
-): unknown | undefined {
-  return Object.hasOwn(record, key) ? record[key] : undefined;
-}
-
 function parseString(value: unknown, path: string): string {
   if (typeof value !== "string" || value.length === 0) {
     registryError(path, "expected a non-empty string");
@@ -194,10 +187,15 @@ function parseFee(value: unknown, path: string): FamePoolStateFeeDescriptor {
   };
 }
 
-function parseSource(value: unknown, path: string): FamePoolStateRegistrySource {
+function parseSource(
+  value: unknown,
+  path: string,
+): FamePoolStateRegistrySource {
   const record = parseObject(value, path);
   return {
-    repo: parseEnum(field(record, "repo", path), `${path}.repo`, ["www"] as const),
+    repo: parseEnum(field(record, "repo", path), `${path}.repo`, [
+      "www",
+    ] as const),
     schemaVersion: parseInteger(
       field(record, "schemaVersion", path),
       `${path}.schemaVersion`,
@@ -243,14 +241,21 @@ function parseEntry(value: unknown, path: string): FamePoolStateRegistryEntry {
     `${path}.capability`,
     capabilityValues,
   );
-  const chainId = parseInteger(field(record, "chainId", path), `${path}.chainId`);
+  const chainId = parseInteger(
+    field(record, "chainId", path),
+    `${path}.chainId`,
+  );
   if (chainId !== 8453) {
     registryError(`${path}.chainId`, "expected Base mainnet chain id 8453");
   }
   const entry: FamePoolStateRegistryEntry = {
     id: parseString(field(record, "id", path), `${path}.id`),
     chainId,
-    venue: parseEnum(field(record, "venue", path), `${path}.venue`, venueValues),
+    venue: parseEnum(
+      field(record, "venue", path),
+      `${path}.venue`,
+      venueValues,
+    ),
     venueFamily: parseEnum(
       field(record, "venueFamily", path),
       `${path}.venueFamily`,
@@ -280,14 +285,11 @@ function parseEntry(value: unknown, path: string): FamePoolStateRegistryEntry {
       `${path}.stateSurface`,
       stateSurfaceValues,
     ),
-    replaySurface:
-      optionalField(record, "replaySurface") === undefined
-        ? null
-        : parseNullableEnum(
-            optionalField(record, "replaySurface"),
-            `${path}.replaySurface`,
-            replaySurfaceValues,
-          ),
+    replaySurface: parseNullableEnum(
+      field(record, "replaySurface", path),
+      `${path}.replaySurface`,
+      replaySurfaceValues,
+    ),
     quoteModel: parseNullableEnum(
       field(record, "quoteModel", path),
       `${path}.quoteModel`,
@@ -305,7 +307,10 @@ function parseEntry(value: unknown, path: string): FamePoolStateRegistryEntry {
       registryError(path, "quote-model pool must have fee metadata");
     }
     if (entry.quoteModel !== "constant-product-reserves") {
-      registryError(path, "quote-model pool must use constant-product reserves");
+      registryError(
+        path,
+        "quote-model pool must use constant-product reserves",
+      );
     }
     if (entry.stateSurface !== "constant-product-reserves") {
       registryError(path, "quote-model pool must use reserve state surface");
@@ -349,11 +354,17 @@ function parseEntry(value: unknown, path: string): FamePoolStateRegistryEntry {
         );
       }
     } else if (entry.poolAddress === null) {
-      registryError(path, "address-backed market-state pool must have poolAddress");
+      registryError(
+        path,
+        "address-backed market-state pool must have poolAddress",
+      );
     }
     if (entry.replaySurface !== null) {
       if (entry.id !== "slipstream-usdc-weth-100") {
-        registryError(path, "only slipstream-usdc-weth-100 can have replaySurface");
+        registryError(
+          path,
+          "only slipstream-usdc-weth-100 can have replaySurface",
+        );
       }
       if (entry.venue !== "aerodrome-slipstream") {
         registryError(path, "replaySurface pool must be Slipstream");
@@ -362,7 +373,10 @@ function parseEntry(value: unknown, path: string): FamePoolStateRegistryEntry {
         registryError(path, "replaySurface pool must have poolAddress");
       }
       if (entry.stateSurface !== "cl-head-snapshot") {
-        registryError(path, "replaySurface pool must keep CL head state surface");
+        registryError(
+          path,
+          "replaySurface pool must keep CL head state surface",
+        );
       }
     }
   } else {
@@ -424,7 +438,7 @@ function assertReplaySurfaceScope(
   ) {
     registryError(
       "pools",
-      "expected exactly slipstream-usdc-weth-100 to have cl-replay-v1",
+      "expected exactly slipstream-usdc-weth-100 to have cl-replay-v1; only slipstream-usdc-weth-100 can have replaySurface",
     );
   }
 }
@@ -471,8 +485,9 @@ function registryAddressKey(chainId: number, poolAddress: Address): string {
   return `${chainId.toString()}:${poolAddress.toLowerCase()}`;
 }
 
-export const famePoolStateRegistry =
-  parseFamePoolStateRegistry(loadGeneratedRegistry());
+export const famePoolStateRegistry = parseFamePoolStateRegistry(
+  loadGeneratedRegistry(),
+);
 
 const registryEntriesById = new Map(
   famePoolStateRegistry.pools.map((pool) => [pool.id, pool]),
@@ -488,9 +503,7 @@ const registryEntriesByAddress = new Map(
 );
 
 export function getFamePoolStateRegistryEntry(
-  input:
-    | { poolId: string }
-    | { chainId: number; poolAddress: Address },
+  input: { poolId: string } | { chainId: number; poolAddress: Address },
 ): FamePoolStateRegistryEntry | undefined {
   if ("poolId" in input) {
     return registryEntriesById.get(input.poolId);
