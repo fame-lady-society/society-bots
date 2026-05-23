@@ -7,16 +7,112 @@ import {
   assertNoClReplaySnapshotFailures,
   createViemPoolStateIndexerClient,
   indexFamePoolStates,
+  type FamePoolStateIndexerClient,
+  type FamePoolStateIndexerResult,
 } from "../indexer.ts";
-import { logPoolStateIndexerResult } from "./logging.ts";
+import {
+  logPoolStateIndexerResult,
+  writePoolStateLog,
+  type PoolStateLogFields,
+} from "./logging.ts";
 
-export async function handler(): Promise<void> {
-  const result = await indexFamePoolStates({
-    client: createViemPoolStateIndexerClient(baseClient),
-    tableName: FAME_POOL_STATE_TABLE_NAME,
-    confirmationBlocks: FAME_POOL_STATE_CONFIRMATION_BLOCKS,
+export type FamePoolStateIndexRunner = (options: {
+  client?: FamePoolStateIndexerClient;
+  tableName: string;
+  confirmationBlocks: number;
+}) => Promise<FamePoolStateIndexerResult>;
+
+function defaultIndexPools({
+  client,
+  tableName,
+  confirmationBlocks,
+}: {
+  client?: FamePoolStateIndexerClient;
+  tableName: string;
+  confirmationBlocks: number;
+}): Promise<FamePoolStateIndexerResult> {
+  return indexFamePoolStates({
+    client: client ?? createViemPoolStateIndexerClient(baseClient),
+    tableName,
+    confirmationBlocks,
   });
+}
+
+function safeErrorClass(error: unknown): string {
+  const candidate =
+    error instanceof Error
+      ? error.name
+      : typeof error === "object" && error !== null
+        ? Reflect.get(error, "name")
+        : undefined;
+  if (typeof candidate !== "string") return "UnknownError";
+  const trimmed = candidate.trim();
+  if (!/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(trimmed)) {
+    return "UnknownError";
+  }
+  return trimmed;
+}
+
+function safeErrorStatusCode(error: unknown): number | undefined {
+  if (typeof error !== "object" || error === null) return undefined;
+  for (const key of ["status", "statusCode"]) {
+    const value = Reflect.get(error, key);
+    if (
+      typeof value === "number" &&
+      Number.isSafeInteger(value) &&
+      value >= 100 &&
+      value <= 599
+    ) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function indexerCrashLogFields(error: unknown): PoolStateLogFields {
+  const fields: PoolStateLogFields = {
+    errorType: "indexer-crash",
+    errorClass: safeErrorClass(error),
+  };
+  const statusCode = safeErrorStatusCode(error);
+  if (statusCode !== undefined) fields.statusCode = statusCode;
+  return fields;
+}
+
+export async function handleFamePoolStateIndexer({
+  client,
+  tableName,
+  confirmationBlocks,
+  indexPools = defaultIndexPools,
+}: {
+  client?: FamePoolStateIndexerClient;
+  tableName: string;
+  confirmationBlocks: number;
+  indexPools?: FamePoolStateIndexRunner;
+}): Promise<void> {
+  let result: FamePoolStateIndexerResult;
+  try {
+    result = await indexPools({
+      client,
+      tableName,
+      confirmationBlocks,
+    });
+  } catch (error) {
+    writePoolStateLog(
+      "error",
+      "fame-pool-state-indexed",
+      indexerCrashLogFields(error),
+    );
+    throw new Error("FAME pool-state indexer failed");
+  }
 
   logPoolStateIndexerResult(result);
   assertNoClReplaySnapshotFailures(result);
+}
+
+export async function handler(): Promise<void> {
+  await handleFamePoolStateIndexer({
+    tableName: FAME_POOL_STATE_TABLE_NAME,
+    confirmationBlocks: FAME_POOL_STATE_CONFIRMATION_BLOCKS,
+  });
 }

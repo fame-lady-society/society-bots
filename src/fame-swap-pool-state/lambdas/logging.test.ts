@@ -160,6 +160,30 @@ describe("FAME pool-state Lambda logging", () => {
     }
   });
 
+  test("keeps envelope fields authoritative over payload fields", () => {
+    const infoLog = jest.spyOn(console, "log").mockImplementation(() => {
+      return undefined;
+    });
+
+    try {
+      writePoolStateLog("info", "fame-pool-state-api-batch", {
+        level: "error",
+        event: "fame-pool-state-api-error",
+        timestamp: "1970-01-01T00:00:00.000Z",
+      });
+
+      expect(infoLog).toHaveBeenCalledTimes(1);
+      const entry = parseLogLine(infoLog.mock.calls[0]?.[0]);
+      expect(entry).toMatchObject({
+        level: "info",
+        event: "fame-pool-state-api-batch",
+      });
+      expect(entry.timestamp).not.toBe("1970-01-01T00:00:00.000Z");
+    } finally {
+      infoLog.mockRestore();
+    }
+  });
+
   test("skips ordinary all-fresh non-replay API success logs", () => {
     const response = batchResponse([freshReservePool()]);
     const infoLog = jest.spyOn(console, "log").mockImplementation(() => {

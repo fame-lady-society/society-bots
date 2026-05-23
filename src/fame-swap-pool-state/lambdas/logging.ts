@@ -107,10 +107,10 @@ export function writePoolStateLog(
   fields: PoolStateLogFields,
 ): void {
   const line = JSON.stringify({
+    ...fields,
     level,
     event,
     timestamp: new Date().toISOString(),
-    ...fields,
   });
 
   if (level === "error") {
