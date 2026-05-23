@@ -3,6 +3,7 @@ import { BatchGetCommand } from "@aws-sdk/lib-dynamodb";
 import type { Address } from "viem";
 import { handleFamePoolStateBatchRequest } from "./api.ts";
 import { poolStateRequestAuthorized } from "./auth.ts";
+import { handleFamePoolQuoteBatchRequest } from "./cl-quote.ts";
 import {
   clReplayStateRowsFromSnapshot,
   latestClHeadStateFromSnapshot,
@@ -237,6 +238,36 @@ function clReplayRowsForPool(pool: FameClReplayRegistryEntry) {
   });
 }
 
+function quoteClReplayRowsForPool(pool: FameClReplayRegistryEntry) {
+  return clReplayStateRowsFromSnapshot({
+    pool,
+    sqrtPriceX96: 2n ** 96n,
+    tick: 0,
+    liquidity: 1_000_000_000_000_000_000n,
+    fee: 100n,
+    observedThroughBlock: 120,
+    blockHash:
+      "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    parentHash:
+      "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    snapshotId: "unit-cl-quote",
+    stateHash:
+      "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    sourceRegistryId: sourceRegistryIdFor(famePoolStateRegistry.source),
+    updatedAt: "2026-05-20T00:00:00.000Z",
+    bitmapWords: [
+      { wordPosition: -1, bitmap: 1n << 255n },
+      { wordPosition: 0, bitmap: 2n },
+    ],
+    initializedTicks: [
+      { tick: -100, liquidityGross: 1_000n, liquidityNet: -1_000n },
+      { tick: 100, liquidityGross: 1_000n, liquidityNet: 1_000n },
+    ],
+    bitmapChunkSize: 1,
+    tickChunkSize: 1,
+  });
+}
+
 describe("FAME pool-state API contract", () => {
   test("authorizes bearer tokens from the Authorization header", () => {
     expect(
@@ -395,6 +426,248 @@ describe("FAME pool-state API contract", () => {
         { tick: 200_000, liquidityGross: "50", liquidityNet: "-15" },
       ],
     });
+  });
+
+  test("returns compact CL quotes without raw replay arrays", async () => {
+    const pool = clReplayPool();
+    const rows = quoteClReplayRowsForPool(pool);
+    const response = await handleFamePoolQuoteBatchRequest({
+      request: {
+        currentBlock: 125,
+        quotes: [
+          {
+            poolId: pool.id,
+            tokenIn: pool.token0,
+            tokenOut: pool.token1,
+            amountIn: "1000000",
+          },
+          {
+            poolId: pool.id,
+            tokenIn: pool.token1,
+            tokenOut: pool.token0,
+            amountIn: "1000000",
+          },
+          {
+            poolId: pool.id,
+            tokenIn: pool.token0,
+            tokenOut: pool.token1,
+            amountIn: "10000000000000000",
+          },
+        ],
+      },
+      tableName: "PoolState",
+      db: new BatchStateDb([
+        rows.latest,
+        ...rows.bitmapChunks,
+        ...rows.tickChunks,
+      ]),
+      producerMaxFreshnessBlocks: 120,
+    });
+
+    expect(response.quotes).toHaveLength(3);
+    const [directQuote, reverseQuote, crossingQuote] = response.quotes.map(
+      (quote) => {
+        expect(quote).toMatchObject({
+          status: "quoted",
+          quoteKind: "cl-quote-v1",
+          poolId: pool.id,
+          poolAddress: pool.poolAddress,
+          sqrtPriceX96: (2n ** 96n).toString(),
+          observedThroughBlock: 120,
+          snapshotId: "unit-cl-quote",
+          sourceRegistryId: sourceRegistryIdFor(famePoolStateRegistry.source),
+          maxFreshnessBlocks: 120,
+        });
+        expect(quote).not.toHaveProperty("bitmapWords");
+        expect(quote).not.toHaveProperty("initializedTicks");
+        if (quote.status !== "quoted") {
+          throw new Error("Expected quoted CL quote.");
+        }
+        return quote;
+      },
+    );
+    expect(directQuote).toMatchObject({
+      tokenIn: pool.token0,
+      tokenOut: pool.token1,
+      amountIn: "1000000",
+      amountOut: "999899",
+      sqrtPriceX96After: "79228162514185117353846016638",
+    });
+    expect(reverseQuote).toMatchObject({
+      tokenIn: pool.token1,
+      tokenOut: pool.token0,
+      amountIn: "1000000",
+      amountOut: "999899",
+      sqrtPriceX96After: "79228162514343557833241963247",
+    });
+    expect(crossingQuote).toMatchObject({
+      tokenIn: pool.token0,
+      tokenOut: pool.token1,
+      amountIn: "10000000000000000",
+      amountOut: "9900009801989901",
+      sqrtPriceX96After: "78443802928779472160203450183",
+    });
+  });
+
+  test("returns unavailable CL quotes for stale replay state without loading chunks", async () => {
+    const pool = clReplayPool();
+    const rows = quoteClReplayRowsForPool(pool);
+    const db = new BatchStateDb([rows.latest]);
+    const response = await handleFamePoolQuoteBatchRequest({
+      request: {
+        currentBlock: 500,
+        quotes: [
+          {
+            poolId: pool.id,
+            tokenIn: pool.token0,
+            tokenOut: pool.token1,
+            amountIn: "1000000",
+          },
+        ],
+      },
+      tableName: "PoolState",
+      db,
+      producerMaxFreshnessBlocks: 120,
+    });
+
+    expect(response.quotes[0]).toMatchObject({
+      status: "unavailable",
+      reason: "stale-indexed-state",
+      requested: {
+        poolId: pool.id,
+        tokenIn: pool.token0,
+        tokenOut: pool.token1,
+        amountIn: "1000000",
+      },
+      observedThroughBlock: 120,
+      maxFreshnessBlocks: 120,
+    });
+    expect(db.readCount).toBe(1);
+  });
+
+  test("returns unavailable CL quotes for incomplete replay capsules", async () => {
+    const pool = clReplayPool();
+    const rows = quoteClReplayRowsForPool(pool);
+    const response = await handleFamePoolQuoteBatchRequest({
+      request: {
+        currentBlock: 125,
+        quotes: [
+          {
+            poolId: pool.id,
+            tokenIn: pool.token0,
+            tokenOut: pool.token1,
+            amountIn: "1000000",
+          },
+        ],
+      },
+      tableName: "PoolState",
+      db: new BatchStateDb([rows.latest, ...rows.bitmapChunks]),
+      producerMaxFreshnessBlocks: 120,
+    });
+
+    expect(response.quotes[0]).toMatchObject({
+      status: "unavailable",
+      reason: "missing-indexed-state",
+      poolId: pool.id,
+      observedThroughBlock: 120,
+    });
+  });
+
+  test("returns unavailable CL quotes for unsupported or unknown pools", async () => {
+    const pool = quotePool("uniswap-v2-fame-direct");
+    const db = new BatchStateDb([]);
+    const response = await handleFamePoolQuoteBatchRequest({
+      request: {
+        currentBlock: 125,
+        quotes: [
+          {
+            poolId: pool.id,
+            tokenIn: pool.token0,
+            tokenOut: pool.token1,
+            amountIn: "1000000",
+          },
+          {
+            poolId: "missing-pool",
+            tokenIn: pool.token0,
+            tokenOut: pool.token1,
+            amountIn: "1000000",
+          },
+        ],
+      },
+      tableName: "PoolState",
+      db,
+      producerMaxFreshnessBlocks: 120,
+    });
+
+    expect(response.quotes).toEqual([
+      expect.objectContaining({
+        status: "unavailable",
+        reason: "unsupported-pool",
+        poolId: pool.id,
+      }),
+      expect.objectContaining({
+        status: "unavailable",
+        reason: "missing-registry-entry",
+      }),
+    ]);
+    expect(db.readCount).toBe(0);
+  });
+
+  test("rejects oversized CL quote amount strings before DynamoDB access", async () => {
+    const pool = clReplayPool();
+    const db = new BatchStateDb([]);
+
+    await expect(
+      handleFamePoolQuoteBatchRequest({
+        request: {
+          currentBlock: 125,
+          quotes: [
+            {
+              poolId: pool.id,
+              tokenIn: pool.token0,
+              tokenOut: pool.token1,
+              amountIn: "1".repeat(79),
+            },
+          ],
+        },
+        tableName: "PoolState",
+        db,
+        producerMaxFreshnessBlocks: 120,
+      }),
+    ).rejects.toThrow(/uint256 decimal string/);
+    expect(db.readCount).toBe(0);
+  });
+
+  test("rejects CL quote batches larger than the configured maximum before parsing entries", async () => {
+    const pool = clReplayPool();
+    const db = new BatchStateDb([]);
+
+    await expect(
+      handleFamePoolQuoteBatchRequest({
+        request: {
+          currentBlock: 125,
+          quotes: [
+            {
+              poolId: pool.id,
+              tokenIn: pool.token0,
+              tokenOut: pool.token1,
+              amountIn: "1",
+            },
+            {
+              poolId: pool.id,
+              tokenIn: pool.token0,
+              tokenOut: pool.token1,
+              amountIn: "1".repeat(79),
+            },
+          ],
+        },
+        tableName: "PoolState",
+        db,
+        producerMaxFreshnessBlocks: 120,
+        maxBatchSize: 1,
+      }),
+    ).rejects.toThrow(/expected at most 1 quotes/);
+    expect(db.readCount).toBe(0);
   });
 
   test("returns unknown for incomplete CL replay capsules", async () => {

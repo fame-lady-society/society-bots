@@ -116,6 +116,16 @@ export class HttpApi extends Construct {
       authorizer: famePoolStateAuthorizer,
     });
 
+    httpApi.addRoutes({
+      path: "/fame/pool-quotes",
+      methods: [apigw2.HttpMethod.POST],
+      integration: new HttpLambdaIntegration(
+        "fame-pool-quotes",
+        famePoolStateHandler,
+      ),
+      authorizer: famePoolStateAuthorizer,
+    });
+
     new route53.ARecord(this, "AliasIPv4Record", {
       zone: hostedZone,
       target: route53.RecordTarget.fromAlias(

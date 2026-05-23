@@ -4,19 +4,25 @@ import type {
   APIGatewayProxyResultV2,
   APIGatewayProxyStructuredResultV2,
 } from "aws-lambda";
-import type { FamePoolStateBatchHandler } from "./api.ts";
+import type {
+  FamePoolQuoteBatchHandler,
+  FamePoolStateBatchHandler,
+} from "./api.ts";
 
 function eventFixture({
   body,
   headers = { authorization: "Bearer unit-token" },
+  path = "/fame/pool-state",
 }: {
   body?: string;
   headers?: Record<string, string | undefined>;
+  path?: "/fame/pool-state" | "/fame/pool-quotes";
 }): APIGatewayProxyEventV2 {
+  const routeKey = `POST ${path}`;
   return {
     version: "2.0",
-    routeKey: "POST /fame/pool-state",
-    rawPath: "/fame/pool-state",
+    routeKey,
+    rawPath: path,
     rawQueryString: "",
     headers,
     requestContext: {
@@ -26,13 +32,13 @@ function eventFixture({
       domainPrefix: "api",
       http: {
         method: "POST",
-        path: "/fame/pool-state",
+        path,
         protocol: "HTTP/1.1",
         sourceIp: "127.0.0.1",
         userAgent: "jest",
       },
       requestId: "unit",
-      routeKey: "POST /fame/pool-state",
+      routeKey,
       stage: "$default",
       time: "18/May/2026:00:00:00 +0000",
       timeEpoch: 1_779_062_400_000,
@@ -77,6 +83,7 @@ async function loadApiModule(): Promise<typeof import("./api.ts")> {
 async function requestHandler(
   handler: FamePoolStateBatchHandler,
   event: APIGatewayProxyEventV2,
+  quoteHandler?: FamePoolQuoteBatchHandler,
 ): Promise<APIGatewayProxyResultV2> {
   const { handleFamePoolStateApiEvent } = await loadApiModule();
   return handleFamePoolStateApiEvent({
@@ -86,6 +93,9 @@ async function requestHandler(
     producerMaxFreshnessBlocks: 120,
     maxBatchSize: 64,
     handleBatchRequest: handler,
+    ...(quoteHandler === undefined
+      ? {}
+      : { handleQuoteBatchRequest: quoteHandler }),
   });
 }
 
@@ -149,6 +159,108 @@ describe("FAME pool-state API Lambda transport", () => {
     expect(structuredResponse(response).statusCode).toBe(401);
     expect(jsonBody(response)).toEqual({ error: "unauthorized" });
     expect(called).toBe(false);
+  });
+
+  test("dispatches pool quote requests to the compact quote handler", async () => {
+    const successLog = jest.spyOn(console, "log").mockImplementation(() => {
+      return undefined;
+    });
+    let stateCalled = false;
+    let capturedQuoteRequest: unknown;
+    try {
+      const response = await requestHandler(
+        async () => {
+          stateCalled = true;
+          throw new Error("should not call state handler");
+        },
+        eventFixture({
+          path: "/fame/pool-quotes",
+          body: JSON.stringify({
+            currentBlock: 125,
+            quotes: [],
+          }),
+        }),
+        async (options) => {
+          capturedQuoteRequest = options.request;
+          return {
+            sourceRegistryId: "unit",
+            currentBlock: 125,
+            producerMaxFreshnessBlocks: 120,
+            effectiveMaxFreshnessBlocks: 120,
+            quotes: [
+              {
+                status: "unavailable",
+                requested: {
+                  poolId: "missing",
+                  tokenIn: "0x0000000000000000000000000000000000000001",
+                  tokenOut: "0x0000000000000000000000000000000000000002",
+                  amountIn: "1",
+                },
+                reason: "missing-registry-entry",
+              },
+            ],
+          };
+        },
+      );
+
+      expect(structuredResponse(response).statusCode).toBe(200);
+      expect(jsonBody(response)).toMatchObject({
+        sourceRegistryId: "unit",
+        quotes: [expect.objectContaining({ status: "unavailable" })],
+      });
+      expect(stateCalled).toBe(false);
+      expect(capturedQuoteRequest).toEqual({
+        currentBlock: 125,
+        quotes: [],
+      });
+      expect(successLog).toHaveBeenCalledWith(
+        expect.stringContaining('"routeKind":"pool-quotes"'),
+      );
+      expect(successLog).toHaveBeenCalledWith(
+        expect.stringContaining('"missing-registry-entry":1'),
+      );
+    } finally {
+      successLog.mockRestore();
+    }
+  });
+
+  test("logs successful pool-state batches", async () => {
+    const successLog = jest.spyOn(console, "log").mockImplementation(() => {
+      return undefined;
+    });
+    try {
+      const response = await requestHandler(
+        async () => ({
+          sourceRegistryId: "unit",
+          currentBlock: 125,
+          producerMaxFreshnessBlocks: 120,
+          effectiveMaxFreshnessBlocks: 120,
+          pools: [
+            {
+              status: "unknown",
+              requested: { poolId: "missing" },
+              reason: "missing-registry-entry",
+            },
+          ],
+        }),
+        eventFixture({
+          body: JSON.stringify({
+            currentBlock: 125,
+            pools: [],
+          }),
+        }),
+      );
+
+      expect(structuredResponse(response).statusCode).toBe(200);
+      expect(successLog).toHaveBeenCalledWith(
+        expect.stringContaining('"routeKind":"pool-state"'),
+      );
+      expect(successLog).toHaveBeenCalledWith(
+        expect.stringContaining('"unknown":1'),
+      );
+    } finally {
+      successLog.mockRestore();
+    }
   });
 
   test("returns server failure for dependency errors", async () => {
