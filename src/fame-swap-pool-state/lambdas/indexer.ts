@@ -8,6 +8,7 @@ import {
   createViemPoolStateIndexerClient,
   indexFamePoolStates,
 } from "../indexer.ts";
+import { logPoolStateIndexerResult } from "./logging.ts";
 
 export async function handler(): Promise<void> {
   const result = await indexFamePoolStates({
@@ -16,15 +17,6 @@ export async function handler(): Promise<void> {
     confirmationBlocks: FAME_POOL_STATE_CONFIRMATION_BLOCKS,
   });
 
-  const payload = {
-    event: "fame-pool-state-indexed",
-    ...result,
-  };
-
-  if (result.clReplayFailedPools > 0) {
-    console.error(JSON.stringify(payload));
-    assertNoClReplaySnapshotFailures(result);
-  }
-
-  console.log(JSON.stringify(payload));
+  logPoolStateIndexerResult(result);
+  assertNoClReplaySnapshotFailures(result);
 }
