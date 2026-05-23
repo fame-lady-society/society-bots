@@ -17,6 +17,7 @@
 - The replay snapshot lane reads slot0, current liquidity, dynamic pool fee, the full initialized tick bitmap word range, and initialized tick liquidity records at one safe block. It writes bitmap/tick chunks first, then publishes the latest replay pointer so the API never returns a partial snapshot as fresh replay state.
 - The API serves bounded batch reads to server-side `www` callers. API Gateway uses a Lambda authorizer for the same service token before invoking the API Lambda, and the API Lambda keeps its own token check as defense in depth. The token must be supplied through `Authorization: Bearer <token>`.
 - The indexer has SQS-backed async failure destinations plus passive CloudWatch alarms for Lambda errors, Lambda throttles, missed invocations, and non-empty failure queue depth. These alarms have no notification action by default; they are an inspectable health surface for a free community service.
+- The CloudWatch log groups for active Lambdas are CDK-owned with explicit retention and destroy-on-stack-deletion behavior. This hardening does not change `www` quote authority, helper response contracts, route ranking, fallback behavior, or replay tick maintenance.
 
 ## Freshness
 
@@ -41,9 +42,11 @@ Freshness is based on `observedThroughBlock`, not `lastReserveChangeBlock`.
 
 ## Logs
 
-Indexer logs use `event: "fame-pool-state-indexed"` with chain id, block range, event counts, seeded pool count, reconciled pool count, observed pool count, replay snapshot success/failure counts, replay sizing metrics, duration, and registry id.
+Pool-state Lambda logs use compact JSON envelopes with `level`, `event`, `timestamp`, and event-specific metadata. Do not log service tokens, authorization headers, full RPC URLs, raw request bodies, raw tick arrays, or raw replay payloads.
 
-API logs use `event: "fame-pool-state-api-batch"` with registry id, current block, effective freshness, batch size, and status counts.
+Indexer logs use `event: "fame-pool-state-indexed"` with chain id, block range, event counts, seeded pool count, reconciled pool count, observed pool count, replay snapshot success/failure counts, replay sizing metrics, duration, and registry id. Replay snapshot failures use `level: "error"` and preserve fail-fast Lambda behavior.
+
+API success logs use `event: "fame-pool-state-api-batch"` with registry id, current block, effective freshness, batch size, status counts, and compact replay counts when `cl-replay-v1` state is returned. Ordinary all-fresh non-replay batches are not logged at INFO. Replay responses, stale rows, unknown rows, unsupported rows, malformed requests, and dependency failures remain operator-visible.
 
 API transport failures are classified separately from per-pool fallback statuses:
 
@@ -52,6 +55,20 @@ API transport failures are classified separately from per-pool fallback statuses
 - `5xx`: internal or dependency failure, including incomplete DynamoDB batch reads.
 
 `fresh`, `stale`, `unknown`, and `unsupported` stay inside successful batch responses. `www` should treat non-successful transport responses as non-authoritative helper output and fall back to live reads.
+
+## CloudWatch Retention
+
+The deploy app creates managed `AWS::Logs::LogGroup` resources and passes them to Lambda through `LoggingConfig`. Short-lived PR/dev stack deletion also deletes those managed log groups; retention bounds log storage while stacks exist.
+
+| Surface                              | Lambdas                                                                  | Retention |
+| ------------------------------------ | ------------------------------------------------------------------------ | --------: |
+| Base image and Base-only operational | `FameThumb`, `Mosaic`                                                    |    7 days |
+| Ethereum/FLS image                   | `FlsThumb`, `FlsMosaic`                                                  |   30 days |
+| Discord/app audit                    | `interactionHandler`, `deferredMessage`                                  |   30 days |
+| Mixed Base/Ethereum eventing         | `FameEvent`                                                              |   30 days |
+| Ethereum wrapper eventing            | `WrapEvent`                                                              |   30 days |
+| Replay-tick pool-state               | `FamePoolStateIndexer`, `FamePoolStateApi`, `FamePoolStateApiAuthorizer` |    7 days |
+| Dormant mixed-chain webhook          | `SwapSchwing` if re-enabled                                              |   30 days |
 
 ## Passive Health Signals
 
@@ -62,6 +79,8 @@ Before enabling `www` production helper env, inspect the deployed stack for:
 - Indexer Lambda `Invocations` alarm: OK after the schedule has had time to run.
 - Indexer failure queue depth alarm: OK and queue depth `0`.
 - Recent `fame-pool-state-indexed` success logs with advancing or non-regressing `observedThroughBlock`.
+- Managed replay-tick log groups exist for the indexer, API, and authorizer with 7-day retention.
+- Managed Ethereum/app-audit log groups exist for eventing and Discord surfaces with 30-day retention.
 
 Do not add email, pager, or chat notification actions for the first release unless the project ownership model changes.
 
@@ -71,13 +90,14 @@ Do not add email, pager, or chat notification actions for the first release unle
 2. Copy the artifact into `src/fame-swap-pool-state/registry/base-v1-pools.json`.
 3. Run registry, indexer, API, and CDK tests.
 4. Confirm main deploy provides `FAME_POOL_STATE_SERVICE_TOKEN`, PR deploy provides a separate `FAME_POOL_STATE_PR_SERVICE_TOKEN`, and both fail before CDK deploy when the token or structurally valid `BASE_RPCS_JSON` is missing.
-5. Confirm PR deploy uses `STAGE=PR-<number>` and cleanup targets only `Bot-PR-<number>` / `BotCert-PR-<number>`.
-6. Set or generate the dev service token first as `FAME_POOL_STATE_DEV_SERVICE_TOKEN`.
-7. For pool-state-only pre-merge validation, add the PR label `DEPLOY_POOL_STATE_DEV`. This deploys `BotPoolStateDev` with only `BASE_RPCS_JSON` and `FAME_POOL_STATE_DEV_SERVICE_TOKEN`; it does not require image, Discord, Farcaster, custom domain, or cert env.
-8. Copy the emitted `FamePoolStateDevEndpointUrl` `/fame/pool-state` endpoint into `www` dev as server-only `FAME_POOL_STATE_API_URL`, and set the matching `FAME_POOL_STATE_SERVICE_TOKEN`.
-9. For full messy app validation, add the PR label `DEPLOY_DEV` to update `Bot-dev` / `BotCert-dev` at `dev.fame.support` with event schedules disabled.
-10. Deploy `society-bots` with Base RPCs and the correct environment-scoped FAME pool-state service token.
-11. Capture smoke evidence:
+5. Confirm the synthesized or deployed stack includes managed CloudWatch log groups with 7-day retention for replay-tick/Base operational logs and 30-day retention for Ethereum/mixed/app-audit logs.
+6. Confirm PR deploy uses `STAGE=PR-<number>` and cleanup targets only `Bot-PR-<number>` / `BotCert-PR-<number>`.
+7. Set or generate the dev service token first as `FAME_POOL_STATE_DEV_SERVICE_TOKEN`.
+8. For pool-state-only pre-merge validation, add the PR label `DEPLOY_POOL_STATE_DEV`. This deploys `BotPoolStateDev` with only `BASE_RPCS_JSON` and `FAME_POOL_STATE_DEV_SERVICE_TOKEN`; it does not require image, Discord, Farcaster, custom domain, or cert env.
+9. Copy the emitted `FamePoolStateDevEndpointUrl` `/fame/pool-state` endpoint into `www` dev as server-only `FAME_POOL_STATE_API_URL`, and set the matching `FAME_POOL_STATE_SERVICE_TOKEN`.
+10. For full messy app validation, add the PR label `DEPLOY_DEV` to update `Bot-dev` / `BotCert-dev` at `dev.fame.support` with event schedules disabled.
+11. Deploy `society-bots` with Base RPCs and the correct environment-scoped FAME pool-state service token.
+12. Capture smoke evidence:
 
 - endpoint or stack name;
 - timestamp;
@@ -86,8 +106,10 @@ Do not add email, pager, or chat notification actions for the first release unle
 - at least one `fresh` quote-model pool;
 - returned `observedThroughBlock`.
 - for the replay proof, a `fresh` `cl-replay-v1` row for `slipstream-usdc-weth-100` with state hash, dynamic fee, bitmap word count, initialized tick count, block hash, and matching source registry id.
+- replay-tick CloudWatch log group retention;
+- Ethereum or app-audit CloudWatch log group retention.
 
-12. Capture short soak evidence across at least five scheduled intervals:
+13. Capture short soak evidence across at least five scheduled intervals:
 
 - recent success log timestamps;
 - `observedThroughBlock` values, with no regression;
@@ -96,11 +118,11 @@ Do not add email, pager, or chat notification actions for the first release unle
 - failure queue depth;
 - any RPC timeout, throttle, or cursor-lag notes.
 
-13. Run `www` route lab with `--indexed`, `BASE_RPC_URL` or `FAME_POOL_STATE_CURRENT_BLOCK`, and production-like helper env. Confirm the indexed summary reports `cl replay slipstream-usdc-weth-100 ...` while selected CL quotes remain live or recorded in shadow mode.
-14. Run `www` CL replay parity with `bun scripts/fame-swap-cl-replay-parity.ts` and production-like helper/RPC env. Promotion requires exact same-block `amountOut` equality for both WETH -> USDC and USDC -> WETH amount bands.
-15. Run a `www` quote API smoke check.
-16. Record route-lab and parity evidence locations in the PR or release checklist. Evidence must cover indexed success plus fallback-relevant stale, unknown, unsupported, malformed, incomplete replay, and unavailable-helper cases.
-17. Enable `www` server env `FAME_POOL_STATE_API_URL` and `FAME_POOL_STATE_SERVICE_TOKEN` only after route-lab and parity proof are attached. Do not create `NEXT_PUBLIC_` variants.
+14. Run `www` route lab with `--indexed`, `BASE_RPC_URL` or `FAME_POOL_STATE_CURRENT_BLOCK`, and production-like helper env. Confirm the indexed summary reports `cl replay slipstream-usdc-weth-100 ...` while selected CL quotes remain live or recorded in shadow mode.
+15. Run `www` CL replay parity with `bun scripts/fame-swap-cl-replay-parity.ts` and production-like helper/RPC env. Promotion requires exact same-block `amountOut` equality for both WETH -> USDC and USDC -> WETH amount bands.
+16. Run a `www` quote API smoke check.
+17. Record route-lab and parity evidence locations in the PR or release checklist. Evidence must cover indexed success plus fallback-relevant stale, unknown, unsupported, malformed, incomplete replay, and unavailable-helper cases.
+18. Enable `www` server env `FAME_POOL_STATE_API_URL` and `FAME_POOL_STATE_SERVICE_TOKEN` only after route-lab and parity proof are attached. Do not create `NEXT_PUBLIC_` variants.
 
 ## Durable Follow-Ups
 

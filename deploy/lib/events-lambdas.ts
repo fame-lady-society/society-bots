@@ -13,6 +13,7 @@ import * as eventTargets from "aws-cdk-lib/aws-events-targets";
 import * as events from "aws-cdk-lib/aws-events";
 import { fileURLToPath } from "url";
 import { dirname } from "path";
+import { createLambdaLogGroup } from "./lambda-log-groups.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export interface Props {
@@ -122,6 +123,11 @@ export class EventLambdas extends Construct {
       architecture: lambda.Architecture.ARM_64,
       code: lambda.Code.fromAsset(interactionHandlerCodeDir),
       handler: "index.handler",
+      logGroup: createLambdaLogGroup(
+        this,
+        "InteractionHandlerLogGroup",
+        "appAudit",
+      ),
       timeout: cdk.Duration.seconds(5),
       memorySize: 256,
       environment: {
@@ -146,6 +152,11 @@ export class EventLambdas extends Construct {
       runtime: lambda.Runtime.NODEJS_24_X,
       code: lambda.Code.fromAsset(deferredMessageCodeDir),
       handler: "index.handler",
+      logGroup: createLambdaLogGroup(
+        this,
+        "DeferredMessageLogGroup",
+        "appAudit",
+      ),
       timeout: cdk.Duration.seconds(30),
       memorySize: 256,
       environment: {
@@ -168,6 +179,11 @@ export class EventLambdas extends Construct {
       runtime: lambda.Runtime.NODEJS_24_X,
       code: lambda.Code.fromAsset(fameEventCodeDir),
       handler: "index.handler",
+      logGroup: createLambdaLogGroup(
+        this,
+        "FameEventLogGroup",
+        "mixedEthereumBase",
+      ),
       timeout: cdk.Duration.seconds(60),
       memorySize: 512,
       environment: {
@@ -199,6 +215,7 @@ export class EventLambdas extends Construct {
       runtime: lambda.Runtime.NODEJS_24_X,
       code: lambda.Code.fromAsset(wrapEventCodeDir),
       handler: "index.handler",
+      logGroup: createLambdaLogGroup(this, "WrapEventLogGroup", "ethereum"),
       timeout: cdk.Duration.seconds(60),
       memorySize: 512,
       environment: {

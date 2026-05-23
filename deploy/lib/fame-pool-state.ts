@@ -11,6 +11,7 @@ import { buildSync, type BuildOptions } from "esbuild";
 import * as path from "path";
 import { fileURLToPath } from "url";
 import { Construct } from "constructs";
+import { createLambdaLogGroup } from "./lambda-log-groups.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -128,6 +129,11 @@ export class FamePoolState extends Construct {
       architecture: lambda.Architecture.ARM_64,
       code: lambda.Code.fromAsset(indexerCodeDir),
       handler: "index.handler",
+      logGroup: createLambdaLogGroup(
+        this,
+        "FamePoolStateIndexerLogGroup",
+        "replayTick",
+      ),
       timeout: cdk.Duration.seconds(60),
       memorySize: 512,
       reservedConcurrentExecutions: 1,
@@ -229,6 +235,11 @@ export class FamePoolState extends Construct {
         architecture: lambda.Architecture.ARM_64,
         code: lambda.Code.fromAsset(apiAuthorizerCodeDir),
         handler: "index.handler",
+        logGroup: createLambdaLogGroup(
+          this,
+          "FamePoolStateApiAuthorizerLogGroup",
+          "replayTick",
+        ),
         timeout: cdk.Duration.seconds(5),
         memorySize: 128,
         environment: {
@@ -243,6 +254,11 @@ export class FamePoolState extends Construct {
       architecture: lambda.Architecture.ARM_64,
       code: lambda.Code.fromAsset(apiCodeDir),
       handler: "index.handler",
+      logGroup: createLambdaLogGroup(
+        this,
+        "FamePoolStateApiLogGroup",
+        "replayTick",
+      ),
       timeout: cdk.Duration.seconds(5),
       memorySize: 256,
       reservedConcurrentExecutions: props.apiReservedConcurrency ?? 5,

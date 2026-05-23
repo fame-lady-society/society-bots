@@ -4,7 +4,14 @@ import type {
   APIGatewayProxyResultV2,
   APIGatewayProxyStructuredResultV2,
 } from "aws-lambda";
+import type { Address, Hex } from "viem";
+import type { FamePoolStateBatchResponse } from "../api.ts";
 import type { FamePoolStateBatchHandler } from "./api.ts";
+
+const ADDRESS_A = "0x0000000000000000000000000000000000000001" as Address;
+const ADDRESS_B = "0x0000000000000000000000000000000000000002" as Address;
+const HEX_32 =
+  "0x0000000000000000000000000000000000000000000000000000000000000000" as Hex;
 
 function eventFixture({
   body,
@@ -67,6 +74,98 @@ function jsonBody(response: APIGatewayProxyResultV2): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
+function parseLogLine(line: unknown): Record<string, unknown> {
+  if (typeof line !== "string") throw new Error("Expected a log string.");
+  const parsed: unknown = JSON.parse(line);
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("Expected a JSON object log line.");
+  }
+  return parsed as Record<string, unknown>;
+}
+
+function freshReserveBatchResponse(): FamePoolStateBatchResponse {
+  return {
+    sourceRegistryId: "registry",
+    currentBlock: 125,
+    producerMaxFreshnessBlocks: 120,
+    effectiveMaxFreshnessBlocks: 120,
+    pools: [
+      {
+        status: "fresh",
+        poolId: "constant-product-pool",
+        chainId: 8453,
+        poolAddress: ADDRESS_A,
+        token0: ADDRESS_A,
+        token1: ADDRESS_B,
+        reserve0: "100",
+        reserve1: "200",
+        k: "20000",
+        observedThroughBlock: 124,
+        lastReserveChangeBlock: 123,
+        source: "getReserves",
+        quoteModel: "constant-product-reserves",
+        maxFreshnessBlocks: 120,
+      },
+    ],
+  };
+}
+
+function freshReplayBatchResponse(): FamePoolStateBatchResponse {
+  return {
+    sourceRegistryId: "registry",
+    currentBlock: 125,
+    producerMaxFreshnessBlocks: 120,
+    effectiveMaxFreshnessBlocks: 120,
+    pools: [
+      {
+        status: "fresh",
+        stateKind: "cl-replay-v1",
+        poolId: "slipstream-usdc-weth-100",
+        chainId: 8453,
+        poolAddress: ADDRESS_A,
+        token0: ADDRESS_A,
+        token1: ADDRESS_B,
+        venueFamily: "Slipstream",
+        tickSpacing: 1,
+        sqrtPriceX96: "100",
+        tick: 1,
+        liquidity: "1000",
+        fee: "100",
+        feeSource: "pool-fee",
+        observedThroughBlock: 124,
+        blockHash: HEX_32,
+        parentHash: HEX_32,
+        snapshotId: "cl-replay-v1:slipstream-usdc-weth-100:124",
+        stateHash: HEX_32,
+        source: "slipstream-pool-state",
+        sourceRegistryId: "registry",
+        maxFreshnessBlocks: 120,
+        bitmapWordCount: 2,
+        initializedTickCount: 3,
+        bitmapChunkCount: 1,
+        tickChunkCount: 1,
+        minWordPosition: -1,
+        maxWordPosition: 1,
+        minTick: -100,
+        maxTick: 100,
+        bitmapWords: [
+          {
+            wordPosition: 0,
+            bitmap: HEX_32,
+          },
+        ],
+        initializedTicks: [
+          {
+            tick: -100,
+            liquidityGross: "1",
+            liquidityNet: "1",
+          },
+        ],
+      },
+    ],
+  };
+}
+
 async function loadApiModule(): Promise<typeof import("./api.ts")> {
   jest.resetModules();
   process.env.FAME_POOL_STATE_TABLE_NAME = "PoolState";
@@ -91,43 +190,67 @@ async function requestHandler(
 
 describe("FAME pool-state API Lambda transport", () => {
   test("returns request failure for malformed JSON without calling DynamoDB", async () => {
-    let called = false;
-    const response = await requestHandler(
-      async () => {
-        called = true;
-        throw new Error("should not call batch handler");
-      },
-      eventFixture({ body: "{" }),
-    );
-
-    expect(structuredResponse(response).statusCode).toBe(400);
-    expect(jsonBody(response)).toMatchObject({
-      error: "invalid-request",
-      message: expect.stringContaining("expected valid JSON"),
+    const warnLog = jest.spyOn(console, "warn").mockImplementation(() => {
+      return undefined;
     });
-    expect(called).toBe(false);
+    let called = false;
+
+    try {
+      const response = await requestHandler(
+        async () => {
+          called = true;
+          throw new Error("should not call batch handler");
+        },
+        eventFixture({ body: '{"secret":"do-not-log"' }),
+      );
+
+      expect(structuredResponse(response).statusCode).toBe(400);
+      expect(jsonBody(response)).toMatchObject({
+        error: "invalid-request",
+        message: expect.stringContaining("expected valid JSON"),
+      });
+      expect(called).toBe(false);
+      expect(warnLog).toHaveBeenCalledTimes(1);
+      const entry = parseLogLine(warnLog.mock.calls[0]?.[0]);
+      expect(entry).toMatchObject({
+        level: "warn",
+        event: "fame-pool-state-api-error",
+        errorType: "invalid-request",
+      });
+      expect(warnLog.mock.calls[0]?.[0]).not.toContain("do-not-log");
+    } finally {
+      warnLog.mockRestore();
+    }
   });
 
   test("returns request failure for structurally invalid payload", async () => {
     const { handleFamePoolStateApiEvent } = await loadApiModule();
-    const response = await handleFamePoolStateApiEvent({
-      event: eventFixture({
-        body: JSON.stringify({
-          currentBlock: 125,
-          pools: "bad",
-        }),
-      }),
-      serviceToken: "unit-token",
-      tableName: "PoolState",
-      producerMaxFreshnessBlocks: 120,
-      maxBatchSize: 64,
+    const warnLog = jest.spyOn(console, "warn").mockImplementation(() => {
+      return undefined;
     });
 
-    expect(structuredResponse(response).statusCode).toBe(400);
-    expect(jsonBody(response)).toMatchObject({
-      error: "invalid-request",
-      message: expect.stringContaining("$.pools"),
-    });
+    try {
+      const response = await handleFamePoolStateApiEvent({
+        event: eventFixture({
+          body: JSON.stringify({
+            currentBlock: 125,
+            pools: "bad",
+          }),
+        }),
+        serviceToken: "unit-token",
+        tableName: "PoolState",
+        producerMaxFreshnessBlocks: 120,
+        maxBatchSize: 64,
+      });
+
+      expect(structuredResponse(response).statusCode).toBe(400);
+      expect(jsonBody(response)).toMatchObject({
+        error: "invalid-request",
+        message: expect.stringContaining("$.pools"),
+      });
+    } finally {
+      warnLog.mockRestore();
+    }
   });
 
   test("returns unauthorized before batch handling", async () => {
@@ -171,11 +294,77 @@ describe("FAME pool-state API Lambda transport", () => {
 
       expect(structuredResponse(response).statusCode).toBe(500);
       expect(jsonBody(response)).toEqual({ error: "internal-error" });
-      expect(errorLog).toHaveBeenCalledWith(
-        expect.stringContaining("fame-pool-state-api-error"),
-      );
+      expect(errorLog).toHaveBeenCalledTimes(1);
+      const entry = parseLogLine(errorLog.mock.calls[0]?.[0]);
+      expect(entry).toMatchObject({
+        level: "error",
+        event: "fame-pool-state-api-error",
+        errorType: "dependency",
+        message: "DynamoDB unavailable",
+      });
+      expect(errorLog.mock.calls[0]?.[0]).not.toContain("currentBlock");
     } finally {
       errorLog.mockRestore();
+    }
+  });
+
+  test("does not log ordinary all-fresh non-replay success batches", async () => {
+    const infoLog = jest.spyOn(console, "log").mockImplementation(() => {
+      return undefined;
+    });
+
+    try {
+      const response = await requestHandler(
+        async () => freshReserveBatchResponse(),
+        eventFixture({
+          body: JSON.stringify({
+            currentBlock: 125,
+            pools: [{ poolId: "constant-product-pool" }],
+          }),
+        }),
+      );
+
+      expect(structuredResponse(response).statusCode).toBe(200);
+      expect(infoLog).not.toHaveBeenCalled();
+    } finally {
+      infoLog.mockRestore();
+    }
+  });
+
+  test("logs compact replay success batches without raw tick payloads", async () => {
+    const infoLog = jest.spyOn(console, "log").mockImplementation(() => {
+      return undefined;
+    });
+
+    try {
+      const response = await requestHandler(
+        async () => freshReplayBatchResponse(),
+        eventFixture({
+          body: JSON.stringify({
+            currentBlock: 125,
+            stateSurfaces: ["cl-replay-v1"],
+            pools: [{ poolId: "slipstream-usdc-weth-100" }],
+          }),
+        }),
+      );
+
+      expect(structuredResponse(response).statusCode).toBe(200);
+      expect(infoLog).toHaveBeenCalledTimes(1);
+      const line = infoLog.mock.calls[0]?.[0];
+      expect(line).not.toContain("bitmapWords");
+      expect(line).not.toContain("initializedTicks");
+      expect(parseLogLine(line)).toMatchObject({
+        level: "info",
+        event: "fame-pool-state-api-batch",
+        clReplay: {
+          returned: 1,
+          fresh: 1,
+          bitmapWordCount: 2,
+          initializedTickCount: 3,
+        },
+      });
+    } finally {
+      infoLog.mockRestore();
     }
   });
 });
