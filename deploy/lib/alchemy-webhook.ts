@@ -7,6 +7,7 @@ import * as lambda from "aws-cdk-lib/aws-lambda";
 import { HttpLambdaIntegration } from "aws-cdk-lib/aws-apigatewayv2-integrations";
 import { fileURLToPath } from "url";
 import { dirname } from "path";
+import { createLambdaLogGroup } from "./lambda-log-groups.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export interface Props {
@@ -58,6 +59,11 @@ export class AlchemyWebhooks extends Construct {
         compile(path.join(__dirname, "../../src/webhook/swap/index.ts")),
       ),
       handler: "index.handler",
+      logGroup: createLambdaLogGroup(
+        this,
+        "SwapSchwingLogGroup",
+        "mixedEthereumBase",
+      ),
       timeout: cdk.Duration.seconds(5),
       memorySize: 256,
       environment: {

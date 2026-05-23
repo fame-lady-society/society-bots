@@ -18,6 +18,11 @@ import {
   handleFamePoolQuoteBatchRequest,
   type FamePoolQuoteBatchResponse,
 } from "../cl-quote.ts";
+import {
+  logPoolQuoteApiBatch,
+  logPoolStateApiBatch,
+  writePoolStateLog,
+} from "./logging.ts";
 
 export type FamePoolStateBatchHandler = (
   options: Parameters<typeof handleFamePoolStateBatchRequest>[0],
@@ -45,58 +50,6 @@ function jsonResponse(
     },
     body: JSON.stringify(body),
   };
-}
-
-function poolStateStatusCounts(response: { pools: Array<{ status: string }> }) {
-  const counts: Record<string, number> = {};
-  for (const pool of response.pools) {
-    counts[pool.status] = (counts[pool.status] ?? 0) + 1;
-  }
-  return counts;
-}
-
-function poolQuoteStatusCounts(response: {
-  quotes: Array<{ status: string; reason?: string }>;
-}) {
-  const statusCounts: Record<string, number> = {};
-  const reasonCounts: Record<string, number> = {};
-  for (const quote of response.quotes) {
-    statusCounts[quote.status] = (statusCounts[quote.status] ?? 0) + 1;
-    if (quote.status === "unavailable" && quote.reason) {
-      reasonCounts[quote.reason] = (reasonCounts[quote.reason] ?? 0) + 1;
-    }
-  }
-  return { statusCounts, reasonCounts };
-}
-
-function logPoolStateSuccess(response: FamePoolStateBatchResponse): void {
-  console.log(
-    JSON.stringify({
-      event: "fame-pool-state-api-batch",
-      routeKind: "pool-state",
-      sourceRegistryId: response.sourceRegistryId,
-      currentBlock: response.currentBlock,
-      effectiveMaxFreshnessBlocks: response.effectiveMaxFreshnessBlocks,
-      batchSize: response.pools.length,
-      statusCounts: poolStateStatusCounts(response),
-    }),
-  );
-}
-
-function logPoolQuoteSuccess(response: FamePoolQuoteBatchResponse): void {
-  const counts = poolQuoteStatusCounts(response);
-  console.log(
-    JSON.stringify({
-      event: "fame-pool-state-api-batch",
-      routeKind: "pool-quotes",
-      sourceRegistryId: response.sourceRegistryId,
-      currentBlock: response.currentBlock,
-      effectiveMaxFreshnessBlocks: response.effectiveMaxFreshnessBlocks,
-      batchSize: response.quotes.length,
-      statusCounts: counts.statusCounts,
-      reasonCounts: counts.reasonCounts,
-    }),
-  );
 }
 
 function parseJsonBody(body: string | undefined): unknown {
@@ -151,7 +104,7 @@ export async function handleFamePoolStateApiEvent({
         producerMaxFreshnessBlocks,
         maxBatchSize,
       });
-      logPoolQuoteSuccess(response);
+      logPoolQuoteApiBatch(response);
       return jsonResponse(200, response);
     }
     const response = await handleBatchRequest({
@@ -160,22 +113,24 @@ export async function handleFamePoolStateApiEvent({
       producerMaxFreshnessBlocks,
       maxBatchSize,
     });
-    logPoolStateSuccess(response);
+    logPoolStateApiBatch(response);
     return jsonResponse(200, response);
   } catch (error) {
     if (isFamePoolStateRequestError(error)) {
+      writePoolStateLog("warn", "fame-pool-state-api-error", {
+        errorType: "invalid-request",
+        message: error.message,
+      });
       return jsonResponse(400, {
         error: "invalid-request",
         message: error.message,
       });
     }
 
-    console.error(
-      JSON.stringify({
-        event: "fame-pool-state-api-error",
-        message: errorMessage(error),
-      }),
-    );
+    writePoolStateLog("error", "fame-pool-state-api-error", {
+      errorType: "dependency",
+      message: errorMessage(error),
+    });
     return jsonResponse(500, {
       error: "internal-error",
     });
@@ -189,8 +144,7 @@ export async function handler(
     event,
     serviceToken: serviceToken(),
     tableName: FAME_POOL_STATE_TABLE_NAME,
-    producerMaxFreshnessBlocks:
-      FAME_POOL_STATE_DEFAULT_MAX_FRESHNESS_BLOCKS,
+    producerMaxFreshnessBlocks: FAME_POOL_STATE_DEFAULT_MAX_FRESHNESS_BLOCKS,
     maxBatchSize: FAME_POOL_STATE_MAX_BATCH_SIZE,
   });
 }

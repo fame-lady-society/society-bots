@@ -72,6 +72,10 @@ describe("FamePoolState infrastructure", () => {
       },
     });
     template.resourceCountIs("AWS::Lambda::Function", 3);
+    template.resourceCountIs("AWS::Logs::LogGroup", 3);
+    template.hasResourceProperties("AWS::Logs::LogGroup", {
+      RetentionInDays: 7,
+    });
     template.hasResourceProperties("AWS::Events::Rule", {
       ScheduleExpression: "rate(1 minute)",
       State: "ENABLED",
@@ -291,6 +295,7 @@ describe("FamePoolState infrastructure", () => {
 
       template.resourceCountIs("AWS::DynamoDB::Table", 1);
       template.resourceCountIs("AWS::Lambda::Function", 3);
+      template.resourceCountIs("AWS::Logs::LogGroup", 3);
       template.resourceCountIs("AWS::ApiGatewayV2::Api", 1);
       template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
         RouteKey: "POST /fame/pool-state",
