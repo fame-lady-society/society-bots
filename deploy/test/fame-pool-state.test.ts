@@ -66,6 +66,10 @@ describe("FamePoolState infrastructure", () => {
         },
       ],
       GlobalSecondaryIndexes: Match.absent(),
+      TimeToLiveSpecification: {
+        AttributeName: "expiresAt",
+        Enabled: true,
+      },
     });
     template.resourceCountIs("AWS::Lambda::Function", 3);
     template.hasResourceProperties("AWS::Events::Rule", {

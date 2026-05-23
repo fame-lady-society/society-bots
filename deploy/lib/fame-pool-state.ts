@@ -109,6 +109,7 @@ export class FamePoolState extends Construct {
       sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
       tableClass: dynamodb.TableClass.STANDARD,
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      timeToLiveAttribute: "expiresAt",
     });
 
     const commonEnvironment = {

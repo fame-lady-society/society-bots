@@ -1,16 +1,25 @@
 import { describe, expect, test } from "@jest/globals";
+import { decodeFunctionResult, encodeAbiParameters } from "viem";
 import type { Address, Hex } from "viem";
 import {
+  assertNoClReplaySnapshotFailures,
+  FameClReplaySnapshotIndexingError,
+  getSlipstreamClReplaySnapshot,
   indexFamePoolStates,
+  SlipstreamTicksAbi,
   type FameClHeadSnapshotRead,
+  type FameClReplaySnapshotRead,
   type FamePoolStateIndexerClient,
   type FamePoolStateSyncLog,
+  type SlipstreamReplayReadClient,
 } from "./indexer.ts";
 import {
   cursorKey,
   latestClHeadStateKey,
+  latestClReplayStateKey,
   latestPoolStateKey,
   type FameClHeadSnapshotRegistryEntry,
+  type FameClReplayRegistryEntry,
   type PoolStateDocumentClient,
   type PoolStateDynamoResponse,
 } from "./dynamodb/pool-state.ts";
@@ -41,7 +50,9 @@ class InMemoryPoolStateDb implements PoolStateDocumentClient {
         }
         responses[tableName] = keys
           .map((key) => this.items.get(keyFromValue(key)))
-          .filter((item): item is Record<string, unknown> => item !== undefined);
+          .filter(
+            (item): item is Record<string, unknown> => item !== undefined,
+          );
       }
       return { Responses: responses };
     }
@@ -74,7 +85,10 @@ class InMemoryPoolStateDb implements PoolStateDocumentClient {
         const values = parseItem(input.ExpressionAttributeValues);
         const currentBlock = numberField(existing, "observedThroughBlock");
         const incomingBlock = numberField(values, ":observedThroughBlock");
-        const currentSourceRegistryId = stringField(existing, "sourceRegistryId");
+        const currentSourceRegistryId = stringField(
+          existing,
+          "sourceRegistryId",
+        );
         const incomingSourceRegistryId = stringField(
           values,
           ":sourceRegistryId",
@@ -135,6 +149,10 @@ class InMemoryPoolStateDb implements PoolStateDocumentClient {
     return this.items.get(keyFromValue(latestClHeadStateKey(pool)));
   }
 
+  getLatestClReplay(pool: FameClReplayRegistryEntry) {
+    return this.items.get(keyFromValue(latestClReplayStateKey(pool)));
+  }
+
   getCursor(chainId: number) {
     return this.items.get(keyFromValue(cursorKey(chainId)));
   }
@@ -147,8 +165,13 @@ class FakePoolStateClient implements FamePoolStateIndexerClient {
     readonly [bigint, bigint, number]
   >();
   public clHeadSnapshotsByPoolId = new Map<string, FameClHeadSnapshotRead>();
+  public clReplaySnapshotsByPoolId = new Map<
+    string,
+    FameClReplaySnapshotRead
+  >();
   public failingReserveAddress: Address | null = null;
   public failingClHeadPoolId: string | null = null;
+  public failingClReplayPoolId: string | null = null;
 
   constructor(
     private readonly logs: readonly FamePoolStateSyncLog[],
@@ -206,6 +229,125 @@ class FakePoolStateClient implements FamePoolStateIndexerClient {
             : "pool-slot0-liquidity",
       }
     );
+  }
+
+  async getClReplaySnapshot(options: {
+    pool: FameClReplayRegistryEntry;
+  }): Promise<FameClReplaySnapshotRead> {
+    if (options.pool.id === this.failingClReplayPoolId) {
+      throw new Error("CL replay read failed");
+    }
+    return (
+      this.clReplaySnapshotsByPoolId.get(options.pool.id) ?? {
+        sqrtPriceX96: 2n ** 96n,
+        tick: 199_900,
+        liquidity: 1_000n,
+        fee: 100n,
+        blockHash:
+          "0x1111111111111111111111111111111111111111111111111111111111111111",
+        parentHash:
+          "0x2222222222222222222222222222222222222222222222222222222222222222",
+        bitmapWords: [{ wordPosition: 7, bitmap: 1n }],
+        initializedTicks: [
+          { tick: 199_900, liquidityGross: 25n, liquidityNet: 15n },
+        ],
+        providerReadCount: 5,
+        durationMs: 12,
+      }
+    );
+  }
+}
+
+class FakeSlipstreamReplayReadClient implements SlipstreamReplayReadClient {
+  public readonly blockNumbers: bigint[] = [];
+  public readonly tickBitmapWordPositions: number[] = [];
+  public readonly tickIndexes: number[] = [];
+  public blockHash: Hex =
+    "0x1111111111111111111111111111111111111111111111111111111111111111";
+  public parentHash: Hex =
+    "0x2222222222222222222222222222222222222222222222222222222222222222";
+  public readonly bitmaps = new Map<number, bigint>([
+    [-1, 1n << 255n],
+    [0, 1n << 2n],
+  ]);
+  public readonly tickStates = new Map<
+    number,
+    { liquidityGross: bigint; liquidityNet: bigint; initialized: boolean }
+  >([
+    [-100, { liquidityGross: 25n, liquidityNet: -10n, initialized: true }],
+    [200, { liquidityGross: 50n, liquidityNet: 15n, initialized: true }],
+  ]);
+
+  async getBlock(options: {
+    blockNumber: bigint;
+  }): Promise<{ hash: Hex | null; parentHash: Hex }> {
+    this.blockNumbers.push(options.blockNumber);
+    return {
+      hash: this.blockHash,
+      parentHash: this.parentHash,
+    };
+  }
+
+  async getSlot0(options: {
+    blockNumber: bigint;
+  }): Promise<readonly [bigint, number, number, number, number, boolean]> {
+    this.blockNumbers.push(options.blockNumber);
+    return [2n ** 96n, 100, 0, 0, 0, true] as const;
+  }
+
+  async getLiquidity(options: { blockNumber: bigint }): Promise<bigint> {
+    this.blockNumbers.push(options.blockNumber);
+    return 1_000n;
+  }
+
+  async getFee(options: { blockNumber: bigint }): Promise<bigint> {
+    this.blockNumbers.push(options.blockNumber);
+    return 100n;
+  }
+
+  async getTickBitmap(options: {
+    wordPosition: number;
+    blockNumber: bigint;
+  }): Promise<bigint> {
+    this.blockNumbers.push(options.blockNumber);
+    this.tickBitmapWordPositions.push(options.wordPosition);
+    return this.bitmaps.get(options.wordPosition) ?? 0n;
+  }
+
+  async getTick(options: {
+    tick: number;
+    blockNumber: bigint;
+  }): Promise<
+    readonly [
+      bigint,
+      bigint,
+      bigint,
+      bigint,
+      bigint,
+      bigint,
+      bigint,
+      bigint,
+      number,
+      boolean,
+    ]
+  > {
+    this.blockNumbers.push(options.blockNumber);
+    this.tickIndexes.push(options.tick);
+    const state = this.tickStates.get(options.tick);
+    if (!state)
+      throw new Error(`Missing fake tick ${options.tick.toString()}.`);
+    return [
+      state.liquidityGross,
+      state.liquidityNet,
+      0n,
+      0n,
+      0n,
+      0n,
+      0n,
+      0n,
+      0,
+      state.initialized,
+    ] as const;
   }
 }
 
@@ -295,6 +437,27 @@ function clHeadPool(id: string): FameClHeadSnapshotRegistryEntry {
   };
 }
 
+function clReplayPool(): FameClReplayRegistryEntry {
+  const entry = registryEntry("slipstream-usdc-weth-100");
+  if (
+    entry.replaySurface !== "cl-replay-v1" ||
+    entry.stateSurface !== "cl-head-snapshot" ||
+    entry.poolAddress === null ||
+    entry.tickSpacing === null ||
+    entry.venue !== "aerodrome-slipstream"
+  ) {
+    throw new Error("slipstream-usdc-weth-100 is not CL replay eligible.");
+  }
+  return {
+    ...entry,
+    replaySurface: entry.replaySurface,
+    stateSurface: entry.stateSurface,
+    poolAddress: entry.poolAddress,
+    tickSpacing: entry.tickSpacing,
+    venue: entry.venue,
+  };
+}
+
 function registryFixture(): FamePoolStateRegistryFile {
   return {
     ...famePoolStateRegistry,
@@ -322,6 +485,65 @@ function registryWithPools(
 }
 
 describe("FAME pool-state indexer", () => {
+  test("decodes Aerodrome Slipstream tick state with staked and reward fields", () => {
+    const result = decodeFunctionResult({
+      abi: SlipstreamTicksAbi,
+      functionName: "ticks",
+      data: encodeAbiParameters(SlipstreamTicksAbi[0].outputs, [
+        25n,
+        15n,
+        0n,
+        101n,
+        202n,
+        303n,
+        -404n,
+        1_234_567n,
+        88,
+        true,
+      ]),
+    });
+
+    expect(result[0]).toBe(25n);
+    expect(result[1]).toBe(15n);
+    expect(result[9]).toBe(true);
+  });
+
+  test("builds Slipstream replay snapshots from bitmap and tick reads at one block", async () => {
+    const pool = clReplayPool();
+    const client = new FakeSlipstreamReplayReadClient();
+
+    const snapshot = await getSlipstreamClReplaySnapshot({
+      client,
+      pool,
+      blockNumber: 118n,
+    });
+
+    expect(snapshot).toMatchObject({
+      sqrtPriceX96: 2n ** 96n,
+      tick: 100,
+      liquidity: 1_000n,
+      fee: 100n,
+      blockHash: client.blockHash,
+      parentHash: client.parentHash,
+      bitmapWords: [
+        { wordPosition: -1, bitmap: 1n << 255n },
+        { wordPosition: 0, bitmap: 1n << 2n },
+      ],
+      initializedTicks: [
+        { tick: -100, liquidityGross: 25n, liquidityNet: -10n },
+        { tick: 200, liquidityGross: 50n, liquidityNet: 15n },
+      ],
+      providerReadCount: 77,
+    });
+    expect(client.tickBitmapWordPositions).toHaveLength(70);
+    expect(client.tickBitmapWordPositions[0]).toBe(-35);
+    expect(client.tickBitmapWordPositions.at(-1)).toBe(34);
+    expect(client.tickIndexes).toEqual([-100, 200]);
+    expect(
+      client.blockNumbers.every((blockNumber) => blockNumber === 118n),
+    ).toBe(true);
+  });
+
   test("writes Sync reserves, k, observed-through block, and cursor", async () => {
     const pool = quotePool("uniswap-v2-fame-direct");
     const db = new InMemoryPoolStateDb();
@@ -442,6 +664,129 @@ describe("FAME pool-state indexer", () => {
       observedThroughBlock: 118,
       source: "pool-slot0-liquidity",
     });
+  });
+
+  test("writes complete CL replay snapshots for the one replay-capable pool", async () => {
+    const replayPool = clReplayPool();
+    const db = new InMemoryPoolStateDb();
+    const client = new FakePoolStateClient([], 120n);
+    client.clReplaySnapshotsByPoolId.set(replayPool.id, {
+      sqrtPriceX96: 2n ** 96n,
+      tick: 199_900,
+      liquidity: 9_999n,
+      fee: 100n,
+      blockHash:
+        "0x1111111111111111111111111111111111111111111111111111111111111111",
+      parentHash:
+        "0x2222222222222222222222222222222222222222222222222222222222222222",
+      bitmapWords: [
+        { wordPosition: 7, bitmap: 1n },
+        { wordPosition: 8, bitmap: 2n },
+      ],
+      initializedTicks: [
+        { tick: 199_900, liquidityGross: 25n, liquidityNet: 15n },
+        { tick: 200_000, liquidityGross: 50n, liquidityNet: -15n },
+      ],
+      providerReadCount: 75,
+      durationMs: 42,
+    });
+
+    const result = await indexFamePoolStates({
+      client,
+      db,
+      tableName: "PoolState",
+      registry: registryWithPools([replayPool]),
+      now: new Date("2026-05-20T00:00:00.000Z"),
+    });
+
+    expect(result).toMatchObject({
+      clReplaySnapshots: 1,
+      clReplayWrittenPools: 1,
+      clReplayFailedPools: 0,
+      clReplayMetrics: [
+        {
+          poolId: replayPool.id,
+          bitmapWordCount: 2,
+          initializedTickCount: 2,
+          bitmapChunkCount: 1,
+          tickChunkCount: 1,
+          providerReadCount: 75,
+          durationMs: 42,
+          stateHash: expect.stringMatching(/^0x[0-9a-f]{64}$/),
+        },
+      ],
+    });
+    expect(db.getLatestClReplay(replayPool)).toMatchObject({
+      stateKind: "cl-replay-v1",
+      poolId: replayPool.id,
+      tick: 199_900,
+      liquidity: "9999",
+      fee: "100",
+      observedThroughBlock: 118,
+      blockHash:
+        "0x1111111111111111111111111111111111111111111111111111111111111111",
+      bitmapWordCount: 2,
+      initializedTickCount: 2,
+      minTick: 199_900,
+      maxTick: 200_000,
+    });
+    expect(
+      stringField(parseItem(db.getLatestClReplay(replayPool)), "snapshotId"),
+    ).toContain(result.sourceRegistryId);
+  });
+
+  test("records CL replay failures without blocking CL head snapshots", async () => {
+    const replayPool = clReplayPool();
+    const db = new InMemoryPoolStateDb();
+    const client = new FakePoolStateClient([], 120n);
+    client.failingClReplayPoolId = replayPool.id;
+    client.clHeadSnapshotsByPoolId.set(replayPool.id, {
+      sqrtPriceX96: 123n,
+      tick: 5,
+      liquidity: 456n,
+      source: "pool-slot0-liquidity",
+    });
+
+    const result = await indexFamePoolStates({
+      client,
+      db,
+      tableName: "PoolState",
+      registry: registryWithPools([replayPool]),
+      now: new Date("2026-05-20T00:00:00.000Z"),
+    });
+
+    expect(result).toMatchObject({
+      clHeadSnapshots: 1,
+      clHeadWrittenPools: 1,
+      clReplaySnapshots: 0,
+      clReplayWrittenPools: 0,
+      clReplayFailedPools: 1,
+      clReplayFailures: [
+        {
+          poolId: replayPool.id,
+          message: "CL replay read failed",
+        },
+      ],
+    });
+    expect(db.getLatestClHead(replayPool)).toMatchObject({
+      tick: 5,
+      liquidity: "456",
+    });
+    expect(db.getLatestClReplay(replayPool)).toBeUndefined();
+  });
+
+  test("throws an operational error when required CL replay snapshots fail", () => {
+    expect(() =>
+      assertNoClReplaySnapshotFailures({
+        clReplayFailedPools: 1,
+        clReplayFailures: [
+          {
+            poolId: "slipstream-usdc-weth-100",
+            message: "CL replay read failed",
+          },
+        ],
+      }),
+    ).toThrow(FameClReplaySnapshotIndexingError);
   });
 
   test("repairs reserve drift from getReserves before advancing freshness", async () => {

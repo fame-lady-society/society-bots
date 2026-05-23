@@ -1,17 +1,25 @@
 import { describe, expect, test } from "@jest/globals";
+import { BatchGetCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
 import type { Address, Hex } from "viem";
 import {
+  batchGetLatestClReplayStates,
+  CL_REPLAY_CHUNK_TTL_SECONDS,
   batchGetLatestClHeadStates,
   batchGetLatestPoolStates,
+  clReplayStateRowsFromSnapshot,
   comparePoolStateEventVersions,
   getLatestClHeadState,
   getLatestPoolState,
   latestClHeadStateFromSnapshot,
   latestClHeadStateKey,
+  latestClReplayStateKey,
   latestPoolStateKey,
+  putLatestClReplayState,
   latestStateFromReserves,
   putLatestClHeadState,
   putLatestPoolState,
+  sourceRegistryIdFor,
+  type FameClReplayRegistryEntry,
   type FameClHeadSnapshotRegistryEntry,
   type PoolStateDocumentClient,
   type PoolStateDynamoResponse,
@@ -96,7 +104,105 @@ class ItemDb implements PoolStateDocumentClient {
   }
 }
 
-function quoteModelPool(id: string): FamePoolStateRegistryEntry & { poolAddress: Address } {
+function keyFromItem(item: Record<string, unknown>): string {
+  const pk = item.pk;
+  const sk = item.sk;
+  if (typeof pk !== "string" || typeof sk !== "string") {
+    throw new Error("DynamoDB fixture item is missing pk/sk.");
+  }
+  return `${pk}\u0000${sk}`;
+}
+
+function keyFromKey(key: Record<string, unknown>): string {
+  const pk = key.pk;
+  const sk = key.sk;
+  if (typeof pk !== "string" || typeof sk !== "string") {
+    throw new Error("DynamoDB fixture key is missing pk/sk.");
+  }
+  return `${pk}\u0000${sk}`;
+}
+
+function stringField(item: Record<string, unknown>, key: string): string {
+  const value = item[key];
+  if (typeof value !== "string") throw new Error(`${key} must be a string.`);
+  return value;
+}
+
+function numberField(item: Record<string, unknown>, key: string): number {
+  const value = item[key];
+  if (typeof value !== "number") throw new Error(`${key} must be a number.`);
+  return value;
+}
+
+class ReplayStateDb implements PoolStateDocumentClient {
+  public readonly commands: SentCommand[] = [];
+  public readonly items = new Map<string, Record<string, unknown>>();
+
+  constructor(items: readonly Record<string, unknown>[] = []) {
+    for (const item of items) this.items.set(keyFromItem(item), item);
+  }
+
+  async send(command: SentCommand): Promise<PoolStateDynamoResponse> {
+    this.commands.push(command);
+    if (command instanceof PutCommand) {
+      const item = command.input.Item;
+      if (!item) throw new Error("PutCommand fixture is missing Item.");
+      const condition = String(command.input.ConditionExpression ?? "");
+      const existing = this.items.get(keyFromItem(item));
+      if (
+        condition ===
+          "attribute_not_exists(pk) OR observedThroughBlock < :observedThroughBlock OR (observedThroughBlock = :observedThroughBlock AND sourceRegistryId = :sourceRegistryId)" &&
+        existing
+      ) {
+        const values = command.input.ExpressionAttributeValues;
+        if (!values) {
+          throw new Error(
+            "PutCommand fixture is missing ExpressionAttributeValues.",
+          );
+        }
+        const incomingBlock = numberField(values, ":observedThroughBlock");
+        const incomingSourceRegistryId = stringField(
+          values,
+          ":sourceRegistryId",
+        );
+        const currentBlock = numberField(existing, "observedThroughBlock");
+        const currentSourceRegistryId = stringField(
+          existing,
+          "sourceRegistryId",
+        );
+        if (
+          currentBlock > incomingBlock ||
+          (currentBlock === incomingBlock &&
+            currentSourceRegistryId !== incomingSourceRegistryId)
+        ) {
+          const error = new Error("conditional");
+          error.name = "ConditionalCheckFailedException";
+          throw error;
+        }
+      }
+      this.items.set(keyFromItem(item), item);
+      return {};
+    }
+    if (!(command instanceof BatchGetCommand)) {
+      throw new Error(`Unexpected command ${command.constructor.name}.`);
+    }
+
+    const request = command.input.RequestItems?.PoolState;
+    const keys: Record<string, unknown>[] = request?.Keys ?? [];
+    return {
+      Responses: {
+        PoolState: keys.flatMap((key) => {
+          const item = this.items.get(keyFromKey(key));
+          return item ? [item] : [];
+        }),
+      },
+    };
+  }
+}
+
+function quoteModelPool(
+  id: string,
+): FamePoolStateRegistryEntry & { poolAddress: Address } {
   const pool = famePoolStateRegistry.pools.find((entry) => entry.id === id);
   if (!pool || pool.poolAddress === null) {
     throw new Error(`Missing quote-model pool ${id}.`);
@@ -141,7 +247,37 @@ function firstV4ClHeadPool(): FameClHeadSnapshotRegistryEntry {
   };
 }
 
+function clReplayPool(): FameClReplayRegistryEntry {
+  const pool = famePoolStateRegistry.pools.find(
+    (entry) => entry.id === "slipstream-usdc-weth-100",
+  );
+  if (
+    !pool ||
+    pool.replaySurface !== "cl-replay-v1" ||
+    pool.stateSurface !== "cl-head-snapshot" ||
+    pool.poolAddress === null ||
+    pool.tickSpacing === null ||
+    pool.venue !== "aerodrome-slipstream"
+  ) {
+    throw new Error("Missing replay-capable Slipstream pool.");
+  }
+  return {
+    ...pool,
+    replaySurface: pool.replaySurface,
+    stateSurface: pool.stateSurface,
+    poolAddress: pool.poolAddress,
+    tickSpacing: pool.tickSpacing,
+    venue: pool.venue,
+  };
+}
+
 describe("FAME pool-state DynamoDB mapping", () => {
+  test("includes the helper registry contract version in source registry ids", () => {
+    expect(sourceRegistryIdFor(famePoolStateRegistry.source)).toMatch(
+      /^pool-state-registry-v3:0x[0-9a-f]{64}:0x[0-9a-f]{64}$/,
+    );
+  });
+
   test("builds latest-state rows with token-ordered reserves and k", () => {
     const pool = quoteModelPool("uniswap-v2-fame-direct");
     const state = latestStateFromReserves({
@@ -154,7 +290,8 @@ describe("FAME pool-state DynamoDB mapping", () => {
         transactionIndex: 2,
         logIndex: 7,
       },
-      transactionHash: "0x0000000000000000000000000000000000000000000000000000000000000001",
+      transactionHash:
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
       source: "sync-event",
       sourceRegistryId: "unit",
       updatedAt: "2026-05-17T00:00:00.000Z",
@@ -232,6 +369,320 @@ describe("FAME pool-state DynamoDB mapping", () => {
         pool,
       }),
     ).resolves.toEqual(state);
+  });
+
+  test("round-trips complete CL replay capsules with chunked bitmap and ticks", async () => {
+    const pool = clReplayPool();
+    const rows = clReplayStateRowsFromSnapshot({
+      pool,
+      sqrtPriceX96: 2n ** 96n,
+      tick: 199_900,
+      liquidity: 123_456_789n,
+      fee: 100n,
+      observedThroughBlock: 321,
+      blockHash:
+        "0x1111111111111111111111111111111111111111111111111111111111111111",
+      parentHash:
+        "0x2222222222222222222222222222222222222222222222222222222222222222",
+      snapshotId: "unit-snapshot-321",
+      stateHash:
+        "0x3333333333333333333333333333333333333333333333333333333333333333",
+      sourceRegistryId: "unit-registry",
+      updatedAt: "2026-05-20T00:00:00.000Z",
+      bitmapWords: [
+        { wordPosition: 7, bitmap: 1n },
+        { wordPosition: 8, bitmap: 2n ** 255n },
+      ],
+      initializedTicks: [
+        { tick: 199_800, liquidityGross: 10n, liquidityNet: -10n },
+        { tick: 199_900, liquidityGross: 25n, liquidityNet: 15n },
+        { tick: 200_000, liquidityGross: 35n, liquidityNet: -5n },
+      ],
+      bitmapChunkSize: 1,
+      tickChunkSize: 2,
+    });
+    const db = new ReplayStateDb();
+
+    await expect(
+      putLatestClReplayState({
+        db,
+        tableName: "PoolState",
+        rows,
+      }),
+    ).resolves.toBe("written");
+    await expect(
+      batchGetLatestClReplayStates({
+        db,
+        tableName: "PoolState",
+        pools: [pool],
+      }),
+    ).resolves.toEqual([
+      {
+        latest: rows.latest,
+        bitmapWords: rows.bitmapChunks.flatMap((chunk) => chunk.bitmapWords),
+        initializedTicks: rows.tickChunks.flatMap(
+          (chunk) => chunk.initializedTicks,
+        ),
+      },
+    ]);
+    expect(db.commands.map((command) => command.constructor.name)).toEqual([
+      "PutCommand",
+      "PutCommand",
+      "PutCommand",
+      "PutCommand",
+      "PutCommand",
+      "BatchGetCommand",
+      "BatchGetCommand",
+    ]);
+    expect(rows.latest).toMatchObject({
+      ...latestClReplayStateKey(pool),
+      stateKind: "cl-replay-v1",
+      fee: "100",
+      bitmapWordCount: 2,
+      initializedTickCount: 3,
+      bitmapChunkCount: 2,
+      tickChunkCount: 2,
+      minWordPosition: 7,
+      maxWordPosition: 8,
+      minTick: 199_800,
+      maxTick: 200_000,
+    });
+    expect(rows.latest).not.toHaveProperty("expiresAt");
+    expect(rows.bitmapChunks[0]?.expiresAt).toBe(
+      Math.floor(Date.parse("2026-05-20T00:00:00.000Z") / 1_000) +
+        CL_REPLAY_CHUNK_TTL_SECONDS,
+    );
+    expect(rows.tickChunks[0]?.expiresAt).toBe(rows.bitmapChunks[0]?.expiresAt);
+  });
+
+  test("keeps the published replay capsule when a same-block registry write is ignored", async () => {
+    const pool = clReplayPool();
+    const publishedRows = clReplayStateRowsFromSnapshot({
+      pool,
+      sqrtPriceX96: 2n ** 96n,
+      tick: 199_900,
+      liquidity: 1_000n,
+      fee: 100n,
+      observedThroughBlock: 321,
+      blockHash:
+        "0x1111111111111111111111111111111111111111111111111111111111111111",
+      parentHash:
+        "0x2222222222222222222222222222222222222222222222222222222222222222",
+      snapshotId: "unit-snapshot-321:registry-a",
+      stateHash:
+        "0x3333333333333333333333333333333333333333333333333333333333333333",
+      sourceRegistryId: "registry-a",
+      updatedAt: "2026-05-20T00:00:00.000Z",
+      bitmapWords: [{ wordPosition: 7, bitmap: 1n }],
+      initializedTicks: [
+        { tick: 199_900, liquidityGross: 25n, liquidityNet: 15n },
+      ],
+    });
+    const rejectedRows = clReplayStateRowsFromSnapshot({
+      pool,
+      sqrtPriceX96: 2n ** 96n,
+      tick: 199_900,
+      liquidity: 1_000n,
+      fee: 100n,
+      observedThroughBlock: 321,
+      blockHash:
+        "0x1111111111111111111111111111111111111111111111111111111111111111",
+      parentHash:
+        "0x2222222222222222222222222222222222222222222222222222222222222222",
+      snapshotId: "unit-snapshot-321:registry-b",
+      stateHash:
+        "0x4444444444444444444444444444444444444444444444444444444444444444",
+      sourceRegistryId: "registry-b",
+      updatedAt: "2026-05-20T00:01:00.000Z",
+      bitmapWords: [{ wordPosition: 7, bitmap: 1n }],
+      initializedTicks: [
+        { tick: 199_900, liquidityGross: 50n, liquidityNet: 30n },
+      ],
+    });
+    const db = new ReplayStateDb();
+
+    await expect(
+      putLatestClReplayState({
+        db,
+        tableName: "PoolState",
+        rows: publishedRows,
+      }),
+    ).resolves.toBe("written");
+    await expect(
+      putLatestClReplayState({
+        db,
+        tableName: "PoolState",
+        rows: rejectedRows,
+      }),
+    ).resolves.toBe("ignored");
+
+    await expect(
+      batchGetLatestClReplayStates({
+        db,
+        tableName: "PoolState",
+        pools: [pool],
+      }),
+    ).resolves.toEqual([
+      {
+        latest: publishedRows.latest,
+        bitmapWords: publishedRows.bitmapChunks.flatMap(
+          (chunk) => chunk.bitmapWords,
+        ),
+        initializedTicks: publishedRows.tickChunks.flatMap(
+          (chunk) => chunk.initializedTicks,
+        ),
+      },
+    ]);
+  });
+
+  test("returns no CL replay capsule when an expected chunk is missing", async () => {
+    const pool = clReplayPool();
+    const rows = clReplayStateRowsFromSnapshot({
+      pool,
+      sqrtPriceX96: 2n ** 96n,
+      tick: 199_900,
+      liquidity: 1_000n,
+      fee: 100n,
+      observedThroughBlock: 321,
+      blockHash:
+        "0x1111111111111111111111111111111111111111111111111111111111111111",
+      parentHash:
+        "0x2222222222222222222222222222222222222222222222222222222222222222",
+      snapshotId: "unit-snapshot-321",
+      stateHash:
+        "0x3333333333333333333333333333333333333333333333333333333333333333",
+      sourceRegistryId: "unit-registry",
+      updatedAt: "2026-05-20T00:00:00.000Z",
+      bitmapWords: [{ wordPosition: 7, bitmap: 1n }],
+      initializedTicks: [
+        { tick: 199_900, liquidityGross: 25n, liquidityNet: 15n },
+      ],
+      bitmapChunkSize: 1,
+      tickChunkSize: 1,
+    });
+    const db = new ReplayStateDb([rows.latest, ...rows.bitmapChunks]);
+
+    await expect(
+      batchGetLatestClReplayStates({
+        db,
+        tableName: "PoolState",
+        pools: [pool],
+      }),
+    ).resolves.toEqual([]);
+  });
+
+  test("returns no CL replay capsule when a chunk identity differs from the pointer", async () => {
+    const pool = clReplayPool();
+    const rows = clReplayStateRowsFromSnapshot({
+      pool,
+      sqrtPriceX96: 2n ** 96n,
+      tick: 199_900,
+      liquidity: 1_000n,
+      fee: 100n,
+      observedThroughBlock: 321,
+      blockHash:
+        "0x1111111111111111111111111111111111111111111111111111111111111111",
+      parentHash:
+        "0x2222222222222222222222222222222222222222222222222222222222222222",
+      snapshotId: "unit-snapshot-321",
+      stateHash:
+        "0x3333333333333333333333333333333333333333333333333333333333333333",
+      sourceRegistryId: "unit-registry",
+      updatedAt: "2026-05-20T00:00:00.000Z",
+      bitmapWords: [{ wordPosition: 7, bitmap: 1n }],
+      initializedTicks: [
+        { tick: 199_900, liquidityGross: 25n, liquidityNet: 15n },
+      ],
+      bitmapChunkSize: 1,
+      tickChunkSize: 1,
+    });
+    const mismatchedTickChunk = {
+      ...rows.tickChunks[0],
+      stateHash:
+        "0x4444444444444444444444444444444444444444444444444444444444444444",
+    };
+    const db = new ReplayStateDb([
+      rows.latest,
+      ...rows.bitmapChunks,
+      mismatchedTickChunk,
+    ]);
+
+    await expect(
+      batchGetLatestClReplayStates({
+        db,
+        tableName: "PoolState",
+        pools: [pool],
+      }),
+    ).resolves.toEqual([]);
+  });
+
+  test("rejects malformed CL replay fee, bitmap, and tick liquidity values", async () => {
+    const pool = clReplayPool();
+    const rows = clReplayStateRowsFromSnapshot({
+      pool,
+      sqrtPriceX96: 2n ** 96n,
+      tick: 199_900,
+      liquidity: 1_000n,
+      fee: 100n,
+      observedThroughBlock: 321,
+      blockHash:
+        "0x1111111111111111111111111111111111111111111111111111111111111111",
+      parentHash:
+        "0x2222222222222222222222222222222222222222222222222222222222222222",
+      snapshotId: "unit-snapshot-321",
+      stateHash:
+        "0x3333333333333333333333333333333333333333333333333333333333333333",
+      sourceRegistryId: "unit-registry",
+      updatedAt: "2026-05-20T00:00:00.000Z",
+      bitmapWords: [{ wordPosition: 7, bitmap: 1n }],
+      initializedTicks: [
+        { tick: 199_900, liquidityGross: 25n, liquidityNet: 15n },
+      ],
+      bitmapChunkSize: 1,
+      tickChunkSize: 1,
+    });
+
+    await expect(
+      batchGetLatestClReplayStates({
+        db: new ReplayStateDb([
+          { ...rows.latest, fee: "0100" },
+          ...rows.bitmapChunks,
+          ...rows.tickChunks,
+        ]),
+        tableName: "PoolState",
+        pools: [pool],
+      }),
+    ).rejects.toThrow(/Invalid latest CL replay-state DynamoDB item/);
+    await expect(
+      batchGetLatestClReplayStates({
+        db: new ReplayStateDb([
+          rows.latest,
+          {
+            ...rows.bitmapChunks[0],
+            bitmapWords: [{ wordPosition: 7, bitmap: "0x1" }],
+          },
+          ...rows.tickChunks,
+        ]),
+        tableName: "PoolState",
+        pools: [pool],
+      }),
+    ).rejects.toThrow(/Invalid CL replay bitmap chunk DynamoDB item/);
+    await expect(
+      batchGetLatestClReplayStates({
+        db: new ReplayStateDb([
+          rows.latest,
+          ...rows.bitmapChunks,
+          {
+            ...rows.tickChunks[0],
+            initializedTicks: [
+              { tick: 199_900, liquidityGross: "25", liquidityNet: 15 },
+            ],
+          },
+        ]),
+        tableName: "PoolState",
+        pools: [pool],
+      }),
+    ).rejects.toThrow(/Invalid CL replay tick chunk DynamoDB item/);
   });
 
   test("orders event versions by block, transaction index, then log index", () => {

@@ -18,10 +18,10 @@ function registryWithFirstPool(overrides: Record<string, unknown>): unknown {
 describe("FAME swap pool-state registry", () => {
   test("loads the generated www registry with quote-model and tracked-only pools", () => {
     const quoteModelPools = famePoolStateRegistry.pools.filter(
-      (pool) => pool.capability === "quote-model"
+      (pool) => pool.capability === "quote-model",
     );
     const trackedOnlyPools = famePoolStateRegistry.pools.filter(
-      (pool) => pool.capability === "tracked-only"
+      (pool) => pool.capability === "tracked-only",
     );
 
     expect(famePoolStateRegistry.source.repo).toBe("www");
@@ -39,6 +39,7 @@ describe("FAME swap pool-state registry", () => {
       quoteModelPools.every(
         (pool) =>
           pool.stateSurface === "constant-product-reserves" &&
+          pool.replaySurface === null &&
           pool.quoteModel === "constant-product-reserves" &&
           pool.unsupportedReason === null,
       ),
@@ -100,13 +101,45 @@ describe("FAME swap pool-state registry", () => {
     expect(uniswapV4?.stateViewAddress).not.toBeNull();
   });
 
+  test("marks only slipstream-usdc-weth-100 as replay-capable", () => {
+    const replayPools = famePoolStateRegistry.pools.filter(
+      (pool) => pool.replaySurface === "cl-replay-v1",
+    );
+
+    expect(replayPools.map((pool) => pool.id)).toEqual([
+      "slipstream-usdc-weth-100",
+    ]);
+    expect(replayPools[0]?.stateSurface).toBe("cl-head-snapshot");
+    expect(replayPools[0]?.venue).toBe("aerodrome-slipstream");
+    expect(replayPools[0]?.tickSpacing).toBe(100);
+    expect(replayPools[0]?.poolAddress).toBe(
+      "0xb2cc224c1c9fee385f8ad6a55b4d94e92359dc59",
+    );
+  });
+
   test("rejects malformed generated registry rows", () => {
     const broken = registryWithFirstPool({
       poolAddress: "not-an-address",
     });
 
     expect(() => parseFamePoolStateRegistry(broken)).toThrow(
-      /poolAddress: must be an EVM address/
+      /poolAddress: must be an EVM address/,
+    );
+  });
+
+  test("requires explicit replaySurface fields in schema v3 rows", () => {
+    const [firstPool, ...remainingPools] = famePoolStateRegistry.pools;
+    if (!firstPool) throw new Error("Generated registry has no pools.");
+    const poolWithoutReplaySurface: Record<string, unknown> = { ...firstPool };
+    delete poolWithoutReplaySurface.replaySurface;
+
+    const broken = {
+      ...famePoolStateRegistry,
+      pools: [poolWithoutReplaySurface, ...remainingPools],
+    };
+
+    expect(() => parseFamePoolStateRegistry(broken)).toThrow(
+      /replaySurface: missing required field/,
     );
   });
 
@@ -119,15 +152,17 @@ describe("FAME swap pool-state registry", () => {
     });
 
     expect(() => parseFamePoolStateRegistry(broken)).toThrow(
-      /quote-model pool must have fee metadata/
+      /quote-model pool must have fee metadata/,
     );
   });
 
   test("rejects market-state rows without complete reader metadata", () => {
     const clPool = famePoolStateRegistry.pools.find(
-      (pool) => pool.capability === "market-state" && pool.venue !== "uniswap-v4",
+      (pool) =>
+        pool.capability === "market-state" && pool.venue !== "uniswap-v4",
     );
-    if (!clPool) throw new Error("Generated registry has no address-backed CL pool.");
+    if (!clPool)
+      throw new Error("Generated registry has no address-backed CL pool.");
     const broken = {
       ...famePoolStateRegistry,
       pools: [
@@ -140,6 +175,32 @@ describe("FAME swap pool-state registry", () => {
 
     expect(() => parseFamePoolStateRegistry(broken)).toThrow(
       /address-backed market-state pool must have poolAddress/,
+    );
+  });
+
+  test("rejects replay-surface rows outside the one-pool milestone", () => {
+    const replayPool = famePoolStateRegistry.pools.find(
+      (pool) => pool.id === "slipstream-usdc-weth-100",
+    );
+    const otherClPool = famePoolStateRegistry.pools.find(
+      (pool) =>
+        pool.id !== "slipstream-usdc-weth-100" &&
+        pool.capability === "market-state" &&
+        pool.venue === "aerodrome-slipstream",
+    );
+    if (!replayPool || !otherClPool) {
+      throw new Error("Generated registry missing CL replay fixtures.");
+    }
+    const broken = {
+      ...famePoolStateRegistry,
+      pools: [
+        { ...replayPool, replaySurface: null },
+        { ...otherClPool, replaySurface: "cl-replay-v1" },
+      ],
+    };
+
+    expect(() => parseFamePoolStateRegistry(broken)).toThrow(
+      /only slipstream-usdc-weth-100 can have replaySurface/,
     );
   });
 });

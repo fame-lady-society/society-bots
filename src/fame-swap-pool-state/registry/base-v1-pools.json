@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "status": "generated-reviewed-route-candidates",
   "source": {
     "repo": "www",
@@ -58,6 +58,7 @@
       "stateViewAddress": null,
       "capability": "quote-model",
       "stateSurface": "constant-product-reserves",
+      "replaySurface": null,
       "quoteModel": "constant-product-reserves",
       "unsupportedReason": null
     },
@@ -82,6 +83,7 @@
       "stateViewAddress": null,
       "capability": "tracked-only",
       "stateSurface": null,
+      "replaySurface": null,
       "quoteModel": null,
       "unsupportedReason": "native-wrap"
     },
@@ -106,6 +108,7 @@
       "stateViewAddress": null,
       "capability": "quote-model",
       "stateSurface": "constant-product-reserves",
+      "replaySurface": null,
       "quoteModel": "constant-product-reserves",
       "unsupportedReason": null
     },
@@ -130,6 +133,7 @@
       "stateViewAddress": null,
       "capability": "quote-model",
       "stateSurface": "constant-product-reserves",
+      "replaySurface": null,
       "quoteModel": "constant-product-reserves",
       "unsupportedReason": null
     },
@@ -154,6 +158,7 @@
       "stateViewAddress": null,
       "capability": "tracked-only",
       "stateSurface": null,
+      "replaySurface": null,
       "quoteModel": null,
       "unsupportedReason": "stable-pool"
     },
@@ -178,6 +183,7 @@
       "stateViewAddress": null,
       "capability": "quote-model",
       "stateSurface": "constant-product-reserves",
+      "replaySurface": null,
       "quoteModel": "constant-product-reserves",
       "unsupportedReason": null
     },
@@ -202,6 +208,7 @@
       "stateViewAddress": null,
       "capability": "quote-model",
       "stateSurface": "constant-product-reserves",
+      "replaySurface": null,
       "quoteModel": "constant-product-reserves",
       "unsupportedReason": null
     },
@@ -226,6 +233,7 @@
       "stateViewAddress": null,
       "capability": "market-state",
       "stateSurface": "cl-head-snapshot",
+      "replaySurface": null,
       "quoteModel": null,
       "unsupportedReason": null
     },
@@ -250,6 +258,7 @@
       "stateViewAddress": null,
       "capability": "market-state",
       "stateSurface": "cl-head-snapshot",
+      "replaySurface": null,
       "quoteModel": null,
       "unsupportedReason": null
     },
@@ -274,6 +283,7 @@
       "stateViewAddress": null,
       "capability": "market-state",
       "stateSurface": "cl-head-snapshot",
+      "replaySurface": "cl-replay-v1",
       "quoteModel": null,
       "unsupportedReason": null
     },
@@ -298,6 +308,7 @@
       "stateViewAddress": null,
       "capability": "market-state",
       "stateSurface": "cl-head-snapshot",
+      "replaySurface": null,
       "quoteModel": null,
       "unsupportedReason": null
     },
@@ -322,6 +333,7 @@
       "stateViewAddress": null,
       "capability": "market-state",
       "stateSurface": "cl-head-snapshot",
+      "replaySurface": null,
       "quoteModel": null,
       "unsupportedReason": null
     },
@@ -346,6 +358,7 @@
       "stateViewAddress": null,
       "capability": "quote-model",
       "stateSurface": "constant-product-reserves",
+      "replaySurface": null,
       "quoteModel": "constant-product-reserves",
       "unsupportedReason": null
     },
@@ -370,6 +383,7 @@
       "stateViewAddress": null,
       "capability": "quote-model",
       "stateSurface": "constant-product-reserves",
+      "replaySurface": null,
       "quoteModel": "constant-product-reserves",
       "unsupportedReason": null
     },
@@ -394,6 +408,7 @@
       "stateViewAddress": null,
       "capability": "market-state",
       "stateSurface": "cl-head-snapshot",
+      "replaySurface": null,
       "quoteModel": null,
       "unsupportedReason": null
     },
@@ -418,6 +433,7 @@
       "stateViewAddress": null,
       "capability": "market-state",
       "stateSurface": "cl-head-snapshot",
+      "replaySurface": null,
       "quoteModel": null,
       "unsupportedReason": null
     },
@@ -442,6 +458,7 @@
       "stateViewAddress": null,
       "capability": "market-state",
       "stateSurface": "cl-head-snapshot",
+      "replaySurface": null,
       "quoteModel": null,
       "unsupportedReason": null
     },
@@ -466,6 +483,7 @@
       "stateViewAddress": null,
       "capability": "market-state",
       "stateSurface": "cl-head-snapshot",
+      "replaySurface": null,
       "quoteModel": null,
       "unsupportedReason": null
     },
@@ -490,6 +508,7 @@
       "stateViewAddress": "0xa3c0c9b65bad0b08107aa264b0f3db444b867a71",
       "capability": "market-state",
       "stateSurface": "cl-head-snapshot",
+      "replaySurface": null,
       "quoteModel": null,
       "unsupportedReason": null
     },
@@ -514,6 +533,7 @@
       "stateViewAddress": "0xa3c0c9b65bad0b08107aa264b0f3db444b867a71",
       "capability": "market-state",
       "stateSurface": "cl-head-snapshot",
+      "replaySurface": null,
       "quoteModel": null,
       "unsupportedReason": null
     },
@@ -538,6 +558,7 @@
       "stateViewAddress": "0xa3c0c9b65bad0b08107aa264b0f3db444b867a71",
       "capability": "market-state",
       "stateSurface": "cl-head-snapshot",
+      "replaySurface": null,
       "quoteModel": null,
       "unsupportedReason": null
     }

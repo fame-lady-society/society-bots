@@ -5,8 +5,9 @@ This repo now owns the `society-bots` side of the FAME pool-state read model use
 ## Cross-Repo Contract
 
 - `www` remains authoritative for reviewed pool metadata, route candidates, venue capability, and quote parity.
-- `society-bots` consumes a generated registry artifact from `www` and indexes current Base reserve state for quote-model-capable pools plus CL head snapshots for reviewed CL pools in that artifact.
+- `society-bots` consumes a generated registry artifact from `www` and indexes current Base reserve state for quote-model-capable pools, CL head snapshots for reviewed CL pools, and one complete `cl-replay-v1` snapshot for `slipstream-usdc-weth-100`.
 - `www` calls the authenticated `society-bots` API from server-side quote paths. If indexed state is stale, unknown, unsupported, malformed, or not a quote model the caller can replay, `www` falls back to its existing live quote adapter.
+- `society-bots` exposes raw replay primitives only. `www` owns Slipstream exact-input math, same-block live-quoter parity, route attribution, shadow mode, and any later promotion from live fallback to local CL quotes.
 
 Primary `www` references:
 
@@ -40,10 +41,13 @@ The `society-bots` implementation adds a new `src/fame-swap-pool-state` module p
 - An authenticated HTTP API route, `POST /fame/pool-state`, for bounded batch latest-state reads, protected by both API Gateway Lambda authorizer and API Lambda token checks.
 - Structured indexer/API logs for freshness, status counts, registry id, and block coverage.
 - Passive operational health signals: SQS-backed async failure destinations plus no-action CloudWatch alarms for indexer Lambda errors, indexer Lambda throttles, missed invocations, and failure queue depth.
+- A replay snapshot lane for `slipstream-usdc-weth-100`: slot0, current liquidity, dynamic fee, full initialized tick bitmap words, initialized tick liquidity records, block identity, chunk counts, and state hash.
 
 The indexed quote-model pool set covers Uniswap V2 constant-product pools plus volatile Solidly/Equalizer and volatile Aerodrome V2 pools. Stable pools, native wrapping, pools missing reviewed CL metadata, and unknown invariants stay visible as tracked-only or unsupported.
 
 Slipstream, Slipstream2, Uniswap V3, and Uniswap V4 pools with reviewed metadata now have complete CL head snapshots: identity, fee metadata, tick spacing, state-view address where relevant, `sqrtPriceX96`, current tick, active liquidity, source, registry provenance, and `observedThroughBlock`. These rows are not local CL replay authority, do not carry tick-boundary warnings, and must not make `www` skip live reads for CL quote math.
+
+`slipstream-usdc-weth-100` is the sole exception for replay state. It can publish a complete `cl-replay-v1` capsule, but the capsule is still indexed market-state evidence, not quote authority. `www` must reject stale, future-block, incomplete, malformed, mismatched-registry, mismatched-token-order, outside-range, replay-failed, or parity-failed state and serve the live quoter result while shadow mode is active.
 
 ## Final Review Notes
 
@@ -157,6 +161,9 @@ The scheduled indexer failure destination and passive alarms are intended for in
 - Unknown Sync logs are treated as fatal before cursor advancement.
 - API freshness fails safe: if an indexed row is somehow observed through a block greater than the caller's `currentBlock`, the response is `stale`.
 - CL head snapshots are complete head-state rows, but they intentionally stop before boundary-window indexing, tick bitmap reads, or local CL quote replay. Fallback remains a normal client decision based on state kind, freshness, helper availability, and parser validity rather than a boundary warning bit.
+- `cl-replay-v1` snapshots are latest-pointer plus chunk rows. The indexer writes chunks before publishing the pointer, and the API only returns replay state when every expected bitmap/tick chunk matches snapshot id, block identity, source registry id, and state hash.
+- The replay snapshot intentionally uses periodic safe-block full scans first. Event-driven tick maintenance is deferred until this one-pool full-state proof has exact same-block parity against the live Slipstream quoter.
+- Replay state includes the pool's dynamic `fee()` value at the snapshot block. Registry fee labels are not enough for local Slipstream replay.
 - API requests accept exactly one key shape per pool: `{ poolId }` or `{ chainId, poolAddress }`. Mixed key shapes are rejected.
 - API transport errors and malformed indexed quote responses are expected to make `www` fall back to live reads, not to produce a best-effort quote from bad state.
 - DynamoDB `UnprocessedKeys` are treated as incomplete helper reads, not as missing pool state.
@@ -182,6 +189,7 @@ Run from `www` when proving consumption:
 ```sh
 bun test src/features/fame-swap/solver/poolStateRegistry.test.ts src/features/fame-swap/solver/quotes/indexedPoolStateClient.test.ts src/features/fame-swap/solver/quotes/indexedReserveAdapter.test.ts src/features/fame-swap/solver/quotes/rankRoutes.test.ts src/features/fame-swap/solver/quoteWire.test.ts src/app/api/fame/swap/quote/route.test.ts scripts/fame-swap-route-lab.test.ts
 BASE_RPC_URL=<rpc> FAME_POOL_STATE_API_URL=<url> FAME_POOL_STATE_SERVICE_TOKEN=<token> bun scripts/fame-swap-route-lab.ts --indexed
+BASE_RPC_URL=<rpc> FAME_POOL_STATE_API_URL=<url> FAME_POOL_STATE_SERVICE_TOKEN=<token> bun scripts/fame-swap-cl-replay-parity.ts
 ```
 
 Attach durable release evidence before enabling `www` production helper env:
@@ -189,6 +197,7 @@ Attach durable release evidence before enabling `www` production helper env:
 - Smoke: authenticated helper call, valid response shape, at least one `fresh` quote-model pool, and returned `observedThroughBlock`.
 - Soak: at least five scheduled indexer intervals with recent success logs, non-regressing `observedThroughBlock`, no unexpected errors/throttles, and failure queue depth `0`.
 - Route lab: indexed success plus fallback-relevant stale, unknown, unsupported, malformed, and unavailable-helper cases.
+- CL replay parity: exact same-block local-vs-live `amountOut` equality for representative WETH -> USDC and USDC -> WETH amounts, with snapshot id, block, state hash, bitmap word count, and initialized tick count attached.
 - Evidence location: PR comment, checklist section, or linked artifact that reviewers can inspect without reconstructing the process from chat.
 
 ## Durable Follow-Ups
@@ -196,10 +205,11 @@ Attach durable release evidence before enabling `www` production helper env:
 - Fix PR cleanup so `BotCert-PR-<number>` is deleted in `us-east-1`, and stop swallowing unexpected CloudFormation delete/wait failures with blanket `|| true`.
 - Make malformed V4 registry rows impossible or explicitly rejected when they contain both `poolAddress` and `poolKey`; V4 CL head state should remain pool-key keyed instead of address keyed.
 - Parallelize the independent reserve-state and CL head-state DynamoDB `BatchGet` calls if helper latency from CL opt-in becomes material.
+- Use the first full replay capsule to decide whether event-driven tick maintenance, bounded tick windows, or hybrid safe-block snapshot plus event replay is worth the complexity.
 
 ## Next Safe Extensions
 
 - Add SPX/FAME and cbBTC/FAME only after the authoritative `www` route metadata includes those pools.
 - Add stricter freshness or faster ingestion only after scheduled indexing proves useful in route-lab evidence.
-- Add stable or concentrated-liquidity local replay only after `www` owns the math and parity tests.
-- Extend CL indexing toward tick windows or boundary-adjacent quote assistance only after the current complete head snapshot surface proves useful.
+- Add stable or additional concentrated-liquidity local replay only after `www` proves the one-pool Slipstream math and parity harness.
+- Extend CL indexing toward tick windows, event-driven updates, or boundary-adjacent quote assistance only after the current complete replay snapshot surface proves useful.

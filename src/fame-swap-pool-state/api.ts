@@ -1,10 +1,15 @@
 import { isAddress, type Address, type Hex } from "viem";
 import {
+  batchGetClReplayStateCapsules,
+  batchGetLatestClReplayPointers,
   batchGetLatestClHeadStates,
   batchGetLatestPoolStates,
   sourceRegistryIdFor,
   type FameClHeadLatestState,
   type FameClHeadSnapshotRegistryEntry,
+  type FameClReplayRegistryEntry,
+  type FameClReplayStateCapsule,
+  type FameClReplayLatestState,
   type FamePoolLatestState,
   type PoolStateDocumentClient,
 } from "./dynamodb/pool-state.ts";
@@ -17,7 +22,9 @@ import type {
 } from "./types.ts";
 
 export type FamePoolStateStatus = "fresh" | "stale" | "unknown" | "unsupported";
-export type FamePoolStateRequestStateSurface = "cl-head-snapshot";
+export type FamePoolStateRequestStateSurface =
+  | "cl-head-snapshot"
+  | "cl-replay-v1";
 
 export type FamePoolStateRequestKey =
   | {
@@ -36,6 +43,55 @@ export interface FamePoolStateBatchRequest {
   maxFreshnessBlocks?: number;
   stateSurfaces?: FamePoolStateRequestStateSurface[];
   pools: FamePoolStateRequestKey[];
+}
+
+interface FameClReplayResponseBase {
+  stateKind: "cl-replay-v1";
+  poolId: string;
+  chainId: number;
+  poolAddress: Address;
+  token0: Address;
+  token1: Address;
+  venueFamily: FamePoolStateVenueFamily;
+  tickSpacing: number;
+  sqrtPriceX96: string;
+  tick: number;
+  liquidity: string;
+  fee: string;
+  feeSource: "pool-fee";
+  observedThroughBlock: number;
+  blockHash: Hex;
+  parentHash: Hex;
+  snapshotId: string;
+  stateHash: Hex;
+  source: "slipstream-pool-state";
+  sourceRegistryId: string;
+  maxFreshnessBlocks: number;
+  bitmapWordCount: number;
+  initializedTickCount: number;
+  bitmapChunkCount: number;
+  tickChunkCount: number;
+  minWordPosition: number | null;
+  maxWordPosition: number | null;
+  minTick: number | null;
+  maxTick: number | null;
+}
+
+interface FameClReplayFreshResponseEntry extends FameClReplayResponseBase {
+  status: "fresh";
+  bitmapWords: {
+    wordPosition: number;
+    bitmap: Hex;
+  }[];
+  initializedTicks: {
+    tick: number;
+    liquidityGross: string;
+    liquidityNet: string;
+  }[];
+}
+
+interface FameClReplayStaleResponseEntry extends FameClReplayResponseBase {
+  status: "stale";
 }
 
 export type FamePoolStateResponseEntry =
@@ -77,6 +133,8 @@ export type FamePoolStateResponseEntry =
       sourceRegistryId: string;
       maxFreshnessBlocks: number;
     }
+  | FameClReplayFreshResponseEntry
+  | FameClReplayStaleResponseEntry
   | {
       status: Extract<FamePoolStateStatus, "unsupported">;
       poolId: string;
@@ -100,6 +158,7 @@ export interface FamePoolStateBatchResponse {
 
 type QuoteModelPool = FamePoolStateRegistryEntry & { poolAddress: Address };
 type ClHeadPool = FameClHeadSnapshotRegistryEntry;
+type ClReplayPool = FameClReplayRegistryEntry;
 
 export class FamePoolStateRequestError extends Error {
   constructor(message: string) {
@@ -204,8 +263,11 @@ function parseStateSurfaces(
   }
   return value.map((item, index) => {
     const parsed = parseString(item, `${path}[${index.toString()}]`);
-    if (parsed !== "cl-head-snapshot") {
-      apiError(`${path}[${index.toString()}]`, "expected cl-head-snapshot");
+    if (parsed !== "cl-head-snapshot" && parsed !== "cl-replay-v1") {
+      apiError(
+        `${path}[${index.toString()}]`,
+        "expected cl-head-snapshot or cl-replay-v1",
+      );
     }
     return parsed;
   });
@@ -238,10 +300,7 @@ export function parseFamePoolStateBatchRequest(
     ...(stateSurfaces === undefined
       ? {}
       : {
-          stateSurfaces: parseStateSurfaces(
-            stateSurfaces,
-            "$.stateSurfaces",
-          ),
+          stateSurfaces: parseStateSurfaces(stateSurfaces, "$.stateSurfaces"),
         }),
     pools: poolsValue.map((pool, index) =>
       parsePoolKey(pool, `$.pools[${index}]`),
@@ -287,6 +346,18 @@ function isQuoteModelPool(
 
 function isClHeadPool(pool: FamePoolStateRegistryEntry): pool is ClHeadPool {
   return pool.stateSurface === "cl-head-snapshot" && pool.tickSpacing !== null;
+}
+
+function isClReplayPool(
+  pool: FamePoolStateRegistryEntry,
+): pool is ClReplayPool {
+  return (
+    pool.replaySurface === "cl-replay-v1" &&
+    pool.stateSurface === "cl-head-snapshot" &&
+    pool.tickSpacing !== null &&
+    pool.poolAddress !== null &&
+    pool.venue === "aerodrome-slipstream"
+  );
 }
 
 function freshnessStatus(options: {
@@ -341,11 +412,90 @@ function clHeadStateMatchesRegistry({
   );
 }
 
+function clReplayLatestStateMatchesRegistry({
+  latest,
+  entry,
+  sourceRegistryId,
+}: {
+  latest: FameClReplayLatestState;
+  entry: ClReplayPool;
+  sourceRegistryId: string;
+}): boolean {
+  return (
+    latest.sourceRegistryId === sourceRegistryId &&
+    latest.poolId === entry.id &&
+    latest.chainId === entry.chainId &&
+    latest.poolAddress.toLowerCase() === entry.poolAddress.toLowerCase() &&
+    latest.token0.toLowerCase() === entry.token0.toLowerCase() &&
+    latest.token1.toLowerCase() === entry.token1.toLowerCase() &&
+    latest.venueFamily === entry.venueFamily &&
+    latest.tickSpacing === entry.tickSpacing
+  );
+}
+
+function clReplayStateMatchesRegistry({
+  state,
+  entry,
+  sourceRegistryId,
+}: {
+  state: FameClReplayStateCapsule;
+  entry: ClReplayPool;
+  sourceRegistryId: string;
+}): boolean {
+  const latest = state.latest;
+  return (
+    clReplayLatestStateMatchesRegistry({ latest, entry, sourceRegistryId }) &&
+    latest.bitmapWordCount === state.bitmapWords.length &&
+    latest.initializedTickCount === state.initializedTicks.length
+  );
+}
+
+function clReplayResponseBase({
+  latest,
+  maxFreshnessBlocks,
+}: {
+  latest: FameClReplayLatestState;
+  maxFreshnessBlocks: number;
+}): FameClReplayResponseBase {
+  return {
+    stateKind: "cl-replay-v1",
+    poolId: latest.poolId,
+    chainId: latest.chainId,
+    poolAddress: latest.poolAddress,
+    token0: latest.token0,
+    token1: latest.token1,
+    venueFamily: latest.venueFamily,
+    tickSpacing: latest.tickSpacing,
+    sqrtPriceX96: latest.sqrtPriceX96,
+    tick: latest.tick,
+    liquidity: latest.liquidity,
+    fee: latest.fee,
+    feeSource: latest.feeSource,
+    observedThroughBlock: latest.observedThroughBlock,
+    blockHash: latest.blockHash,
+    parentHash: latest.parentHash,
+    snapshotId: latest.snapshotId,
+    stateHash: latest.stateHash,
+    source: latest.source,
+    sourceRegistryId: latest.sourceRegistryId,
+    maxFreshnessBlocks,
+    bitmapWordCount: latest.bitmapWordCount,
+    initializedTickCount: latest.initializedTickCount,
+    bitmapChunkCount: latest.bitmapChunkCount,
+    tickChunkCount: latest.tickChunkCount,
+    minWordPosition: latest.minWordPosition,
+    maxWordPosition: latest.maxWordPosition,
+    minTick: latest.minTick,
+    maxTick: latest.maxTick,
+  };
+}
+
 function unsupportedReasonForEntry(
   entry: FamePoolStateRegistryEntry,
 ): FamePoolStateUnsupportedReason {
   if (entry.unsupportedReason) return entry.unsupportedReason;
-  if (entry.stateSurface === "cl-head-snapshot") return "concentrated-liquidity";
+  if (entry.stateSurface === "cl-head-snapshot")
+    return "concentrated-liquidity";
   return "unsupported-venue";
 }
 
@@ -373,9 +523,12 @@ export async function handleFamePoolStateBatchRequest({
     parsed.maxFreshnessBlocks ?? producerMaxFreshnessBlocks,
     producerMaxFreshnessBlocks,
   );
+  const sourceRegistryId = sourceRegistryIdFor(registry.source);
   const maps = registryMaps(registry);
   const includeClHeadSnapshots =
     parsed.stateSurfaces?.includes("cl-head-snapshot") ?? false;
+  const includeClReplay =
+    parsed.stateSurfaces?.includes("cl-replay-v1") ?? false;
   const entries = parsed.pools.map((pool) => ({
     request: pool,
     entry: registryEntryFor(pool, maps),
@@ -400,6 +553,17 @@ export async function handleFamePoolStateBatchRequest({
           .map((entry) => [entry.id, entry])
       : [],
   );
+  const clReplayPoolsById = new Map(
+    includeClReplay
+      ? entries
+          .map(({ entry }) => entry)
+          .filter(
+            (entry): entry is ClReplayPool =>
+              entry !== undefined && isClReplayPool(entry),
+          )
+          .map((entry) => [entry.id, entry])
+      : [],
+  );
   const states = await batchGetLatestPoolStates({
     db,
     tableName,
@@ -410,6 +574,28 @@ export async function handleFamePoolStateBatchRequest({
     tableName,
     pools: [...clHeadPoolsById.values()],
   });
+  const clReplayLatestStates = await batchGetLatestClReplayPointers({
+    db,
+    tableName,
+    pools: [...clReplayPoolsById.values()],
+  });
+  const freshClReplayLatestStates = clReplayLatestStates.filter((latest) => {
+    const entry = clReplayPoolsById.get(latest.poolId);
+    return (
+      entry !== undefined &&
+      clReplayLatestStateMatchesRegistry({ latest, entry, sourceRegistryId }) &&
+      freshnessStatus({
+        state: latest,
+        currentBlock: parsed.currentBlock,
+        maxFreshnessBlocks: effectiveMaxFreshnessBlocks,
+      }) === "fresh"
+    );
+  });
+  const clReplayStates = await batchGetClReplayStateCapsules({
+    db,
+    tableName,
+    latestStates: freshClReplayLatestStates,
+  });
   const statesByAddress = new Map(
     states.map((state) => [
       addressStateKey(state.chainId, state.poolAddress),
@@ -419,8 +605,12 @@ export async function handleFamePoolStateBatchRequest({
   const clHeadStatesByPoolId = new Map(
     clHeadStates.map((state) => [state.poolId, state]),
   );
-
-  const sourceRegistryId = sourceRegistryIdFor(registry.source);
+  const clReplayStatesByPoolId = new Map(
+    clReplayStates.map((state) => [state.latest.poolId, state]),
+  );
+  const clReplayLatestStatesByPoolId = new Map(
+    clReplayLatestStates.map((state) => [state.poolId, state]),
+  );
 
   return {
     sourceRegistryId,
@@ -433,6 +623,59 @@ export async function handleFamePoolStateBatchRequest({
           status: "unknown",
           requested,
           reason: "missing-registry-entry",
+        };
+      }
+      if (includeClReplay && isClReplayPool(entry)) {
+        const latest = clReplayLatestStatesByPoolId.get(entry.id);
+        if (
+          !latest ||
+          !clReplayLatestStateMatchesRegistry({
+            latest,
+            entry,
+            sourceRegistryId,
+          })
+        ) {
+          return {
+            status: "unknown",
+            requested,
+            reason: "missing-indexed-state",
+          };
+        }
+        const status = freshnessStatus({
+          state: latest,
+          currentBlock: parsed.currentBlock,
+          maxFreshnessBlocks: effectiveMaxFreshnessBlocks,
+        });
+
+        const baseReplayResponse = clReplayResponseBase({
+          latest,
+          maxFreshnessBlocks: effectiveMaxFreshnessBlocks,
+        });
+
+        if (status === "stale") {
+          return {
+            status,
+            ...baseReplayResponse,
+          };
+        }
+
+        const state = clReplayStatesByPoolId.get(entry.id);
+        if (
+          !state ||
+          !clReplayStateMatchesRegistry({ state, entry, sourceRegistryId })
+        ) {
+          return {
+            status: "unknown",
+            requested,
+            reason: "missing-indexed-state",
+          };
+        }
+
+        return {
+          status,
+          ...baseReplayResponse,
+          bitmapWords: state.bitmapWords,
+          initializedTicks: state.initializedTicks,
         };
       }
       if (includeClHeadSnapshots && isClHeadPool(entry)) {

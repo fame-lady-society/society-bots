@@ -212,4 +212,5 @@ $RECYCLE.BIN/
 node_modules
 .layers
 .aws-sam
-.env
+.env.worktrees
+.worktrees
