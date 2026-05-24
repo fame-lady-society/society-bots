@@ -23,7 +23,7 @@ function eventFixture({
 }: {
   body?: string;
   headers?: Record<string, string | undefined>;
-  path?: "/fame/pool-state" | "/fame/pool-quotes";
+  path?: string;
 }): APIGatewayProxyEventV2 {
   const routeKey = `POST ${path}`;
   return {
@@ -344,6 +344,51 @@ describe("FAME pool-state API Lambda transport", () => {
       );
     } finally {
       successLog.mockRestore();
+    }
+  });
+
+  test("rejects unknown routes without dispatching to pool-state handling", async () => {
+    const warnLog = jest.spyOn(console, "warn").mockImplementation(() => {
+      return undefined;
+    });
+    let stateCalled = false;
+    let quoteCalled = false;
+
+    try {
+      const response = await requestHandler(
+        async () => {
+          stateCalled = true;
+          throw new Error("should not call state handler");
+        },
+        eventFixture({
+          path: "/fame/not-a-route",
+          body: JSON.stringify({
+            currentBlock: 125,
+            pools: [],
+          }),
+        }),
+        async () => {
+          quoteCalled = true;
+          throw new Error("should not call quote handler");
+        },
+      );
+
+      expect(structuredResponse(response).statusCode).toBe(400);
+      expect(jsonBody(response)).toMatchObject({
+        error: "invalid-request",
+        message: expect.stringContaining("/fame/not-a-route"),
+      });
+      expect(stateCalled).toBe(false);
+      expect(quoteCalled).toBe(false);
+      expect(warnLog).toHaveBeenCalledTimes(1);
+      expect(parseLogLine(warnLog.mock.calls[0]?.[0])).toMatchObject({
+        level: "warn",
+        event: "fame-pool-state-api-error",
+        errorType: "invalid-request",
+        message: expect.stringContaining("routeKind"),
+      });
+    } finally {
+      warnLog.mockRestore();
     }
   });
 

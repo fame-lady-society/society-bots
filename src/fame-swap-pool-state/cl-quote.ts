@@ -3,14 +3,17 @@ import { FamePoolStateRequestError } from "./api.ts";
 import {
   batchGetClReplayStateCapsules,
   batchGetLatestClReplayPointers,
+  batchGetLatestPoolStates,
   sourceRegistryIdFor,
   type FameClReplayLatestState,
   type FameClReplayRegistryEntry,
   type FameClReplayStateCapsule,
+  type FamePoolLatestState,
   type PoolStateDocumentClient,
 } from "./dynamodb/pool-state.ts";
 import { famePoolStateRegistry } from "./registry/index.ts";
 import type {
+  FamePoolStateFeeDescriptor,
   FamePoolStateRegistryEntry,
   FamePoolStateRegistryFile,
   FamePoolStateVenueFamily,
@@ -36,6 +39,8 @@ export type FamePoolQuoteUnavailableReason =
   | "stale-indexed-state"
   | "source-registry-mismatch"
   | "token-direction-mismatch"
+  | "malformed-reserve-state"
+  | "reserve-quote-failed"
   | "malformed-replay-state"
   | "outside-indexed-tick-range"
   | "replay-failed";
@@ -82,8 +87,58 @@ interface FameSlipstreamClQuoteEntry {
   maxFreshnessBlocks: number;
 }
 
+interface FamePriceImpactEstimate {
+  preSwapPriceX18: string;
+  postSwapPriceX18: string;
+  executionPriceX18: string;
+  marketImpactBps: number | null;
+  method: "constant-product-reserves";
+}
+
+interface FameProtocolEvidenceItem {
+  status: "available" | "unavailable" | "not_applicable";
+  source: string;
+  value?: string;
+  reason?: string;
+}
+
+interface FameProtocolEvidence {
+  quote: FameProtocolEvidenceItem;
+  prePrice: FameProtocolEvidenceItem;
+  postPrice: FameProtocolEvidenceItem;
+  marketImpact: FameProtocolEvidenceItem;
+  activeLiquidity: FameProtocolEvidenceItem;
+}
+
+interface FameConstantProductQuoteEntry {
+  status: "quoted";
+  quoteKind: "constant-product-quote-v1";
+  quoteModel: "constant-product-reserves";
+  quoteModelVersion: 1;
+  poolId: string;
+  chainId: number;
+  poolAddress: Address;
+  token0: Address;
+  token1: Address;
+  tokenIn: Address;
+  tokenOut: Address;
+  venueFamily: FamePoolStateVenueFamily;
+  feeBps: number;
+  feeSource: "registry-fee";
+  source: "reserve-pool-state";
+  stateSource: FamePoolLatestState["source"];
+  amountIn: string;
+  amountOut: string;
+  observedThroughBlock: number;
+  sourceRegistryId: string;
+  maxFreshnessBlocks: number;
+  priceImpact: FamePriceImpactEstimate;
+  protocolEvidence: FameProtocolEvidence;
+}
+
 export type FamePoolQuoteResponseEntry =
   | FameSlipstreamClQuoteEntry
+  | FameConstantProductQuoteEntry
   | FamePoolQuoteUnavailableEntry;
 
 export interface FamePoolQuoteBatchResponse {
@@ -100,6 +155,13 @@ interface ReplayTick {
   liquidityNet: bigint;
 }
 
+type ReserveQuotePool = FamePoolStateRegistryEntry & {
+  capability: "quote-model";
+  stateSurface: "constant-product-reserves";
+  quoteModel: "constant-product-reserves";
+  poolAddress: Address;
+  fee: Extract<FamePoolStateFeeDescriptor, { status: "available" }>;
+};
 type ClReplayPool = FameClReplayRegistryEntry;
 type ReplayFailureReason = Extract<
   FamePoolQuoteUnavailableReason,
@@ -113,6 +175,8 @@ const MAX_SQRT_RATIO =
   1_461_446_703_485_210_103_287_273_052_203_988_822_378_723_970_342n;
 const Q96 = 2n ** 96n;
 const FEE_DENOMINATOR = 1_000_000n;
+const RESERVE_FEE_DENOMINATOR = 10_000n;
+const PRICE_SCALE = 1_000_000_000_000_000_000n;
 const MAX_UINT256 = 2n ** 256n - 1n;
 const MAX_UINT256_DECIMAL_LENGTH = MAX_UINT256.toString().length;
 
@@ -179,7 +243,10 @@ function parseQuoteRequest(value: unknown, path: string): FamePoolQuoteRequest {
       ["poolId", "tokenIn", "tokenOut", "amountIn"].includes(key),
     )
   ) {
-    quoteApiError(path, "expected only poolId, tokenIn, tokenOut, and amountIn");
+    quoteApiError(
+      path,
+      "expected only poolId, tokenIn, tokenOut, and amountIn",
+    );
   }
   return {
     poolId: parseString(optionalField(record, "poolId"), `${path}.poolId`),
@@ -205,14 +272,20 @@ export function parseFamePoolQuoteBatchRequest(
       ["currentBlock", "maxFreshnessBlocks", "quotes"].includes(key),
     )
   ) {
-    quoteApiError("$", "expected only currentBlock, maxFreshnessBlocks, and quotes");
+    quoteApiError(
+      "$",
+      "expected only currentBlock, maxFreshnessBlocks, and quotes",
+    );
   }
   const quotesValue = optionalField(record, "quotes");
   if (!Array.isArray(quotesValue)) {
     quoteApiError("$.quotes", "expected an array");
   }
   if (quotesValue.length > maxBatchSize) {
-    quoteApiError("$.quotes", `expected at most ${maxBatchSize.toString()} quotes`);
+    quoteApiError(
+      "$.quotes",
+      `expected at most ${maxBatchSize.toString()} quotes`,
+    );
   }
 
   const maxFreshnessBlocks = optionalField(record, "maxFreshnessBlocks");
@@ -251,8 +324,24 @@ function isClReplayPool(
   );
 }
 
+function isReserveQuotePool(
+  pool: FamePoolStateRegistryEntry,
+): pool is ReserveQuotePool {
+  return (
+    pool.capability === "quote-model" &&
+    pool.stateSurface === "constant-product-reserves" &&
+    pool.quoteModel === "constant-product-reserves" &&
+    pool.poolAddress !== null &&
+    pool.fee.status === "available"
+  );
+}
+
 function sameAddress(left: Address, right: Address): boolean {
   return left.toLowerCase() === right.toLowerCase();
+}
+
+function addressStateKey(chainId: number, poolAddress: Address): string {
+  return `${chainId.toString()}:${poolAddress.toLowerCase()}`;
 }
 
 function freshnessStatus(options: {
@@ -307,6 +396,25 @@ function clReplayStateMatchesRegistry({
   );
 }
 
+function reserveStateMatchesRegistry({
+  state,
+  entry,
+  sourceRegistryId,
+}: {
+  state: FamePoolLatestState;
+  entry: ReserveQuotePool;
+  sourceRegistryId: string;
+}): boolean {
+  return (
+    state.sourceRegistryId === sourceRegistryId &&
+    state.poolId === entry.id &&
+    state.chainId === entry.chainId &&
+    sameAddress(state.poolAddress, entry.poolAddress) &&
+    sameAddress(state.token0, entry.token0) &&
+    sameAddress(state.token1, entry.token1)
+  );
+}
+
 function parseUnsignedDecimal(value: string): bigint | null {
   if (!/^(0|[1-9][0-9]*)$/.test(value)) return null;
   return BigInt(value);
@@ -339,29 +447,46 @@ function getSqrtRatioAtTick(tick: number): bigint {
     (absTick & 0x1) !== 0
       ? 0xfffcb933bd6fad37aa2d162d1a594001n
       : 0x100000000000000000000000000000000n;
-  if ((absTick & 0x2) !== 0) ratio = (ratio * 0xfff97272373d413259a46990580e213an) >> 128n;
-  if ((absTick & 0x4) !== 0) ratio = (ratio * 0xfff2e50f5f656932ef12357cf3c7fdccn) >> 128n;
-  if ((absTick & 0x8) !== 0) ratio = (ratio * 0xffe5caca7e10e4e61c3624eaa0941cd0n) >> 128n;
-  if ((absTick & 0x10) !== 0) ratio = (ratio * 0xffcb9843d60f6159c9db58835c926644n) >> 128n;
-  if ((absTick & 0x20) !== 0) ratio = (ratio * 0xff973b41fa98c081472e6896dfb254c0n) >> 128n;
-  if ((absTick & 0x40) !== 0) ratio = (ratio * 0xff2ea16466c96a3843ec78b326b52861n) >> 128n;
-  if ((absTick & 0x80) !== 0) ratio = (ratio * 0xfe5dee046a99a2a811c461f1969c3053n) >> 128n;
-  if ((absTick & 0x100) !== 0) ratio = (ratio * 0xfcbe86c7900a88aedcffc83b479aa3a4n) >> 128n;
-  if ((absTick & 0x200) !== 0) ratio = (ratio * 0xf987a7253ac413176f2b074cf7815e54n) >> 128n;
-  if ((absTick & 0x400) !== 0) ratio = (ratio * 0xf3392b0822b70005940c7a398e4b70f3n) >> 128n;
-  if ((absTick & 0x800) !== 0) ratio = (ratio * 0xe7159475a2c29b7443b29c7fa6e889d9n) >> 128n;
-  if ((absTick & 0x1000) !== 0) ratio = (ratio * 0xd097f3bdfd2022b8845ad8f792aa5825n) >> 128n;
-  if ((absTick & 0x2000) !== 0) ratio = (ratio * 0xa9f746462d870fdf8a65dc1f90e061e5n) >> 128n;
-  if ((absTick & 0x4000) !== 0) ratio = (ratio * 0x70d869a156d2a1b890bb3df62baf32f7n) >> 128n;
-  if ((absTick & 0x8000) !== 0) ratio = (ratio * 0x31be135f97d08fd981231505542fcfa6n) >> 128n;
-  if ((absTick & 0x10000) !== 0) ratio = (ratio * 0x9aa508b5b7a84e1c677de54f3e99bc9n) >> 128n;
-  if ((absTick & 0x20000) !== 0) ratio = (ratio * 0x5d6af8dedb81196699c329225ee604n) >> 128n;
-  if ((absTick & 0x40000) !== 0) ratio = (ratio * 0x2216e584f5fa1ea926041bedfe98n) >> 128n;
-  if ((absTick & 0x80000) !== 0) ratio = (ratio * 0x48a170391f7dc42444e8fa2n) >> 128n;
+  if ((absTick & 0x2) !== 0)
+    ratio = (ratio * 0xfff97272373d413259a46990580e213an) >> 128n;
+  if ((absTick & 0x4) !== 0)
+    ratio = (ratio * 0xfff2e50f5f656932ef12357cf3c7fdccn) >> 128n;
+  if ((absTick & 0x8) !== 0)
+    ratio = (ratio * 0xffe5caca7e10e4e61c3624eaa0941cd0n) >> 128n;
+  if ((absTick & 0x10) !== 0)
+    ratio = (ratio * 0xffcb9843d60f6159c9db58835c926644n) >> 128n;
+  if ((absTick & 0x20) !== 0)
+    ratio = (ratio * 0xff973b41fa98c081472e6896dfb254c0n) >> 128n;
+  if ((absTick & 0x40) !== 0)
+    ratio = (ratio * 0xff2ea16466c96a3843ec78b326b52861n) >> 128n;
+  if ((absTick & 0x80) !== 0)
+    ratio = (ratio * 0xfe5dee046a99a2a811c461f1969c3053n) >> 128n;
+  if ((absTick & 0x100) !== 0)
+    ratio = (ratio * 0xfcbe86c7900a88aedcffc83b479aa3a4n) >> 128n;
+  if ((absTick & 0x200) !== 0)
+    ratio = (ratio * 0xf987a7253ac413176f2b074cf7815e54n) >> 128n;
+  if ((absTick & 0x400) !== 0)
+    ratio = (ratio * 0xf3392b0822b70005940c7a398e4b70f3n) >> 128n;
+  if ((absTick & 0x800) !== 0)
+    ratio = (ratio * 0xe7159475a2c29b7443b29c7fa6e889d9n) >> 128n;
+  if ((absTick & 0x1000) !== 0)
+    ratio = (ratio * 0xd097f3bdfd2022b8845ad8f792aa5825n) >> 128n;
+  if ((absTick & 0x2000) !== 0)
+    ratio = (ratio * 0xa9f746462d870fdf8a65dc1f90e061e5n) >> 128n;
+  if ((absTick & 0x4000) !== 0)
+    ratio = (ratio * 0x70d869a156d2a1b890bb3df62baf32f7n) >> 128n;
+  if ((absTick & 0x8000) !== 0)
+    ratio = (ratio * 0x31be135f97d08fd981231505542fcfa6n) >> 128n;
+  if ((absTick & 0x10000) !== 0)
+    ratio = (ratio * 0x9aa508b5b7a84e1c677de54f3e99bc9n) >> 128n;
+  if ((absTick & 0x20000) !== 0)
+    ratio = (ratio * 0x5d6af8dedb81196699c329225ee604n) >> 128n;
+  if ((absTick & 0x40000) !== 0)
+    ratio = (ratio * 0x2216e584f5fa1ea926041bedfe98n) >> 128n;
+  if ((absTick & 0x80000) !== 0)
+    ratio = (ratio * 0x48a170391f7dc42444e8fa2n) >> 128n;
   if (tick > 0) ratio = MAX_UINT256 / ratio;
-  return ratio % (2n ** 32n) === 0n
-    ? ratio >> 32n
-    : (ratio >> 32n) + 1n;
+  return ratio % 2n ** 32n === 0n ? ratio >> 32n : (ratio >> 32n) + 1n;
 }
 
 function amount0Delta(
@@ -380,7 +505,7 @@ function amount0Delta(
       lower,
     );
   }
-  return ((numerator1 * numerator2) / upper) / lower;
+  return (numerator1 * numerator2) / upper / lower;
 }
 
 function amount1Delta(
@@ -456,7 +581,12 @@ function computeSwapStep(options: {
     ? amountInAtTarget
     : options.zeroForOne
       ? amount0Delta(sqrtNextX96, options.sqrtPriceX96, options.liquidity, true)
-      : amount1Delta(options.sqrtPriceX96, sqrtNextX96, options.liquidity, true);
+      : amount1Delta(
+          options.sqrtPriceX96,
+          sqrtNextX96,
+          options.liquidity,
+          true,
+        );
   const amountOut = options.zeroForOne
     ? amount1Delta(sqrtNextX96, options.sqrtPriceX96, options.liquidity, false)
     : amount0Delta(options.sqrtPriceX96, sqrtNextX96, options.liquidity, false);
@@ -534,7 +664,8 @@ function replaySlipstreamExactInput(options: {
   while (amountRemaining > 0n) {
     if (liquidity <= 0n) return "outside-indexed-tick-range";
     const nextTick = nextInitializedTick(ticks, tick, options.zeroForOne);
-    const targetTick = nextTick?.tick ?? (options.zeroForOne ? MIN_TICK : MAX_TICK);
+    const targetTick =
+      nextTick?.tick ?? (options.zeroForOne ? MIN_TICK : MAX_TICK);
     const sqrtTarget = getSqrtRatioAtTick(targetTick);
     const step = computeSwapStep({
       sqrtPriceX96: sqrt,
@@ -584,6 +715,243 @@ function unavailable(
     requested,
     reason,
     ...metadata,
+  };
+}
+
+function constantProductAmountOut(options: {
+  amountIn: bigint;
+  reserveIn: bigint;
+  reserveOut: bigint;
+  feeBps: number;
+}): bigint | "malformed-reserve-state" {
+  if (
+    options.amountIn <= 0n ||
+    options.reserveIn <= 0n ||
+    options.reserveOut <= 0n ||
+    !Number.isSafeInteger(options.feeBps)
+  ) {
+    return "malformed-reserve-state";
+  }
+
+  const feeNumerator = RESERVE_FEE_DENOMINATOR - BigInt(options.feeBps);
+  if (feeNumerator <= 0n) return "malformed-reserve-state";
+
+  const amountInWithFee = options.amountIn * feeNumerator;
+  return (
+    (amountInWithFee * options.reserveOut) /
+    (options.reserveIn * RESERVE_FEE_DENOMINATOR + amountInWithFee)
+  );
+}
+
+function priceX18(amountOut: bigint, amountIn: bigint): bigint | null {
+  if (amountIn <= 0n || amountOut < 0n) return null;
+  return (amountOut * PRICE_SCALE) / amountIn;
+}
+
+function marketImpactBps(
+  preSwapPriceX18: bigint,
+  executionPriceX18: bigint,
+): number | null {
+  if (preSwapPriceX18 <= 0n || executionPriceX18 <= 0n) return null;
+  if (executionPriceX18 >= preSwapPriceX18) return 0;
+  return Number(
+    ((preSwapPriceX18 - executionPriceX18) * 10_000n) / preSwapPriceX18,
+  );
+}
+
+function constantProductPriceImpact(options: {
+  amountIn: bigint;
+  amountOut: bigint;
+  reserveIn: bigint;
+  reserveOut: bigint;
+}): FamePriceImpactEstimate | null {
+  const preSwapPrice = priceX18(options.reserveOut, options.reserveIn);
+  const executionPrice = priceX18(options.amountOut, options.amountIn);
+  if (preSwapPrice === null || executionPrice === null) return null;
+
+  const nextReserveIn = options.reserveIn + options.amountIn;
+  const nextReserveOut = options.reserveOut - options.amountOut;
+  const postSwapPrice =
+    nextReserveOut > 0n ? priceX18(nextReserveOut, nextReserveIn) : null;
+  if (postSwapPrice === null) return null;
+
+  return {
+    preSwapPriceX18: preSwapPrice.toString(),
+    postSwapPriceX18: postSwapPrice.toString(),
+    executionPriceX18: executionPrice.toString(),
+    marketImpactBps: marketImpactBps(preSwapPrice, executionPrice),
+    method: "constant-product-reserves",
+  };
+}
+
+function availableEvidence(
+  source: string,
+  value: bigint | number | string,
+): FameProtocolEvidenceItem {
+  return {
+    status: "available",
+    source,
+    value: value.toString(),
+  };
+}
+
+function unavailableEvidence(
+  source: string,
+  reason: string,
+): FameProtocolEvidenceItem {
+  return {
+    status: "unavailable",
+    source,
+    reason,
+  };
+}
+
+function notApplicableEvidence(
+  source: string,
+  reason: string,
+): FameProtocolEvidenceItem {
+  return {
+    status: "not_applicable",
+    source,
+    reason,
+  };
+}
+
+function protocolEvidenceFromPriceImpact(options: {
+  poolId: string;
+  amountOut: bigint;
+  priceImpact: FamePriceImpactEstimate;
+}): FameProtocolEvidence {
+  const source = `reserve-pool-state quote for ${options.poolId}`;
+  return {
+    quote: availableEvidence(source, options.amountOut),
+    prePrice: availableEvidence(source, options.priceImpact.preSwapPriceX18),
+    postPrice: availableEvidence(source, options.priceImpact.postSwapPriceX18),
+    marketImpact:
+      options.priceImpact.marketImpactBps === null
+        ? unavailableEvidence(
+            source,
+            "Constant-product reserve quote did not produce market-impact evidence.",
+          )
+        : availableEvidence(source, options.priceImpact.marketImpactBps),
+    activeLiquidity: notApplicableEvidence(
+      source,
+      "Constant-product reserve quote uses reserves, not active liquidity.",
+    ),
+  };
+}
+
+function reserveQuoteMetadata(
+  state: FamePoolLatestState,
+  maxFreshnessBlocks: number,
+): Omit<FamePoolQuoteUnavailableEntry, "status" | "requested" | "reason"> {
+  return {
+    poolId: state.poolId,
+    chainId: state.chainId,
+    poolAddress: state.poolAddress,
+    observedThroughBlock: state.observedThroughBlock,
+    sourceRegistryId: state.sourceRegistryId,
+    maxFreshnessBlocks,
+  };
+}
+
+function quoteFromReserveState(options: {
+  request: FamePoolQuoteRequest;
+  state: FamePoolLatestState;
+  entry: ReserveQuotePool;
+  maxFreshnessBlocks: number;
+}): FamePoolQuoteResponseEntry {
+  const { request, state, entry } = options;
+  const reserve0 = parseUnsignedDecimal(state.reserve0);
+  const reserve1 = parseUnsignedDecimal(state.reserve1);
+  if (reserve0 === null || reserve1 === null) {
+    return unavailable(
+      request,
+      "malformed-reserve-state",
+      reserveQuoteMetadata(state, options.maxFreshnessBlocks),
+    );
+  }
+
+  const direct =
+    sameAddress(request.tokenIn, state.token0) &&
+    sameAddress(request.tokenOut, state.token1);
+  const reverse =
+    sameAddress(request.tokenIn, state.token1) &&
+    sameAddress(request.tokenOut, state.token0);
+  if (!direct && !reverse) {
+    return unavailable(
+      request,
+      "token-direction-mismatch",
+      reserveQuoteMetadata(state, options.maxFreshnessBlocks),
+    );
+  }
+
+  const amountIn = BigInt(request.amountIn);
+  const reserveIn = direct ? reserve0 : reserve1;
+  const reserveOut = direct ? reserve1 : reserve0;
+  const amountOut = constantProductAmountOut({
+    amountIn,
+    reserveIn,
+    reserveOut,
+    feeBps: entry.fee.feeBps,
+  });
+  if (amountOut === "malformed-reserve-state") {
+    return unavailable(
+      request,
+      amountOut,
+      reserveQuoteMetadata(state, options.maxFreshnessBlocks),
+    );
+  }
+  if (amountOut <= 0n) {
+    return unavailable(
+      request,
+      "reserve-quote-failed",
+      reserveQuoteMetadata(state, options.maxFreshnessBlocks),
+    );
+  }
+
+  const priceImpact = constantProductPriceImpact({
+    amountIn,
+    amountOut,
+    reserveIn,
+    reserveOut,
+  });
+  if (priceImpact === null) {
+    return unavailable(
+      request,
+      "reserve-quote-failed",
+      reserveQuoteMetadata(state, options.maxFreshnessBlocks),
+    );
+  }
+
+  return {
+    status: "quoted",
+    quoteKind: "constant-product-quote-v1",
+    quoteModel: "constant-product-reserves",
+    quoteModelVersion: 1,
+    poolId: entry.id,
+    chainId: entry.chainId,
+    poolAddress: entry.poolAddress,
+    token0: entry.token0,
+    token1: entry.token1,
+    tokenIn: request.tokenIn,
+    tokenOut: request.tokenOut,
+    venueFamily: entry.venueFamily,
+    feeBps: entry.fee.feeBps,
+    feeSource: "registry-fee",
+    source: "reserve-pool-state",
+    stateSource: state.source,
+    amountIn: request.amountIn,
+    amountOut: amountOut.toString(),
+    observedThroughBlock: state.observedThroughBlock,
+    sourceRegistryId: state.sourceRegistryId,
+    maxFreshnessBlocks: options.maxFreshnessBlocks,
+    priceImpact,
+    protocolEvidence: protocolEvidenceFromPriceImpact({
+      poolId: entry.id,
+      amountOut,
+      priceImpact,
+    }),
   };
 }
 
@@ -685,6 +1053,15 @@ export async function handleFamePoolQuoteBatchRequest({
     request: quote,
     entry: registryById.get(quote.poolId),
   }));
+  const reservePoolsById = new Map(
+    entries
+      .map(({ entry }) => entry)
+      .filter(
+        (entry): entry is ReserveQuotePool =>
+          entry !== undefined && isReserveQuotePool(entry),
+      )
+      .map((entry) => [entry.id, entry]),
+  );
   const clReplayPoolsById = new Map(
     entries
       .map(({ entry }) => entry)
@@ -694,6 +1071,11 @@ export async function handleFamePoolQuoteBatchRequest({
       )
       .map((entry) => [entry.id, entry]),
   );
+  const reserveStates = await batchGetLatestPoolStates({
+    db,
+    tableName,
+    pools: [...reservePoolsById.values()],
+  });
   const latestStates = await batchGetLatestClReplayPointers({
     db,
     tableName,
@@ -719,6 +1101,12 @@ export async function handleFamePoolQuoteBatchRequest({
   const latestStatesByPoolId = new Map(
     latestStates.map((state) => [state.poolId, state]),
   );
+  const reserveStatesByAddress = new Map(
+    reserveStates.map((state) => [
+      addressStateKey(state.chainId, state.poolAddress),
+      state,
+    ]),
+  );
   const clReplayStatesByPoolId = new Map(
     clReplayStates.map((state) => [state.latest.poolId, state]),
   );
@@ -731,6 +1119,61 @@ export async function handleFamePoolQuoteBatchRequest({
     quotes: entries.map(({ request: requested, entry }) => {
       if (!entry) {
         return unavailable(requested, "missing-registry-entry");
+      }
+      if (isReserveQuotePool(entry)) {
+        const state = reserveStatesByAddress.get(
+          addressStateKey(entry.chainId, entry.poolAddress),
+        );
+        if (!state) {
+          return unavailable(requested, "missing-indexed-state", {
+            poolId: entry.id,
+            chainId: entry.chainId,
+            poolAddress: entry.poolAddress,
+          });
+        }
+        if (state.sourceRegistryId !== sourceRegistryId) {
+          return unavailable(requested, "source-registry-mismatch", {
+            poolId: entry.id,
+            chainId: entry.chainId,
+            poolAddress: entry.poolAddress,
+            observedThroughBlock: state.observedThroughBlock,
+            sourceRegistryId: state.sourceRegistryId,
+            maxFreshnessBlocks: effectiveMaxFreshnessBlocks,
+          });
+        }
+        if (!reserveStateMatchesRegistry({ state, entry, sourceRegistryId })) {
+          return unavailable(requested, "missing-indexed-state", {
+            poolId: entry.id,
+            chainId: entry.chainId,
+            poolAddress: entry.poolAddress,
+            observedThroughBlock: state.observedThroughBlock,
+            sourceRegistryId: state.sourceRegistryId,
+            maxFreshnessBlocks: effectiveMaxFreshnessBlocks,
+          });
+        }
+        if (
+          freshnessStatus({
+            state,
+            currentBlock: parsed.currentBlock,
+            maxFreshnessBlocks: effectiveMaxFreshnessBlocks,
+          }) === "stale"
+        ) {
+          return unavailable(requested, "stale-indexed-state", {
+            poolId: entry.id,
+            chainId: entry.chainId,
+            poolAddress: entry.poolAddress,
+            observedThroughBlock: state.observedThroughBlock,
+            sourceRegistryId: state.sourceRegistryId,
+            maxFreshnessBlocks: effectiveMaxFreshnessBlocks,
+          });
+        }
+
+        return quoteFromReserveState({
+          request: requested,
+          state,
+          entry,
+          maxFreshnessBlocks: effectiveMaxFreshnessBlocks,
+        });
       }
       if (!isClReplayPool(entry)) {
         return unavailable(requested, "unsupported-pool", {
@@ -758,7 +1201,9 @@ export async function handleFamePoolQuoteBatchRequest({
           maxFreshnessBlocks: effectiveMaxFreshnessBlocks,
         });
       }
-      if (!clReplayLatestStateMatchesRegistry({ latest, entry, sourceRegistryId })) {
+      if (
+        !clReplayLatestStateMatchesRegistry({ latest, entry, sourceRegistryId })
+      ) {
         return unavailable(requested, "missing-indexed-state", {
           poolId: entry.id,
           chainId: entry.chainId,

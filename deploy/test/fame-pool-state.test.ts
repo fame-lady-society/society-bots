@@ -308,6 +308,7 @@ describe("FamePoolState infrastructure", () => {
       template.hasResourceProperties("AWS::ApiGatewayV2::Authorizer", {
         IdentitySource: ["$request.header.Authorization"],
       });
+      expectOutputMatching(template, "FamePoolApiDevBaseUrl");
       expectOutputMatching(template, "FamePoolStateDevEndpointUrl");
       expectOutputMatching(template, "FamePoolQuotesDevEndpointUrl");
     } finally {

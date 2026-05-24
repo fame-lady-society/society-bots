@@ -1,9 +1,14 @@
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { describe, expect, test } from "@jest/globals";
 import { BatchGetCommand } from "@aws-sdk/lib-dynamodb";
-import type { Address } from "viem";
+import { isAddress, type Address } from "viem";
 import { handleFamePoolStateBatchRequest } from "./api.ts";
 import { poolStateRequestAuthorized } from "./auth.ts";
-import { handleFamePoolQuoteBatchRequest } from "./cl-quote.ts";
+import {
+  handleFamePoolQuoteBatchRequest,
+  type FamePoolQuoteRequest,
+} from "./cl-quote.ts";
 import {
   clReplayStateRowsFromSnapshot,
   latestClHeadStateFromSnapshot,
@@ -24,6 +29,10 @@ import { famePoolStateRegistry } from "./registry/index.ts";
 import type { FamePoolStateRegistryEntry } from "./types.ts";
 
 type SentCommand = Parameters<PoolStateDocumentClient["send"]>[0];
+
+const ADDRESS_A = "0x0000000000000000000000000000000000000001" as Address;
+const POOL_QUOTES_V1_FIXTURE_SHA256 =
+  "492e125de5f865f2ef88dd63d5965bd835c3c068d2565cfd355ef93fb28fe763";
 
 class BatchStateDb implements PoolStateDocumentClient {
   public readCount = 0;
@@ -129,6 +138,15 @@ function quotePool(
   };
 }
 
+function quoteModelPools(): (FamePoolStateRegistryEntry & {
+  poolAddress: Address;
+})[] {
+  return famePoolStateRegistry.pools.filter(
+    (pool): pool is FamePoolStateRegistryEntry & { poolAddress: Address } =>
+      pool.capability === "quote-model" && pool.poolAddress !== null,
+  );
+}
+
 function clHeadPool(id: string): FameClHeadSnapshotRegistryEntry {
   const entry = famePoolStateRegistry.pools.find((pool) => pool.id === id);
   if (
@@ -172,11 +190,17 @@ function clReplayPool(): FameClReplayRegistryEntry {
 function stateForPool(
   pool: FamePoolStateRegistryEntry & { poolAddress: Address },
   observedThroughBlock: number,
+  options: {
+    reserve0?: bigint;
+    reserve1?: bigint;
+    source?: FamePoolLatestState["source"];
+    sourceRegistryId?: string;
+  } = {},
 ): FamePoolLatestState {
   return latestStateFromReserves({
     pool,
-    reserve0: 100n,
-    reserve1: 250n,
+    reserve0: options.reserve0 ?? 100n,
+    reserve1: options.reserve1 ?? 250n,
     observedThroughBlock,
     version: {
       blockNumber: observedThroughBlock - 1,
@@ -184,8 +208,8 @@ function stateForPool(
       logIndex: 0,
     },
     transactionHash: null,
-    source: "getReserves",
-    sourceRegistryId: "unit",
+    source: options.source ?? "getReserves",
+    sourceRegistryId: options.sourceRegistryId ?? "unit",
     updatedAt: "2026-05-17T00:00:00.000Z",
   });
 }
@@ -266,6 +290,92 @@ function quoteClReplayRowsForPool(pool: FameClReplayRegistryEntry) {
     bitmapChunkSize: 1,
     tickChunkSize: 1,
   });
+}
+
+function parseFixtureObject(
+  value: unknown,
+  path: string,
+): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`Expected fixture object at ${path}.`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function parseFixtureString(value: unknown, path: string): string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`Expected fixture string at ${path}.`);
+  }
+  return value;
+}
+
+function parseFixtureNumber(value: unknown, path: string): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value)) {
+    throw new Error(`Expected fixture integer at ${path}.`);
+  }
+  return value;
+}
+
+function parseFixtureAddress(value: unknown, path: string): Address {
+  const parsed = parseFixtureString(value, path);
+  if (!isAddress(parsed, { strict: false })) {
+    throw new Error(`Expected fixture address at ${path}.`);
+  }
+  return parsed as Address;
+}
+
+function parseFixtureQuotes(
+  value: unknown,
+  path: string,
+): Record<string, unknown>[] {
+  if (!Array.isArray(value)) {
+    throw new Error(`Expected fixture quote array at ${path}.`);
+  }
+  return value.map((quote, index) =>
+    parseFixtureObject(quote, `${path}[${index.toString()}]`),
+  );
+}
+
+function poolQuotesFixtureResponse(): Record<string, unknown> {
+  const fixtureUrl = new URL("./fixtures/pool-quotes-v1.json", import.meta.url);
+  const parsed: unknown = JSON.parse(readFileSync(fixtureUrl, "utf8"));
+  const fixture = parseFixtureObject(parsed, "$");
+  return parseFixtureObject(fixture.response, "$.response");
+}
+
+function fixtureQuoteRequests(
+  response: Record<string, unknown>,
+): FamePoolQuoteRequest[] {
+  const quotes = parseFixtureQuotes(response.quotes, "$.response.quotes");
+  return quotes.map((quote, index) => ({
+    poolId: parseFixtureString(
+      quote.poolId,
+      `$.response.quotes[${index.toString()}].poolId`,
+    ),
+    tokenIn: parseFixtureAddress(
+      quote.tokenIn,
+      `$.response.quotes[${index.toString()}].tokenIn`,
+    ),
+    tokenOut: parseFixtureAddress(
+      quote.tokenOut,
+      `$.response.quotes[${index.toString()}].tokenOut`,
+    ),
+    amountIn: parseFixtureString(
+      quote.amountIn,
+      `$.response.quotes[${index.toString()}].amountIn`,
+    ),
+  }));
+}
+
+function fixtureReserveStates(): FamePoolLatestState[] {
+  const sourceRegistryId = sourceRegistryIdFor(famePoolStateRegistry.source);
+  return quoteModelPools().map((pool) =>
+    stateForPool(pool, 120, {
+      reserve0: 1000n,
+      reserve1: 2500n,
+      sourceRegistryId,
+    }),
+  );
 }
 
 describe("FAME pool-state API contract", () => {
@@ -509,6 +619,239 @@ describe("FAME pool-state API contract", () => {
     });
   });
 
+  test("matches the golden compact reserve quote fixture for every quote-model pool", async () => {
+    const fixtureBytes = readFileSync(
+      new URL("./fixtures/pool-quotes-v1.json", import.meta.url),
+    );
+    expect(createHash("sha256").update(fixtureBytes).digest("hex")).toBe(
+      POOL_QUOTES_V1_FIXTURE_SHA256,
+    );
+
+    const fixtureResponse = poolQuotesFixtureResponse();
+    const response = await handleFamePoolQuoteBatchRequest({
+      request: {
+        currentBlock: parseFixtureNumber(
+          fixtureResponse.currentBlock,
+          "$.response.currentBlock",
+        ),
+        quotes: fixtureQuoteRequests(fixtureResponse),
+      },
+      tableName: "PoolState",
+      db: new BatchStateDb(fixtureReserveStates()),
+      producerMaxFreshnessBlocks: 120,
+    });
+
+    expect(response).toEqual(fixtureResponse);
+    expect(response.quotes).toHaveLength(quoteModelPools().length * 2);
+    for (const quote of response.quotes) {
+      expect(quote).toMatchObject({
+        status: "quoted",
+        quoteKind: "constant-product-quote-v1",
+        quoteModel: "constant-product-reserves",
+        quoteModelVersion: 1,
+        source: "reserve-pool-state",
+      });
+      expect(quote).not.toHaveProperty("reserve0");
+      expect(quote).not.toHaveProperty("reserve1");
+      expect(quote).not.toHaveProperty("k");
+    }
+  });
+
+  test("quotes reserve and Slipstream compact rows in one batch", async () => {
+    const reservePool = quotePool("uniswap-v2-fame-direct");
+    const clPool = clReplayPool();
+    const clRows = quoteClReplayRowsForPool(clPool);
+    const response = await handleFamePoolQuoteBatchRequest({
+      request: {
+        currentBlock: 125,
+        quotes: [
+          {
+            poolId: reservePool.id,
+            tokenIn: reservePool.token0,
+            tokenOut: reservePool.token1,
+            amountIn: "500",
+          },
+          {
+            poolId: clPool.id,
+            tokenIn: clPool.token0,
+            tokenOut: clPool.token1,
+            amountIn: "1000000",
+          },
+        ],
+      },
+      tableName: "PoolState",
+      db: new BatchStateDb([
+        stateForPool(reservePool, 120, {
+          reserve0: 1000n,
+          reserve1: 2500n,
+          sourceRegistryId: sourceRegistryIdFor(famePoolStateRegistry.source),
+        }),
+        clRows.latest,
+        ...clRows.bitmapChunks,
+        ...clRows.tickChunks,
+      ]),
+      producerMaxFreshnessBlocks: 120,
+    });
+
+    expect(response.quotes).toEqual([
+      expect.objectContaining({
+        status: "quoted",
+        quoteKind: "constant-product-quote-v1",
+        poolId: reservePool.id,
+        amountIn: "500",
+        amountOut: "831",
+      }),
+      expect.objectContaining({
+        status: "quoted",
+        quoteKind: "cl-quote-v1",
+        poolId: clPool.id,
+        amountIn: "1000000",
+        amountOut: "999899",
+      }),
+    ]);
+  });
+
+  test("returns unavailable reserve quotes for token direction mismatch", async () => {
+    const pool = quotePool("uniswap-v2-fame-direct");
+    const response = await handleFamePoolQuoteBatchRequest({
+      request: {
+        currentBlock: 125,
+        quotes: [
+          {
+            poolId: pool.id,
+            tokenIn: pool.token0,
+            tokenOut: ADDRESS_A,
+            amountIn: "500",
+          },
+        ],
+      },
+      tableName: "PoolState",
+      db: new BatchStateDb([
+        stateForPool(pool, 120, {
+          sourceRegistryId: sourceRegistryIdFor(famePoolStateRegistry.source),
+        }),
+      ]),
+      producerMaxFreshnessBlocks: 120,
+    });
+
+    expect(response.quotes[0]).toMatchObject({
+      status: "unavailable",
+      reason: "token-direction-mismatch",
+      poolId: pool.id,
+      chainId: pool.chainId,
+      poolAddress: pool.poolAddress,
+      observedThroughBlock: 120,
+      sourceRegistryId: sourceRegistryIdFor(famePoolStateRegistry.source),
+      maxFreshnessBlocks: 120,
+    });
+  });
+
+  test("returns unavailable reserve quotes for stale reserve state", async () => {
+    const pool = quotePool("uniswap-v2-fame-direct");
+    const response = await handleFamePoolQuoteBatchRequest({
+      request: {
+        currentBlock: 500,
+        quotes: [
+          {
+            poolId: pool.id,
+            tokenIn: pool.token0,
+            tokenOut: pool.token1,
+            amountIn: "500",
+          },
+        ],
+      },
+      tableName: "PoolState",
+      db: new BatchStateDb([
+        stateForPool(pool, 120, {
+          sourceRegistryId: sourceRegistryIdFor(famePoolStateRegistry.source),
+        }),
+      ]),
+      producerMaxFreshnessBlocks: 120,
+    });
+
+    expect(response.quotes[0]).toMatchObject({
+      status: "unavailable",
+      reason: "stale-indexed-state",
+      requested: {
+        poolId: pool.id,
+        tokenIn: pool.token0,
+        tokenOut: pool.token1,
+        amountIn: "500",
+      },
+      observedThroughBlock: 120,
+      sourceRegistryId: sourceRegistryIdFor(famePoolStateRegistry.source),
+      maxFreshnessBlocks: 120,
+    });
+  });
+
+  test("returns unavailable reserve quotes for source registry mismatch", async () => {
+    const pool = quotePool("uniswap-v2-fame-direct");
+    const response = await handleFamePoolQuoteBatchRequest({
+      request: {
+        currentBlock: 125,
+        quotes: [
+          {
+            poolId: pool.id,
+            tokenIn: pool.token0,
+            tokenOut: pool.token1,
+            amountIn: "500",
+          },
+        ],
+      },
+      tableName: "PoolState",
+      db: new BatchStateDb([
+        stateForPool(pool, 120, {
+          sourceRegistryId: "stale-registry",
+        }),
+      ]),
+      producerMaxFreshnessBlocks: 120,
+    });
+
+    expect(response.quotes[0]).toMatchObject({
+      status: "unavailable",
+      reason: "source-registry-mismatch",
+      poolId: pool.id,
+      observedThroughBlock: 120,
+      sourceRegistryId: "stale-registry",
+      maxFreshnessBlocks: 120,
+    });
+  });
+
+  test("returns unavailable reserve quotes for malformed reserve state", async () => {
+    const pool = quotePool("uniswap-v2-fame-direct");
+    const response = await handleFamePoolQuoteBatchRequest({
+      request: {
+        currentBlock: 125,
+        quotes: [
+          {
+            poolId: pool.id,
+            tokenIn: pool.token0,
+            tokenOut: pool.token1,
+            amountIn: "500",
+          },
+        ],
+      },
+      tableName: "PoolState",
+      db: new BatchStateDb([
+        stateForPool(pool, 120, {
+          reserve0: 0n,
+          reserve1: 2500n,
+          sourceRegistryId: sourceRegistryIdFor(famePoolStateRegistry.source),
+        }),
+      ]),
+      producerMaxFreshnessBlocks: 120,
+    });
+
+    expect(response.quotes[0]).toMatchObject({
+      status: "unavailable",
+      reason: "malformed-reserve-state",
+      poolId: pool.id,
+      observedThroughBlock: 120,
+      sourceRegistryId: sourceRegistryIdFor(famePoolStateRegistry.source),
+      maxFreshnessBlocks: 120,
+    });
+  });
+
   test("returns unavailable CL quotes for stale replay state without loading chunks", async () => {
     const pool = clReplayPool();
     const rows = quoteClReplayRowsForPool(pool);
@@ -573,8 +916,8 @@ describe("FAME pool-state API contract", () => {
     });
   });
 
-  test("returns unavailable CL quotes for unsupported or unknown pools", async () => {
-    const pool = quotePool("uniswap-v2-fame-direct");
+  test("returns unavailable compact quotes for unsupported or unknown pools", async () => {
+    const pool = clHeadPool("uniswap-v3-usdc-weth-5bps");
     const db = new BatchStateDb([]);
     const response = await handleFamePoolQuoteBatchRequest({
       request: {

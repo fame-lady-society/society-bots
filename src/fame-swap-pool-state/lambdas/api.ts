@@ -66,9 +66,15 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "unknown error";
 }
 
-function routeKind(event: APIGatewayProxyEventV2): "pool-quotes" | "pool-state" {
+function routeKind(
+  event: APIGatewayProxyEventV2,
+): "pool-quotes" | "pool-state" {
   const path = event.rawPath || event.requestContext.http.path;
-  return path === "/fame/pool-quotes" ? "pool-quotes" : "pool-state";
+  if (path === "/fame/pool-quotes") return "pool-quotes";
+  if (path === "/fame/pool-state") return "pool-state";
+  throw new FamePoolStateRequestError(
+    `FAME pool-state request invalid at routeKind: expected /fame/pool-state or /fame/pool-quotes, received ${path}.`,
+  );
 }
 
 export async function handleFamePoolStateApiEvent({
@@ -95,8 +101,8 @@ export async function handleFamePoolStateApiEvent({
   }
 
   try {
-    const parsedBody = parseJsonBody(event.body);
     const kind = routeKind(event);
+    const parsedBody = parseJsonBody(event.body);
     if (kind === "pool-quotes") {
       const response = await handleQuoteBatchRequest({
         request: parsedBody,
