@@ -5,6 +5,7 @@
 ## Scope
 
 - Quote-model reserve pools: Uniswap V2, volatile Solidly/Equalizer, and volatile Aerodrome V2.
+- Compact quote rows: `/fame/pool-quotes` returns `constant-product-quote-v1` rows for quote-model reserve pools and `cl-quote-v1` rows for `slipstream-usdc-weth-100`.
 - Concentrated-liquidity head snapshots: Slipstream, Slipstream2, Uniswap V3, and Uniswap V4 pools with reviewed fee metadata.
 - Concentrated-liquidity replay snapshots: exactly `slipstream-usdc-weth-100` with complete safe-block `cl-replay-v1` state for the first proof.
 - Tracked-only pools: stable Solidly, native wrap, pools missing reviewed CL metadata, and unknown unsupported invariants.
@@ -16,6 +17,7 @@
 - The indexer scans Base `Sync` logs for quote-model pools, reconciles every quote-model pool with `getReserves` at the safe block, writes monotonic latest rows when reserves drift or rows are missing, updates `observedThroughBlock`, records complete CL head snapshots at the same safe block, captures a full `cl-replay-v1` Slipstream snapshot for `slipstream-usdc-weth-100`, and advances a cursor only after reserve reconciliation succeeds.
 - The replay snapshot lane reads slot0, current liquidity, dynamic pool fee, the full initialized tick bitmap word range, and initialized tick liquidity records at one safe block. It writes bitmap/tick chunks first, then publishes the latest replay pointer so the API never returns a partial snapshot as fresh replay state.
 - The API serves bounded batch reads to server-side `www` callers. API Gateway uses a Lambda authorizer for the same service token before invoking the API Lambda, and the API Lambda keeps its own token check as defense in depth. The token must be supplied through `Authorization: Bearer <token>`.
+- The API Lambda dispatches only `/fame/pool-state` and `/fame/pool-quotes`; unknown paths return an invalid-request error instead of falling through to pool-state handling.
 - The indexer has SQS-backed async failure destinations plus passive CloudWatch alarms for Lambda errors, Lambda throttles, missed invocations, and non-empty failure queue depth. These alarms have no notification action by default; they are an inspectable health surface for a free community service.
 - The CloudWatch log groups for active Lambdas are CDK-owned with explicit retention and destroy-on-stack-deletion behavior. This hardening does not change `www` quote authority, helper response contracts, route ranking, fallback behavior, or replay tick maintenance.
 
@@ -30,6 +32,7 @@ Freshness is based on `observedThroughBlock`, not `lastReserveChangeBlock`.
 - CL head snapshots intentionally do not include tick boundary warnings. They are a head state surface, not local CL replay authority; clients still fall back to live reads whenever they cannot use indexed state.
 - `cl-replay-v1` snapshots use the same freshness rule, but they are a separate opt-in state surface. A complete replay response includes block hash, parent hash, state hash, dynamic fee, head state, bitmap word range, initialized tick range, chunk counts, bitmap words, and initialized tick liquidity data.
 - Missing chunks, mismatched block/hash/provenance, malformed fee or liquidity strings, stale/future block state, or a source registry mismatch make replay state unavailable to `www`; `www` must fall back to its live quoter.
+- Reserve compact quotes use the same freshness rule as reserve pool-state rows. Missing rows, stale/future rows, source registry mismatches, token direction mismatches, malformed reserves, or zero-output reserve math return `unavailable` quote rows so `www` can fall back live per edge.
 - The producer default is `FAME_POOL_STATE_DEFAULT_MAX_FRESHNESS_BLOCKS`, currently deployed as `120` unless overridden.
 - Callers may request stricter freshness; they cannot loosen the producer default.
 
@@ -39,6 +42,17 @@ Freshness is based on `observedThroughBlock`, not `lastReserveChangeBlock`.
 - `stale`: indexed row exists but is outside the freshness bound, including rows whose `observedThroughBlock` is greater than the caller's `currentBlock`. `www` should fall back to live reads.
 - `unknown`: pool is absent from the registry or has no indexed row yet.
 - `unsupported`: pool is reviewed but not eligible for the requested indexed state surface.
+- `/fame/pool-quotes` uses quote-specific row statuses: `quoted` rows contain compact quote output and provenance; `unavailable` rows contain the original request, enum reason, and bounded pool/freshness metadata when available.
+
+## Compact Quote Rows
+
+`/fame/pool-quotes` is the hot-path quote surface. It does not return raw reserve pairs, `k`, raw tick arrays, bitmap words, helper URLs, service tokens, or request/response bodies.
+
+Reserve quote-model pools return `constant-product-quote-v1` rows when fresh matching reserve state is available. Each row includes pool identity, token direction, `amountIn`, `amountOut`, `quoteModel: "constant-product-reserves"`, `quoteModelVersion: 1`, `feeBps`, `feeSource: "registry-fee"`, `stateSource`, `observedThroughBlock`, source registry id, price-impact fields, and safe protocol evidence. The quote math matches the existing `www` constant-product reserve adapter: input fee in basis points is applied before the invariant quote, while price-impact evidence uses full input amount against pre/post reserves.
+
+`slipstream-usdc-weth-100` keeps its existing `cl-quote-v1` compact row shape and still omits raw replay arrays. Other reviewed-but-unquoted pools return `unavailable` with an enum reason such as `unsupported-pool`, `missing-indexed-state`, `stale-indexed-state`, `source-registry-mismatch`, `token-direction-mismatch`, `malformed-reserve-state`, `reserve-quote-failed`, `malformed-replay-state`, `outside-indexed-tick-range`, or `replay-failed`.
+
+The versioned producer fixture at `src/fame-swap-pool-state/fixtures/pool-quotes-v1.json` locks the reserve quote row shape and exact amount/price-impact semantics for every reserve quote-model pool in both directions.
 
 ## Logs
 
@@ -48,13 +62,14 @@ Indexer logs use `event: "fame-pool-state-indexed"` with chain id, block range, 
 
 API success logs use `event: "fame-pool-state-api-batch"` with registry id, current block, effective freshness, batch size, status counts, and compact replay counts when `cl-replay-v1` state is returned. Ordinary all-fresh non-replay batches are not logged at INFO. Replay responses, stale rows, unknown rows, unsupported rows, malformed requests, and dependency failures remain operator-visible.
 
-API transport failures are classified separately from per-pool fallback statuses:
+API transport failures are classified separately from per-pool or per-quote fallback statuses:
 
 - `400`: malformed JSON, invalid request shape, or batch limit violations.
 - `401`: missing or incorrect service token.
 - `5xx`: internal or dependency failure, including incomplete DynamoDB batch reads.
+- unknown routes: `400` invalid request; the Lambda never defaults an unknown path to pool-state handling.
 
-`fresh`, `stale`, `unknown`, and `unsupported` stay inside successful batch responses. `www` should treat non-successful transport responses as non-authoritative helper output and fall back to live reads.
+`fresh`, `stale`, `unknown`, and `unsupported` stay inside successful pool-state batch responses. `quoted` and `unavailable` stay inside successful pool-quote batch responses. `www` should treat non-successful transport responses as non-authoritative helper output and fall back to live reads.
 
 ## CloudWatch Retention
 
@@ -94,7 +109,7 @@ Do not add email, pager, or chat notification actions for the first release unle
 6. Confirm PR deploy uses `STAGE=PR-<number>` and cleanup targets only `Bot-PR-<number>` / `BotCert-PR-<number>`.
 7. Set or generate the dev service token first as `FAME_POOL_STATE_DEV_SERVICE_TOKEN`.
 8. For pool-state-only pre-merge validation, add the PR label `DEPLOY_POOL_STATE_DEV`. This deploys `BotPoolStateDev` with only `BASE_RPCS_JSON` and `FAME_POOL_STATE_DEV_SERVICE_TOKEN`; it does not require image, Discord, Farcaster, custom domain, or cert env.
-9. Copy the emitted `FamePoolStateDevEndpointUrl` `/fame/pool-state` endpoint into `www` dev as server-only `FAME_POOL_STATE_API_URL`, and set the matching `FAME_POOL_STATE_SERVICE_TOKEN`.
+9. Copy the emitted `FamePoolApiDevBaseUrl` value into `www` dev as server-only `FAME_POOL_API_URL`, and set the matching `FAME_POOL_STATE_SERVICE_TOKEN`. Do not copy an endpoint-specific `/fame/pool-state` or `/fame/pool-quotes` URL into `FAME_POOL_API_URL`.
 10. For full messy app validation, add the PR label `DEPLOY_DEV` to update `Bot-dev` / `BotCert-dev` at `dev.fame.support` with event schedules disabled.
 11. Deploy `society-bots` with Base RPCs and the correct environment-scoped FAME pool-state service token.
 12. Capture smoke evidence:
@@ -118,15 +133,17 @@ Do not add email, pager, or chat notification actions for the first release unle
 - failure queue depth;
 - any RPC timeout, throttle, or cursor-lag notes.
 
-14. Run `www` route lab with `--indexed`, `BASE_RPC_URL` or `FAME_POOL_STATE_CURRENT_BLOCK`, and production-like helper env. Confirm the indexed summary reports `cl replay slipstream-usdc-weth-100 ...` while selected CL quotes remain live or recorded in shadow mode.
-15. Run `www` CL replay parity with `bun scripts/fame-swap-cl-replay-parity.ts` and production-like helper/RPC env. Promotion requires exact same-block `amountOut` equality for both WETH -> USDC and USDC -> WETH amount bands.
-16. Run a `www` quote API smoke check.
+14. Run `www` route lab with `--indexed`, `BASE_RPC_URL` or `FAME_POOL_STATE_CURRENT_BLOCK`, and production-like helper env. The tool derives proof-only raw-state reads from `FAME_POOL_API_URL` plus `/fame/pool-state`; confirm the indexed summary reports `cl replay slipstream-usdc-weth-100 ...` while selected CL quotes remain live or recorded in shadow mode.
+15. Run `www` CL replay parity with `bun scripts/fame-swap-cl-replay-parity.ts` and production-like helper/RPC env. The tool also derives `/fame/pool-state` from the same `FAME_POOL_API_URL` base. Promotion requires exact same-block `amountOut` equality for both WETH -> USDC and USDC -> WETH amount bands.
+16. Run a `www` quote API smoke check against `/fame/pool-quotes`.
 17. Record route-lab and parity evidence locations in the PR or release checklist. Evidence must cover indexed success plus fallback-relevant stale, unknown, unsupported, malformed, incomplete replay, and unavailable-helper cases.
-18. Enable `www` server env `FAME_POOL_STATE_API_URL` and `FAME_POOL_STATE_SERVICE_TOKEN` only after route-lab and parity proof are attached. Do not create `NEXT_PUBLIC_` variants.
+18. Enable `www` server env `FAME_POOL_API_URL` and `FAME_POOL_STATE_SERVICE_TOKEN` only after route-lab and parity proof are attached. Do not create `NEXT_PUBLIC_` variants.
 
 ## Durable Follow-Ups
 
 - Fix PR cleanup so `BotCert-PR-<number>` is deleted in `us-east-1`, and stop swallowing unexpected CloudFormation delete/wait failures with blanket `|| true`.
 - Make malformed V4 registry rows impossible or explicitly rejected when they contain both `poolAddress` and `poolKey`; V4 CL head state should remain pool-key keyed instead of address keyed.
 - Parallelize the independent reserve-state and CL head-state DynamoDB `BatchGet` calls if helper latency from CL opt-in becomes material.
+- Split reserve compact-quote unavailable reasons from CL replay reasons, and keep quoted reserve rows on a non-null post-swap price contract with fixture coverage for malformed reserves and zero-output math.
+- Bound dense CL quote replay work before broadening CL support: parse tick state once per pool/batch, use cursor or binary-search traversal rather than repeated full scans, and cap crossed ticks/work before Lambda timeout.
 - After exact same-block parity is proven for `slipstream-usdc-weth-100`, evaluate event-driven tick maintenance, bounded tick-window snapshots, shared CL math extraction, cached route pruning, quote heatmaps, historical liquidity charts, and route-level market-state dashboards.

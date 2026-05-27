@@ -38,8 +38,24 @@ export class FamePoolStateDevStack extends cdk.Stack {
       authorizer,
     });
 
+    httpApi.addRoutes({
+      path: "/fame/pool-quotes",
+      methods: [apigw2.HttpMethod.POST],
+      integration: new HttpLambdaIntegration(
+        "fame-pool-quotes-dev",
+        poolState.apiLambda,
+      ),
+      authorizer,
+    });
+
+    new cdk.CfnOutput(this, "FamePoolApiDevBaseUrl", {
+      value: httpApi.apiEndpoint,
+    });
     new cdk.CfnOutput(this, "FamePoolStateDevEndpointUrl", {
       value: cdk.Fn.join("", [httpApi.apiEndpoint, "/fame/pool-state"]),
+    });
+    new cdk.CfnOutput(this, "FamePoolQuotesDevEndpointUrl", {
+      value: cdk.Fn.join("", [httpApi.apiEndpoint, "/fame/pool-quotes"]),
     });
   }
 }

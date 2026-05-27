@@ -2,6 +2,7 @@ import type {
   FamePoolStateBatchResponse,
   FamePoolStateResponseEntry,
 } from "../api.ts";
+import type { FamePoolQuoteBatchResponse } from "../cl-quote.ts";
 import type { FamePoolStateIndexerResult } from "../indexer.ts";
 
 export type PoolStateLogLevel = "error" | "info" | "warn";
@@ -43,6 +44,20 @@ function statusCounts(response: Pick<FamePoolStateBatchResponse, "pools">) {
     counts[pool.status] = (counts[pool.status] ?? 0) + 1;
   }
   return counts;
+}
+
+function poolQuoteStatusCounts(
+  response: Pick<FamePoolQuoteBatchResponse, "quotes">,
+) {
+  const statusCounts: Record<string, number> = {};
+  const reasonCounts: Record<string, number> = {};
+  for (const quote of response.quotes) {
+    statusCounts[quote.status] = (statusCounts[quote.status] ?? 0) + 1;
+    if (quote.status === "unavailable") {
+      reasonCounts[quote.reason] = (reasonCounts[quote.reason] ?? 0) + 1;
+    }
+  }
+  return { statusCounts, reasonCounts };
 }
 
 function isClReplayResponse(
@@ -90,6 +105,7 @@ export function poolStateApiBatchLogFields(
   response: FamePoolStateBatchResponse,
 ): PoolStateLogFields {
   const fields: PoolStateLogFields = {
+    routeKind: "pool-state",
     sourceRegistryId: response.sourceRegistryId,
     currentBlock: response.currentBlock,
     effectiveMaxFreshnessBlocks: response.effectiveMaxFreshnessBlocks,
@@ -99,6 +115,21 @@ export function poolStateApiBatchLogFields(
   const replay = clReplaySummary(response);
   if (replay) fields.clReplay = replay;
   return fields;
+}
+
+export function poolQuoteApiBatchLogFields(
+  response: FamePoolQuoteBatchResponse,
+): PoolStateLogFields {
+  const counts = poolQuoteStatusCounts(response);
+  return {
+    routeKind: "pool-quotes",
+    sourceRegistryId: response.sourceRegistryId,
+    currentBlock: response.currentBlock,
+    effectiveMaxFreshnessBlocks: response.effectiveMaxFreshnessBlocks,
+    batchSize: response.quotes.length,
+    statusCounts: counts.statusCounts,
+    reasonCounts: counts.reasonCounts,
+  };
 }
 
 export function writePoolStateLog(
@@ -176,6 +207,16 @@ export function logPoolStateApiBatch(
     "info",
     "fame-pool-state-api-batch",
     poolStateApiBatchLogFields(response),
+  );
+}
+
+export function logPoolQuoteApiBatch(
+  response: FamePoolQuoteBatchResponse,
+): void {
+  writePoolStateLog(
+    "info",
+    "fame-pool-state-api-batch",
+    poolQuoteApiBatchLogFields(response),
   );
 }
 

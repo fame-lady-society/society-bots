@@ -14,11 +14,22 @@ import {
 } from "../api.ts";
 import type { FamePoolStateBatchResponse } from "../api.ts";
 import { poolStateRequestAuthorized } from "../auth.ts";
-import { logPoolStateApiBatch, writePoolStateLog } from "./logging.ts";
+import {
+  handleFamePoolQuoteBatchRequest,
+  type FamePoolQuoteBatchResponse,
+} from "../cl-quote.ts";
+import {
+  logPoolQuoteApiBatch,
+  logPoolStateApiBatch,
+  writePoolStateLog,
+} from "./logging.ts";
 
 export type FamePoolStateBatchHandler = (
   options: Parameters<typeof handleFamePoolStateBatchRequest>[0],
 ) => Promise<FamePoolStateBatchResponse>;
+export type FamePoolQuoteBatchHandler = (
+  options: Parameters<typeof handleFamePoolQuoteBatchRequest>[0],
+) => Promise<FamePoolQuoteBatchResponse>;
 
 function serviceToken(): string {
   const token = process.env.FAME_POOL_STATE_SERVICE_TOKEN;
@@ -55,6 +66,17 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "unknown error";
 }
 
+function routeKind(
+  event: APIGatewayProxyEventV2,
+): "pool-quotes" | "pool-state" {
+  const path = event.rawPath || event.requestContext.http.path;
+  if (path === "/fame/pool-quotes") return "pool-quotes";
+  if (path === "/fame/pool-state") return "pool-state";
+  throw new FamePoolStateRequestError(
+    `FAME pool-state request invalid at routeKind: expected /fame/pool-state or /fame/pool-quotes, received ${path}.`,
+  );
+}
+
 export async function handleFamePoolStateApiEvent({
   event,
   serviceToken,
@@ -62,6 +84,7 @@ export async function handleFamePoolStateApiEvent({
   producerMaxFreshnessBlocks,
   maxBatchSize,
   handleBatchRequest = handleFamePoolStateBatchRequest,
+  handleQuoteBatchRequest = handleFamePoolQuoteBatchRequest,
 }: {
   event: APIGatewayProxyEventV2;
   serviceToken: string;
@@ -69,6 +92,7 @@ export async function handleFamePoolStateApiEvent({
   producerMaxFreshnessBlocks: number;
   maxBatchSize: number;
   handleBatchRequest?: FamePoolStateBatchHandler;
+  handleQuoteBatchRequest?: FamePoolQuoteBatchHandler;
 }): Promise<APIGatewayProxyResultV2> {
   if (!poolStateRequestAuthorized(event.headers, serviceToken)) {
     return jsonResponse(401, {
@@ -77,8 +101,20 @@ export async function handleFamePoolStateApiEvent({
   }
 
   try {
+    const kind = routeKind(event);
+    const parsedBody = parseJsonBody(event.body);
+    if (kind === "pool-quotes") {
+      const response = await handleQuoteBatchRequest({
+        request: parsedBody,
+        tableName,
+        producerMaxFreshnessBlocks,
+        maxBatchSize,
+      });
+      logPoolQuoteApiBatch(response);
+      return jsonResponse(200, response);
+    }
     const response = await handleBatchRequest({
-      request: parseJsonBody(event.body),
+      request: parsedBody,
       tableName,
       producerMaxFreshnessBlocks,
       maxBatchSize,

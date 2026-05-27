@@ -230,7 +230,7 @@ describe("FamePoolState infrastructure", () => {
     expectOutputMatching(template, "FamePoolStateIndexerFailureQueueAlarmName");
   });
 
-  test("wires the FAME pool-state API route", () => {
+  test("wires the FAME pool-state API routes", () => {
     const app = new cdk.App();
     const stack = new cdk.Stack(app, "TestStack", {
       env: {
@@ -266,6 +266,10 @@ describe("FamePoolState infrastructure", () => {
       RouteKey: "POST /fame/pool-state",
       AuthorizationType: "CUSTOM",
     });
+    template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
+      RouteKey: "POST /fame/pool-quotes",
+      AuthorizationType: "CUSTOM",
+    });
     template.hasResourceProperties("AWS::ApiGatewayV2::Authorizer", {
       IdentitySource: ["$request.header.Authorization"],
     });
@@ -297,10 +301,16 @@ describe("FamePoolState infrastructure", () => {
         RouteKey: "POST /fame/pool-state",
         AuthorizationType: "CUSTOM",
       });
+      template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
+        RouteKey: "POST /fame/pool-quotes",
+        AuthorizationType: "CUSTOM",
+      });
       template.hasResourceProperties("AWS::ApiGatewayV2::Authorizer", {
         IdentitySource: ["$request.header.Authorization"],
       });
+      expectOutputMatching(template, "FamePoolApiDevBaseUrl");
       expectOutputMatching(template, "FamePoolStateDevEndpointUrl");
+      expectOutputMatching(template, "FamePoolQuotesDevEndpointUrl");
     } finally {
       if (previousBaseRpcsJson === undefined) delete process.env.BASE_RPCS_JSON;
       else process.env.BASE_RPCS_JSON = previousBaseRpcsJson;
