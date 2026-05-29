@@ -134,6 +134,12 @@ function numberField(item: Record<string, unknown>, key: string): number {
   return value;
 }
 
+function firstItem<T>(items: readonly T[], label: string): T {
+  const item = items[0];
+  if (!item) throw new Error(`Missing ${label}.`);
+  return item;
+}
+
 class ReplayStateDb implements PoolStateDocumentClient {
   public readonly commands: SentCommand[] = [];
   public readonly items = new Map<string, Record<string, unknown>>();
@@ -673,11 +679,27 @@ describe("FAME pool-state DynamoDB mapping", () => {
           rows.latest,
           ...rows.bitmapChunks,
           {
-            ...rows.tickChunks[0],
+            ...firstItem(rows.tickChunks, "CL replay tick chunk"),
             initializedTicks: [
               { tick: 199_900, liquidityGross: "25", liquidityNet: 15 },
             ],
           },
+        ]),
+        tableName: "PoolState",
+        pools: [pool],
+      }),
+    ).rejects.toThrow(/Invalid CL replay tick chunk DynamoDB item/);
+
+    const {
+      expiresAt: _expiresAt,
+      ...tickChunkWithoutExpiresAt
+    } = firstItem(rows.tickChunks, "CL replay tick chunk");
+    await expect(
+      batchGetLatestClReplayStates({
+        db: new ReplayStateDb([
+          rows.latest,
+          ...rows.bitmapChunks,
+          tickChunkWithoutExpiresAt,
         ]),
         tableName: "PoolState",
         pools: [pool],

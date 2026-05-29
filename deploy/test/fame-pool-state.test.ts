@@ -77,7 +77,7 @@ describe("FamePoolState infrastructure", () => {
       RetentionInDays: 7,
     });
     template.hasResourceProperties("AWS::Events::Rule", {
-      ScheduleExpression: "rate(1 minute)",
+      ScheduleExpression: "rate(30 minutes)",
       State: "ENABLED",
     });
   });
