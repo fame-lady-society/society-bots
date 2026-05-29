@@ -167,7 +167,7 @@ export interface FameClReplayBitmapChunkState extends Record<string, unknown> {
   source: FameClReplaySource;
   sourceRegistryId: string;
   updatedAt: string;
-  expiresAt?: number;
+  expiresAt: number;
   chunkIndex: number;
   bitmapWords: FameClReplayBitmapWord[];
 }
@@ -187,7 +187,7 @@ export interface FameClReplayTickChunkState extends Record<string, unknown> {
   source: FameClReplaySource;
   sourceRegistryId: string;
   updatedAt: string;
-  expiresAt?: number;
+  expiresAt: number;
   chunkIndex: number;
   initializedTicks: FameClReplayInitializedTick[];
 }
@@ -837,6 +837,7 @@ function parseClReplayBitmapChunkItem(
     source: clReplaySourceField(item, recordType, "source"),
     sourceRegistryId: stringField(item, recordType, "sourceRegistryId"),
     updatedAt: stringField(item, recordType, "updatedAt"),
+    expiresAt: numberField(item, recordType, "expiresAt"),
     chunkIndex: numberField(item, recordType, "chunkIndex"),
     bitmapWords: arrayField(item, recordType, "bitmapWords").map(
       (entry, index) =>
@@ -873,6 +874,7 @@ function parseClReplayTickChunkItem(
     source: clReplaySourceField(item, recordType, "source"),
     sourceRegistryId: stringField(item, recordType, "sourceRegistryId"),
     updatedAt: stringField(item, recordType, "updatedAt"),
+    expiresAt: numberField(item, recordType, "expiresAt"),
     chunkIndex: numberField(item, recordType, "chunkIndex"),
     initializedTicks: arrayField(item, recordType, "initializedTicks").map(
       (entry, index) =>
@@ -1134,7 +1136,7 @@ export function latestClHeadStateFromSnapshot(options: {
 
 export const CL_REPLAY_DEFAULT_BITMAP_WORDS_PER_CHUNK = 128;
 export const CL_REPLAY_DEFAULT_TICKS_PER_CHUNK = 128;
-export const CL_REPLAY_CHUNK_TTL_SECONDS = 7 * 24 * 60 * 60;
+export const CL_REPLAY_CHUNK_TTL_SECONDS = 2 * 60 * 60;
 
 function assertNonNegativeBigInt(value: bigint, field: string): void {
   if (value < 0n) {
@@ -1156,6 +1158,17 @@ function epochSecondsFromIsoTimestamp(value: string, field: string): number {
     throw new Error(`CL replay snapshot ${field} must be an ISO timestamp.`);
   }
   return Math.floor(milliseconds / 1_000);
+}
+
+function expiresAtFromIsoTimestamp(value: string, field: string): number {
+  const expiresAt =
+    epochSecondsFromIsoTimestamp(value, field) + CL_REPLAY_CHUNK_TTL_SECONDS;
+  if (!Number.isSafeInteger(expiresAt) || expiresAt <= 0) {
+    throw new Error(
+      `CL replay snapshot ${field} must produce a valid DynamoDB TTL timestamp.`,
+    );
+  }
+  return expiresAt;
 }
 
 function canonicalUint256Hex(value: bigint): Hex {
@@ -1244,9 +1257,10 @@ export function clReplayStateRowsFromSnapshot(options: {
       };
     });
 
-  const chunkExpiresAt =
-    epochSecondsFromIsoTimestamp(options.updatedAt, "updatedAt") +
-    CL_REPLAY_CHUNK_TTL_SECONDS;
+  const chunkExpiresAt = expiresAtFromIsoTimestamp(
+    options.updatedAt,
+    "updatedAt",
+  );
 
   assertStrictlyIncreasing(
     bitmapWords.map((word) => word.wordPosition),

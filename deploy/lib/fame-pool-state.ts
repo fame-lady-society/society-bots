@@ -270,7 +270,9 @@ export class FamePoolState extends Construct {
     table.grantReadData(apiLambda);
 
     const scheduleRule = new events.Rule(this, "FamePoolStateScheduleRule", {
-      schedule: events.Schedule.rate(props.schedule ?? cdk.Duration.minutes(1)),
+      schedule: events.Schedule.rate(
+        props.schedule ?? cdk.Duration.minutes(30),
+      ),
     });
     scheduleRule.addTarget(
       new eventTargets.LambdaFunction(indexerLambda, {
