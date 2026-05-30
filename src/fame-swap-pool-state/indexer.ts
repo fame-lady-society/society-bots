@@ -347,6 +347,10 @@ export interface FamePoolStateIndexerClient {
     pool: ClReplayPool;
     blockNumber: bigint;
   }): Promise<FameClReplaySnapshotRead>;
+  getClReplayFee(options: {
+    pool: ClReplayPool;
+    blockNumber: bigint;
+  }): Promise<bigint>;
 }
 
 export interface SlipstreamReplayReadClient {
@@ -1140,6 +1144,7 @@ export function applyClReplayDeltas({
   pool,
   seed,
   events,
+  fee,
   observedThroughBlock,
   blockHash,
   parentHash,
@@ -1150,6 +1155,7 @@ export function applyClReplayDeltas({
   pool: ClReplayPool;
   seed: FameClReplayStateCapsule | null;
   events: readonly FameClReplayNormalizedEvent[];
+  fee?: bigint;
   observedThroughBlock: number;
   blockHash: Hex;
   parentHash: Hex;
@@ -1175,7 +1181,7 @@ export function applyClReplayDeltas({
   let sqrtPriceX96 = BigInt(seed.latest.sqrtPriceX96);
   let tick = seed.latest.tick;
   let liquidity = BigInt(seed.latest.liquidity);
-  const fee = BigInt(seed.latest.fee);
+  const replayFee = fee ?? BigInt(seed.latest.fee);
   const tickStates = new Map(
     seed.initializedTicks.map((initializedTick) => [
       initializedTick.tick,
@@ -1280,7 +1286,7 @@ export function applyClReplayDeltas({
     sqrtPriceX96,
     tick,
     liquidity,
-    fee,
+    fee: replayFee,
     blockHash,
     parentHash,
     bitmapWords,
@@ -1296,7 +1302,7 @@ export function applyClReplayDeltas({
       sqrtPriceX96,
       tick,
       liquidity,
-      fee,
+      fee: replayFee,
       observedThroughBlock,
       blockHash,
       parentHash,
@@ -1785,6 +1791,15 @@ export function createViemPoolStateIndexerClient(
         blockNumber,
       });
     },
+    async getClReplayFee({ pool, blockNumber }) {
+      const fee = await client.readContract({
+        address: requirePoolAddress(pool),
+        abi: SlipstreamFeeAbi,
+        functionName: "fee",
+        blockNumber,
+      });
+      return BigInt(fee);
+    },
   };
 }
 
@@ -2225,10 +2240,15 @@ export async function indexFamePoolStates({
         if (targetBlockIdentity === null) {
           throw new Error("target-block-unavailable");
         }
+        const fee =
+          snapshotRows === undefined
+            ? await client.getClReplayFee({ pool, blockNumber: safeBlock })
+            : BigInt(snapshotRows.latest.fee);
         applyResult = applyClReplayDeltas({
           pool,
           seed,
           events,
+          fee,
           observedThroughBlock,
           blockHash: snapshotRows?.latest.blockHash ?? targetBlockIdentity.blockHash,
           parentHash:

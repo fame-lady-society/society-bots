@@ -197,6 +197,7 @@ class FakePoolStateClient implements FamePoolStateIndexerClient {
     string,
     FameClReplaySnapshotRead
   >();
+  public clReplayFeesByPoolId = new Map<string, bigint>();
   public clReplayLogs: readonly FameClReplayRawLog[] = [];
   public failingReserveAddress: Address | null = null;
   public failingClHeadPoolId: string | null = null;
@@ -295,6 +296,16 @@ class FakePoolStateClient implements FamePoolStateIndexerClient {
         providerReadCount: 5,
         durationMs: 12,
       }
+    );
+  }
+
+  async getClReplayFee(options: {
+    pool: FameClReplayRegistryEntry;
+  }): Promise<bigint> {
+    return (
+      this.clReplayFeesByPoolId.get(options.pool.id) ??
+      this.clReplaySnapshotsByPoolId.get(options.pool.id)?.fee ??
+      100n
     );
   }
 }
@@ -1410,6 +1421,145 @@ describe("FAME pool-state indexer", () => {
       tick: 199_900,
       liquidity: "1000",
       observedThroughBlock: 118,
+    });
+  });
+
+  test("keeps checkpoint trust when the dynamic fee changes without liquidity drift", async () => {
+    const replayPool = clReplayPool();
+    const db = new InMemoryPoolStateDb();
+    const seedClient = new FakePoolStateClient([], 120n);
+    seedClient.clReplaySnapshotsByPoolId.set(replayPool.id, {
+      sqrtPriceX96: 2n ** 96n,
+      tick: 199_900,
+      liquidity: 1_000n,
+      fee: 60n,
+      blockHash:
+        "0x1111111111111111111111111111111111111111111111111111111111111111",
+      parentHash:
+        "0x2222222222222222222222222222222222222222222222222222222222222222",
+      bitmapWords: [{ wordPosition: 7, bitmap: 1n << 207n }],
+      initializedTicks: [
+        { tick: 199_900, liquidityGross: 25n, liquidityNet: 15n },
+      ],
+      providerReadCount: 5,
+      durationMs: 12,
+    });
+
+    await indexFamePoolStates({
+      client: seedClient,
+      db,
+      tableName: "PoolState",
+      registry: registryWithPools([replayPool]),
+      clReplayTrustPromotion: true,
+      now: new Date("2026-05-20T00:00:00.000Z"),
+    });
+
+    const checkpointClient = new FakePoolStateClient([], 123n);
+    checkpointClient.clReplaySnapshotsByPoolId.set(replayPool.id, {
+      sqrtPriceX96: 2n ** 96n,
+      tick: 199_900,
+      liquidity: 1_000n,
+      fee: 712n,
+      blockHash:
+        "0x1111111111111111111111111111111111111111111111111111111111111111",
+      parentHash:
+        "0x2222222222222222222222222222222222222222222222222222222222222222",
+      bitmapWords: [{ wordPosition: 7, bitmap: 1n << 207n }],
+      initializedTicks: [
+        { tick: 199_900, liquidityGross: 25n, liquidityNet: 15n },
+      ],
+      providerReadCount: 5,
+      durationMs: 12,
+    });
+
+    const result = await indexFamePoolStates({
+      client: checkpointClient,
+      db,
+      tableName: "PoolState",
+      registry: registryWithPools([replayPool]),
+      clReplayTrustPromotion: true,
+      now: new Date("2026-05-20T00:01:00.000Z"),
+    });
+
+    expect(result.clReplayMaintenanceMetrics).toMatchObject([
+      {
+        poolId: replayPool.id,
+        status: "trusted",
+        reason: null,
+        fromBlock: 119,
+        toBlock: 121,
+        scannedLogCount: 0,
+        appliedEventCount: 0,
+        candidateWritten: true,
+      },
+    ]);
+    expect(db.getLatestClReplay(replayPool)).toMatchObject({
+      fee: "712",
+      observedThroughBlock: 121,
+    });
+  });
+
+  test("steady-state refreshes dynamic fee without full replay snapshots", async () => {
+    const replayPool = clReplayPool();
+    const db = new InMemoryPoolStateDb();
+    const seedClient = new FakePoolStateClient([], 120n);
+    seedClient.clReplaySnapshotsByPoolId.set(replayPool.id, {
+      sqrtPriceX96: 2n ** 96n,
+      tick: 199_900,
+      liquidity: 1_000n,
+      fee: 60n,
+      blockHash:
+        "0x1111111111111111111111111111111111111111111111111111111111111111",
+      parentHash:
+        "0x2222222222222222222222222222222222222222222222222222222222222222",
+      bitmapWords: [{ wordPosition: 7, bitmap: 1n << 207n }],
+      initializedTicks: [
+        { tick: 199_900, liquidityGross: 25n, liquidityNet: 15n },
+      ],
+      providerReadCount: 5,
+      durationMs: 12,
+    });
+
+    await indexFamePoolStates({
+      client: seedClient,
+      db,
+      tableName: "PoolState",
+      registry: registryWithPools([replayPool]),
+      clReplayTrustPromotion: true,
+      now: new Date("2026-05-20T00:00:00.000Z"),
+    });
+
+    const deltaClient = new FakePoolStateClient([], 123n);
+    deltaClient.clReplayFeesByPoolId.set(replayPool.id, 712n);
+
+    const result = await indexFamePoolStates({
+      client: deltaClient,
+      db,
+      tableName: "PoolState",
+      registry: registryWithPools([replayPool]),
+      clReplayMaintenanceMode: "steady-state",
+      clReplayTrustPromotion: true,
+      now: new Date("2026-05-20T00:01:00.000Z"),
+    });
+
+    expect(result).toMatchObject({
+      clReplaySnapshots: 0,
+      clReplayMaintenanceMetrics: [
+        {
+          poolId: replayPool.id,
+          status: "trusted",
+          reason: null,
+          fromBlock: 119,
+          toBlock: 121,
+          scannedLogCount: 0,
+          appliedEventCount: 0,
+          candidateWritten: true,
+        },
+      ],
+    });
+    expect(db.getLatestClReplay(replayPool)).toMatchObject({
+      fee: "712",
+      observedThroughBlock: 121,
     });
   });
 
