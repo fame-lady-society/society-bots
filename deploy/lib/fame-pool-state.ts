@@ -285,7 +285,7 @@ export class FamePoolState extends Construct {
 
     const scheduleRule = new events.Rule(this, "FamePoolStateScheduleRule", {
       schedule: events.Schedule.rate(
-        props.schedule ?? cdk.Duration.minutes(30),
+        props.schedule ?? cdk.Duration.minutes(1),
       ),
     });
     scheduleRule.addTarget(
