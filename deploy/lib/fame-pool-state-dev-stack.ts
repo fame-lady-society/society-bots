@@ -14,6 +14,16 @@ export class FamePoolStateDevStack extends cdk.Stack {
     const poolState = new FamePoolState(this, "FamePoolState", {
       baseRpcsJson: process.env.BASE_RPCS_JSON,
       serviceToken: process.env.FAME_POOL_STATE_DEV_SERVICE_TOKEN ?? "",
+      clReplayMaintenanceMode:
+        process.env.FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE === "steady-state" ||
+        process.env.FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE === "repair"
+          ? process.env.FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE
+          : "checkpoint",
+      clReplayTrustPromotion:
+        process.env.FAME_POOL_STATE_CL_REPLAY_TRUST_PROMOTION === "true",
+      clReplayMaxRangeBlocks: Number(
+        process.env.FAME_POOL_STATE_CL_REPLAY_MAX_RANGE_BLOCKS ?? "1000",
+      ),
     });
 
     const httpApi = new apigw2.HttpApi(this, "FamePoolStateDevApi", {

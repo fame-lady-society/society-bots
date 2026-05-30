@@ -129,6 +129,7 @@ function indexerResult(
     clReplayFailedPools: 0,
     clReplayFailures: [],
     clReplayMetrics: [],
+    clReplayMaintenanceMetrics: [],
     sourceRegistryId: "registry",
     ...overrides,
   };

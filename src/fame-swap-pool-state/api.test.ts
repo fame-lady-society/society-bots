@@ -12,6 +12,7 @@ import {
 import {
   clReplayStateRowsFromSnapshot,
   latestClHeadStateFromSnapshot,
+  latestClReplayMaintenanceStateKey,
   latestPoolStateKey,
   latestStateFromReserves,
   sourceRegistryIdFor,
@@ -19,6 +20,7 @@ import {
   type FameClHeadSnapshotRegistryEntry,
   type FameClReplayBitmapChunkState,
   type FameClReplayLatestState,
+  type FameClReplayMaintenanceState,
   type FameClReplayRegistryEntry,
   type FameClReplayTickChunkState,
   type FamePoolLatestState,
@@ -43,6 +45,7 @@ class BatchStateDb implements PoolStateDocumentClient {
       | FameClHeadLatestState
       | FameClReplayBitmapChunkState
       | FameClReplayLatestState
+      | FameClReplayMaintenanceState
       | FameClReplayTickChunkState
       | FamePoolLatestState
     )[],
@@ -103,6 +106,7 @@ function recordFromState(
     | FameClHeadLatestState
     | FameClReplayBitmapChunkState
     | FameClReplayLatestState
+    | FameClReplayMaintenanceState
     | FameClReplayTickChunkState
     | FamePoolLatestState,
 ): Record<string, unknown> {
@@ -290,6 +294,44 @@ function quoteClReplayRowsForPool(pool: FameClReplayRegistryEntry) {
     bitmapChunkSize: 1,
     tickChunkSize: 1,
   });
+}
+
+function trustedMaintenanceForReplayRows(
+  pool: FameClReplayRegistryEntry,
+  rows: ReturnType<typeof clReplayStateRowsFromSnapshot>,
+): FameClReplayMaintenanceState {
+  return {
+    ...latestClReplayMaintenanceStateKey(pool),
+    stateKind: "cl-replay-maintenance-v1",
+    poolId: pool.id,
+    chainId: pool.chainId,
+    poolAddress: pool.poolAddress,
+    status: "trusted",
+    cursorBlock: rows.latest.observedThroughBlock,
+    cursorBlockHash: rows.latest.blockHash,
+    cursorTransactionIndex: Number.MAX_SAFE_INTEGER,
+    cursorLogIndex: Number.MAX_SAFE_INTEGER,
+    targetBlock: rows.latest.observedThroughBlock,
+    targetBlockHash: rows.latest.blockHash,
+    stateHash: rows.latest.stateHash,
+    sourceRegistryId: rows.latest.sourceRegistryId,
+    updatedAt: "2026-05-20T00:00:00.000Z",
+    lastCheckpointBlock: rows.latest.observedThroughBlock,
+    lastCheckpointBlockHash: rows.latest.blockHash,
+    reason: null,
+    candidateId: rows.latest.snapshotId,
+  };
+}
+
+function warmingMaintenanceForReplayRows(
+  pool: FameClReplayRegistryEntry,
+  rows: ReturnType<typeof clReplayStateRowsFromSnapshot>,
+): FameClReplayMaintenanceState {
+  return {
+    ...trustedMaintenanceForReplayRows(pool, rows),
+    status: "warming",
+    reason: "shadow-not-promoted",
+  };
 }
 
 function parseFixtureObject(
@@ -491,6 +533,7 @@ describe("FAME pool-state API contract", () => {
       },
       tableName: "PoolState",
       db: new BatchStateDb([
+        trustedMaintenanceForReplayRows(pool, rows),
         rows.latest,
         ...rows.bitmapChunks,
         ...rows.tickChunks,
@@ -567,6 +610,7 @@ describe("FAME pool-state API contract", () => {
       },
       tableName: "PoolState",
       db: new BatchStateDb([
+        trustedMaintenanceForReplayRows(pool, rows),
         rows.latest,
         ...rows.bitmapChunks,
         ...rows.tickChunks,
@@ -686,6 +730,7 @@ describe("FAME pool-state API contract", () => {
           reserve1: 2500n,
           sourceRegistryId: sourceRegistryIdFor(famePoolStateRegistry.source),
         }),
+        trustedMaintenanceForReplayRows(clPool, clRows),
         clRows.latest,
         ...clRows.bitmapChunks,
         ...clRows.tickChunks,
@@ -885,7 +930,7 @@ describe("FAME pool-state API contract", () => {
       observedThroughBlock: 120,
       maxFreshnessBlocks: 120,
     });
-    expect(db.readCount).toBe(1);
+    expect(db.readCount).toBe(2);
   });
 
   test("returns unavailable CL quotes for incomplete replay capsules", async () => {
@@ -904,7 +949,11 @@ describe("FAME pool-state API contract", () => {
         ],
       },
       tableName: "PoolState",
-      db: new BatchStateDb([rows.latest, ...rows.bitmapChunks]),
+      db: new BatchStateDb([
+        trustedMaintenanceForReplayRows(pool, rows),
+        rows.latest,
+        ...rows.bitmapChunks,
+      ]),
       producerMaxFreshnessBlocks: 120,
     });
 
@@ -914,6 +963,43 @@ describe("FAME pool-state API contract", () => {
       poolId: pool.id,
       observedThroughBlock: 120,
     });
+  });
+
+  test("returns unavailable CL quotes for untrusted producer maintenance without loading chunks", async () => {
+    const pool = clReplayPool();
+    const rows = quoteClReplayRowsForPool(pool);
+    const db = new BatchStateDb([
+      warmingMaintenanceForReplayRows(pool, rows),
+      rows.latest,
+      ...rows.bitmapChunks,
+      ...rows.tickChunks,
+    ]);
+    const response = await handleFamePoolQuoteBatchRequest({
+      request: {
+        currentBlock: 125,
+        quotes: [
+          {
+            poolId: pool.id,
+            tokenIn: pool.token0,
+            tokenOut: pool.token1,
+            amountIn: "1000000",
+          },
+        ],
+      },
+      tableName: "PoolState",
+      db,
+      producerMaxFreshnessBlocks: 120,
+    });
+
+    expect(response.quotes[0]).toMatchObject({
+      status: "unavailable",
+      reason: "producer-untrusted",
+      poolId: pool.id,
+      observedThroughBlock: 120,
+      producerStatus: "warming",
+      producerReason: "shadow-not-promoted",
+    });
+    expect(db.readCount).toBe(2);
   });
 
   test("returns unavailable compact quotes for unsupported or unknown pools", async () => {

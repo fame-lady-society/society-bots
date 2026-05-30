@@ -2,10 +2,13 @@ import { isAddress, type Address, type Hex } from "viem";
 import { FamePoolStateRequestError } from "./api.ts";
 import {
   batchGetClReplayStateCapsules,
+  batchGetLatestClReplayMaintenanceStates,
   batchGetLatestClReplayPointers,
   batchGetLatestPoolStates,
   sourceRegistryIdFor,
   type FameClReplayLatestState,
+  type FameClReplayMaintenanceState,
+  type FameClReplayMaintenanceStatus,
   type FameClReplayRegistryEntry,
   type FameClReplayStateCapsule,
   type FamePoolLatestState,
@@ -43,7 +46,8 @@ export type FamePoolQuoteUnavailableReason =
   | "reserve-quote-failed"
   | "malformed-replay-state"
   | "outside-indexed-tick-range"
-  | "replay-failed";
+  | "replay-failed"
+  | "producer-untrusted";
 
 interface FamePoolQuoteUnavailableEntry {
   status: "unavailable";
@@ -55,6 +59,8 @@ interface FamePoolQuoteUnavailableEntry {
   observedThroughBlock?: number;
   sourceRegistryId?: string;
   maxFreshnessBlocks?: number;
+  producerStatus?: FameClReplayMaintenanceStatus;
+  producerReason?: string | null;
 }
 
 interface FameSlipstreamClQuoteEntry {
@@ -393,6 +399,30 @@ function clReplayStateMatchesRegistry({
     clReplayLatestStateMatchesRegistry({ latest, entry, sourceRegistryId }) &&
     latest.bitmapWordCount === state.bitmapWords.length &&
     latest.initializedTickCount === state.initializedTicks.length
+  );
+}
+
+function clReplayMaintenanceCompatible({
+  maintenance,
+  latest,
+  sourceRegistryId,
+}: {
+  maintenance: FameClReplayMaintenanceState | undefined;
+  latest: FameClReplayLatestState;
+  sourceRegistryId: string;
+}): boolean {
+  return (
+    maintenance !== undefined &&
+    maintenance.status === "trusted" &&
+    maintenance.sourceRegistryId === sourceRegistryId &&
+    maintenance.poolId === latest.poolId &&
+    maintenance.chainId === latest.chainId &&
+    sameAddress(maintenance.poolAddress, latest.poolAddress) &&
+    maintenance.cursorBlock === latest.observedThroughBlock &&
+    maintenance.cursorBlockHash === latest.blockHash &&
+    maintenance.targetBlock === latest.observedThroughBlock &&
+    maintenance.targetBlockHash === latest.blockHash &&
+    maintenance.stateHash === latest.stateHash
   );
 }
 
@@ -1081,11 +1111,25 @@ export async function handleFamePoolQuoteBatchRequest({
     tableName,
     pools: [...clReplayPoolsById.values()],
   });
+  const maintenanceStates = await batchGetLatestClReplayMaintenanceStates({
+    db,
+    tableName,
+    pools: [...clReplayPoolsById.values()],
+  });
+  const maintenanceStatesByPoolId = new Map(
+    maintenanceStates.map((state) => [state.poolId, state]),
+  );
   const freshLatestStates = latestStates.filter((latest) => {
     const entry = clReplayPoolsById.get(latest.poolId);
+    const maintenance = maintenanceStatesByPoolId.get(latest.poolId);
     return (
       entry !== undefined &&
       clReplayLatestStateMatchesRegistry({ latest, entry, sourceRegistryId }) &&
+      clReplayMaintenanceCompatible({
+        maintenance,
+        latest,
+        sourceRegistryId,
+      }) &&
       freshnessStatus({
         state: latest,
         currentBlock: parsed.currentBlock,
@@ -1227,6 +1271,25 @@ export async function handleFamePoolQuoteBatchRequest({
           observedThroughBlock: latest.observedThroughBlock,
           sourceRegistryId: latest.sourceRegistryId,
           maxFreshnessBlocks: effectiveMaxFreshnessBlocks,
+        });
+      }
+      const maintenance = maintenanceStatesByPoolId.get(entry.id);
+      if (
+        !clReplayMaintenanceCompatible({
+          maintenance,
+          latest,
+          sourceRegistryId,
+        })
+      ) {
+        return unavailable(requested, "producer-untrusted", {
+          poolId: entry.id,
+          chainId: entry.chainId,
+          poolAddress: entry.poolAddress,
+          observedThroughBlock: latest.observedThroughBlock,
+          sourceRegistryId: latest.sourceRegistryId,
+          maxFreshnessBlocks: effectiveMaxFreshnessBlocks,
+          producerStatus: maintenance?.status,
+          producerReason: maintenance?.reason,
         });
       }
 

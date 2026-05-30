@@ -19,6 +19,7 @@
     "build": "yarn fame-ipfs:origin:build && yarn fame-thumb:build && yarn fame-mosaic:build && yarn discord:build && yarn discord:fls:wrapped:build && yarn discord:cli:build",
     "generate:types": "graphql-codegen --config codegen.yml",
     "nodets": "node --import 'data:text/javascript,import { register } from \"node:module\"; import { pathToFileURL } from \"node:url\"; register(\"ts-node/esm\", pathToFileURL(\"./\"));'",
+    "fame-pool-state:delta-replay-smoke": "yarn nodets scripts/fame-pool-state-delta-replay-smoke.ts",
     "types": "tsc --noEmit -p tsconfig.json"
   },
   "devDependencies": {

@@ -133,6 +133,9 @@ describe("FamePoolState infrastructure", () => {
           BASE_RPCS_JSON: JSON.stringify(["https://base.example"]),
           FAME_POOL_STATE_DEFAULT_MAX_FRESHNESS_BLOCKS: "120",
           FAME_POOL_STATE_MAX_BATCH_SIZE: "64",
+          FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE: "checkpoint",
+          FAME_POOL_STATE_CL_REPLAY_TRUST_PROMOTION: "false",
+          FAME_POOL_STATE_CL_REPLAY_MAX_RANGE_BLOCKS: "1000",
         }),
       },
       Timeout: 60,
@@ -429,6 +432,8 @@ describe("FamePoolState infrastructure", () => {
     expect(bootstrapStep).toBeGreaterThan(-1);
     expect(preflightStep).toBeLessThan(bootstrapStep);
     expect(workflow).toContain("FAME_POOL_STATE_PR_SERVICE_TOKEN");
+    expect(workflow).toContain("FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE");
+    expect(workflow).toContain("FAME_POOL_STATE_CL_REPLAY_TRUST_PROMOTION");
     expect(workflow).not.toContain(
       "FAME_POOL_STATE_SERVICE_TOKEN: ${{ secrets.FAME_POOL_STATE_SERVICE_TOKEN }}",
     );
@@ -450,6 +455,8 @@ describe("FamePoolState infrastructure", () => {
     expect(workflow).toContain("DEPLOY_DEV");
     expect(workflow).toContain("STAGE: dev");
     expect(workflow).toContain("FAME_POOL_STATE_DEV_SERVICE_TOKEN");
+    expect(workflow).toContain("FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE");
+    expect(workflow).toContain("FAME_POOL_STATE_CL_REPLAY_TRUST_PROMOTION");
     expect(workflow).toContain('ENABLE_EVENT_SCHEDULES: "false"');
     expect(workflow).toContain(
       'IMAGE_BASE_HOST_JSON: \'["dev","fame.support"]\'',
@@ -472,6 +479,8 @@ describe("FamePoolState infrastructure", () => {
     expect(job).toContain('POOL_STATE_ONLY: "true"');
     expect(job).toContain("BASE_RPCS_JSON");
     expect(job).toContain("FAME_POOL_STATE_DEV_SERVICE_TOKEN");
+    expect(job).toContain("FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE");
+    expect(job).toContain("FAME_POOL_STATE_CL_REPLAY_TRUST_PROMOTION");
     expect(job).toContain("run: cdk bootstrap");
     expect(job).not.toContain("CDK bootstrap already done or failed");
     expect(job).not.toContain("IMAGE_BASE_HOST_JSON");
