@@ -2061,7 +2061,8 @@ export async function indexFamePoolStates({
       sourceRegistryId,
     });
     if (
-      clReplayMaintenanceMode === "steady-state" &&
+      (clReplayMaintenanceMode === "checkpoint" ||
+        clReplayMaintenanceMode === "steady-state") &&
       canAdvanceTrustedState &&
       maintenance !== null
     ) {
@@ -2166,12 +2167,22 @@ export async function indexFamePoolStates({
     const snapshotRows = clReplayRowsByPoolId.get(pool.id);
     const latest = latestClReplayByPoolId.get(pool.id) ?? null;
     const maintenance = latestClReplayMaintenanceByPoolId.get(pool.id) ?? null;
+    const canAdvanceTrustedState = clReplayMaintenanceMatchesLatest({
+      maintenance,
+      latest,
+      sourceRegistryId,
+    });
+    const snapshotSeed = snapshotRows
+      ? clReplayCapsuleFromRows(snapshotRows)
+      : null;
     const seed =
-      clReplayMaintenanceMode === "repair" && snapshotRows
-        ? clReplayCapsuleFromRows(snapshotRows)
-        : snapshotRows && !latest
-          ? clReplayCapsuleFromRows(snapshotRows)
-          : latest ?? (snapshotRows ? clReplayCapsuleFromRows(snapshotRows) : null);
+      clReplayMaintenanceMode === "repair" && snapshotSeed
+        ? snapshotSeed
+        : clReplayMaintenanceMode === "checkpoint" &&
+            snapshotSeed &&
+            !canAdvanceTrustedState
+          ? snapshotSeed
+          : latest ?? snapshotSeed;
     const replayFromBlockForPool =
       replayFromBlockByPoolId.get(pool.id) ?? observedThroughBlock + 1;
     const poolLogs = (clReplayRawLogsByPoolId.get(pool.id) ?? []).filter(

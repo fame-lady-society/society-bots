@@ -34,6 +34,8 @@ import {
   latestClReplayMaintenanceStateKey,
   latestClReplayStateKey,
   latestPoolStateKey,
+  putLatestClReplayState,
+  sourceRegistryIdFor,
   type FameClHeadSnapshotRegistryEntry,
   type FameClReplayRegistryEntry,
   type PoolStateDocumentClient,
@@ -1329,10 +1331,108 @@ describe("FAME pool-state indexer", () => {
     });
   });
 
+  test("checkpoint promotion seeds maintenance from a fresh snapshot when a legacy replay pointer has no maintenance row", async () => {
+    const replayPool = clReplayPool();
+    const registry = registryWithPools([replayPool]);
+    const db = new InMemoryPoolStateDb();
+
+    await putLatestClReplayState({
+      db,
+      tableName: "PoolState",
+      rows: clReplayStateRowsFromSnapshot({
+        pool: replayPool,
+        sqrtPriceX96: 2n ** 96n,
+        tick: 199_800,
+        liquidity: 500n,
+        fee: 100n,
+        observedThroughBlock: 110,
+        blockHash:
+          "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        parentHash:
+          "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        snapshotId: "legacy-110",
+        stateHash:
+          "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        sourceRegistryId: sourceRegistryIdFor(registry.source),
+        updatedAt: "2026-05-20T00:00:00.000Z",
+        bitmapWords: [{ wordPosition: 7, bitmap: 1n << 206n }],
+        initializedTicks: [
+          { tick: 199_800, liquidityGross: 10n, liquidityNet: 10n },
+        ],
+      }),
+    });
+
+    const checkpointClient = new FakePoolStateClient([], 120n);
+    checkpointClient.clReplaySnapshotsByPoolId.set(replayPool.id, {
+      sqrtPriceX96: 2n ** 96n,
+      tick: 199_900,
+      liquidity: 1_000n,
+      fee: 100n,
+      blockHash:
+        "0x1111111111111111111111111111111111111111111111111111111111111111",
+      parentHash:
+        "0x2222222222222222222222222222222222222222222222222222222222222222",
+      bitmapWords: [{ wordPosition: 7, bitmap: 1n << 207n }],
+      initializedTicks: [
+        { tick: 199_900, liquidityGross: 25n, liquidityNet: 15n },
+      ],
+      providerReadCount: 5,
+      durationMs: 12,
+    });
+
+    const result = await indexFamePoolStates({
+      client: checkpointClient,
+      db,
+      tableName: "PoolState",
+      registry,
+      clReplayTrustPromotion: true,
+      now: new Date("2026-05-20T00:01:00.000Z"),
+    });
+
+    expect(result.clReplayMaintenanceMetrics).toMatchObject([
+      {
+        poolId: replayPool.id,
+        status: "trusted",
+        reason: null,
+        fromBlock: 118,
+        toBlock: 118,
+        scannedLogCount: 0,
+        appliedEventCount: 0,
+        candidateWritten: true,
+      },
+    ]);
+    expect(db.getLatestClReplayMaintenance(replayPool)).toMatchObject({
+      status: "trusted",
+      reason: null,
+      cursorBlock: 118,
+    });
+    expect(db.getLatestClReplay(replayPool)).toMatchObject({
+      tick: 199_900,
+      liquidity: "1000",
+      observedThroughBlock: 118,
+    });
+  });
+
   test("marks checkpoint drift failed and repairs from a complete snapshot", async () => {
     const replayPool = clReplayPool();
     const db = new InMemoryPoolStateDb();
     const seedClient = new FakePoolStateClient([], 120n);
+    seedClient.clReplaySnapshotsByPoolId.set(replayPool.id, {
+      sqrtPriceX96: 2n ** 96n,
+      tick: 199_900,
+      liquidity: 1_000n,
+      fee: 100n,
+      blockHash:
+        "0x1111111111111111111111111111111111111111111111111111111111111111",
+      parentHash:
+        "0x2222222222222222222222222222222222222222222222222222222222222222",
+      bitmapWords: [{ wordPosition: 7, bitmap: 1n << 207n }],
+      initializedTicks: [
+        { tick: 199_900, liquidityGross: 25n, liquidityNet: 15n },
+      ],
+      providerReadCount: 5,
+      durationMs: 12,
+    });
 
     await indexFamePoolStates({
       client: seedClient,
