@@ -3,9 +3,12 @@ import { BatchGetCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
 import type { Address, Hex } from "viem";
 import {
   batchGetLatestClReplayStates,
+  batchGetLatestClReplayCandidateStates,
+  batchGetLatestClReplayMaintenanceStates,
   CL_REPLAY_CHUNK_TTL_SECONDS,
   batchGetLatestClHeadStates,
   batchGetLatestPoolStates,
+  clReplayCandidateStateRowsFromSnapshot,
   clReplayStateRowsFromSnapshot,
   comparePoolStateEventVersions,
   getLatestClHeadState,
@@ -15,11 +18,14 @@ import {
   latestClReplayStateKey,
   latestPoolStateKey,
   putLatestClReplayState,
+  putLatestClReplayCandidateState,
+  putLatestClReplayMaintenanceState,
   latestStateFromReserves,
   putLatestClHeadState,
   putLatestPoolState,
   sourceRegistryIdFor,
   type FameClReplayRegistryEntry,
+  type FameClReplayMaintenanceState,
   type FameClHeadSnapshotRegistryEntry,
   type PoolStateDocumentClient,
   type PoolStateDynamoResponse,
@@ -181,6 +187,55 @@ class ReplayStateDb implements PoolStateDocumentClient {
           (currentBlock === incomingBlock &&
             currentSourceRegistryId !== incomingSourceRegistryId)
         ) {
+          const error = new Error("conditional");
+          error.name = "ConditionalCheckFailedException";
+          throw error;
+        }
+      }
+      if (
+        condition ===
+          "attribute_not_exists(pk) OR cursorBlock < :cursorBlock OR (cursorBlock = :cursorBlock AND cursorTransactionIndex < :cursorTransactionIndex) OR (cursorBlock = :cursorBlock AND cursorTransactionIndex = :cursorTransactionIndex AND cursorLogIndex < :cursorLogIndex) OR (cursorBlock = :cursorBlock AND cursorTransactionIndex = :cursorTransactionIndex AND cursorLogIndex = :cursorLogIndex AND sourceRegistryId = :sourceRegistryId)" &&
+        existing
+      ) {
+        const values = command.input.ExpressionAttributeValues;
+        if (!values) {
+          throw new Error(
+            "PutCommand fixture is missing ExpressionAttributeValues.",
+          );
+        }
+        const incoming = {
+          cursorBlock: numberField(values, ":cursorBlock"),
+          cursorTransactionIndex: numberField(
+            values,
+            ":cursorTransactionIndex",
+          ),
+          cursorLogIndex: numberField(values, ":cursorLogIndex"),
+          sourceRegistryId: stringField(values, ":sourceRegistryId"),
+        };
+        const current = {
+          cursorBlock: numberField(existing, "cursorBlock"),
+          cursorTransactionIndex: numberField(
+            existing,
+            "cursorTransactionIndex",
+          ),
+          cursorLogIndex: numberField(existing, "cursorLogIndex"),
+          sourceRegistryId: stringField(existing, "sourceRegistryId"),
+        };
+        const incomingIsStale =
+          current.cursorBlock > incoming.cursorBlock ||
+          (current.cursorBlock === incoming.cursorBlock &&
+            current.cursorTransactionIndex >
+              incoming.cursorTransactionIndex) ||
+          (current.cursorBlock === incoming.cursorBlock &&
+            current.cursorTransactionIndex ===
+              incoming.cursorTransactionIndex &&
+            current.cursorLogIndex > incoming.cursorLogIndex) ||
+          (current.cursorBlock === incoming.cursorBlock &&
+            current.cursorTransactionIndex ===
+              incoming.cursorTransactionIndex &&
+            current.cursorLogIndex === incoming.cursorLogIndex &&
+            current.sourceRegistryId !== incoming.sourceRegistryId);
+        if (incomingIsStale) {
           const error = new Error("conditional");
           error.name = "ConditionalCheckFailedException";
           throw error;
@@ -459,6 +514,288 @@ describe("FAME pool-state DynamoDB mapping", () => {
         CL_REPLAY_CHUNK_TTL_SECONDS,
     );
     expect(rows.tickChunks[0]?.expiresAt).toBe(rows.bitmapChunks[0]?.expiresAt);
+  });
+
+  test("round-trips replay maintenance rows independently from published replay state", async () => {
+    const pool = clReplayPool();
+    const trustedState: FameClReplayMaintenanceState = {
+      pk: `pool:${pool.chainId.toString()}:address:${pool.poolAddress.toLowerCase()}`,
+      sk: "cl-replay-maintenance-v1",
+      stateKind: "cl-replay-maintenance-v1",
+      poolId: pool.id,
+      chainId: pool.chainId,
+      poolAddress: pool.poolAddress,
+      status: "trusted",
+      cursorBlock: 321,
+      cursorBlockHash:
+        "0x1111111111111111111111111111111111111111111111111111111111111111",
+      cursorTransactionIndex: 4,
+      cursorLogIndex: 9,
+      targetBlock: 325,
+      targetBlockHash:
+        "0x2222222222222222222222222222222222222222222222222222222222222222",
+      stateHash:
+        "0x3333333333333333333333333333333333333333333333333333333333333333",
+      sourceRegistryId: "unit-registry",
+      updatedAt: "2026-05-20T00:00:00.000Z",
+      lastCheckpointBlock: 300,
+      lastCheckpointBlockHash:
+        "0x4444444444444444444444444444444444444444444444444444444444444444",
+      reason: null,
+      candidateId: "candidate-321",
+    };
+    const db = new ReplayStateDb();
+
+    await expect(
+      putLatestClReplayMaintenanceState({
+        db,
+        tableName: "PoolState",
+        state: trustedState,
+      }),
+    ).resolves.toBe("written");
+    await expect(
+      batchGetLatestClReplayMaintenanceStates({
+        db,
+        tableName: "PoolState",
+        pools: [pool],
+      }),
+    ).resolves.toEqual([trustedState]);
+    await expect(
+      batchGetLatestClReplayStates({
+        db,
+        tableName: "PoolState",
+        pools: [pool],
+      }),
+    ).resolves.toEqual([]);
+  });
+
+  test("persists warming replay maintenance rows without a replay pointer", async () => {
+    const pool = clReplayPool();
+    const warmingState: FameClReplayMaintenanceState = {
+      pk: `pool:${pool.chainId.toString()}:address:${pool.poolAddress.toLowerCase()}`,
+      sk: "cl-replay-maintenance-v1",
+      stateKind: "cl-replay-maintenance-v1",
+      poolId: pool.id,
+      chainId: pool.chainId,
+      poolAddress: pool.poolAddress,
+      status: "warming",
+      cursorBlock: 0,
+      cursorBlockHash:
+        "0x0000000000000000000000000000000000000000000000000000000000000000",
+      cursorTransactionIndex: 0,
+      cursorLogIndex: 0,
+      targetBlock: 0,
+      targetBlockHash:
+        "0x0000000000000000000000000000000000000000000000000000000000000000",
+      stateHash:
+        "0x0000000000000000000000000000000000000000000000000000000000000000",
+      sourceRegistryId: "unit-registry",
+      updatedAt: "2026-05-20T00:00:00.000Z",
+      lastCheckpointBlock: null,
+      lastCheckpointBlockHash: null,
+      reason: "seed-required",
+      candidateId: null,
+    };
+    const db = new ReplayStateDb();
+
+    await expect(
+      putLatestClReplayMaintenanceState({
+        db,
+        tableName: "PoolState",
+        state: warmingState,
+      }),
+    ).resolves.toBe("written");
+    expect(db.items.get(`${warmingState.pk}\u0000cl-replay-v1`)).toBeUndefined();
+  });
+
+  test("rejects stale replay maintenance cursor writes", async () => {
+    const pool = clReplayPool();
+    const baseState: FameClReplayMaintenanceState = {
+      pk: `pool:${pool.chainId.toString()}:address:${pool.poolAddress.toLowerCase()}`,
+      sk: "cl-replay-maintenance-v1",
+      stateKind: "cl-replay-maintenance-v1",
+      poolId: pool.id,
+      chainId: pool.chainId,
+      poolAddress: pool.poolAddress,
+      status: "event-gap",
+      cursorBlock: 321,
+      cursorBlockHash:
+        "0x1111111111111111111111111111111111111111111111111111111111111111",
+      cursorTransactionIndex: 4,
+      cursorLogIndex: 9,
+      targetBlock: 325,
+      targetBlockHash:
+        "0x2222222222222222222222222222222222222222222222222222222222222222",
+      stateHash:
+        "0x3333333333333333333333333333333333333333333333333333333333333333",
+      sourceRegistryId: "registry-a",
+      updatedAt: "2026-05-20T00:00:00.000Z",
+      lastCheckpointBlock: null,
+      lastCheckpointBlockHash: null,
+      reason: "cursor-block-hash-mismatch",
+      candidateId: null,
+    };
+    const db = new ReplayStateDb();
+
+    await expect(
+      putLatestClReplayMaintenanceState({
+        db,
+        tableName: "PoolState",
+        state: baseState,
+      }),
+    ).resolves.toBe("written");
+    await expect(
+      putLatestClReplayMaintenanceState({
+        db,
+        tableName: "PoolState",
+        state: {
+          ...baseState,
+          cursorLogIndex: 8,
+          updatedAt: "2026-05-20T00:01:00.000Z",
+        },
+      }),
+    ).resolves.toBe("ignored");
+    await expect(
+      putLatestClReplayMaintenanceState({
+        db,
+        tableName: "PoolState",
+        state: {
+          ...baseState,
+          status: "trusted",
+          reason: null,
+          updatedAt: "2026-05-20T00:02:00.000Z",
+        },
+      }),
+    ).resolves.toBe("written");
+  });
+
+  test("rejects malformed replay maintenance rows", async () => {
+    const pool = clReplayPool();
+    const state: FameClReplayMaintenanceState = {
+      pk: `pool:${pool.chainId.toString()}:address:${pool.poolAddress.toLowerCase()}`,
+      sk: "cl-replay-maintenance-v1",
+      stateKind: "cl-replay-maintenance-v1",
+      poolId: pool.id,
+      chainId: pool.chainId,
+      poolAddress: pool.poolAddress,
+      status: "trusted",
+      cursorBlock: 321,
+      cursorBlockHash:
+        "0x1111111111111111111111111111111111111111111111111111111111111111",
+      cursorTransactionIndex: 4,
+      cursorLogIndex: 9,
+      targetBlock: 325,
+      targetBlockHash:
+        "0x2222222222222222222222222222222222222222222222222222222222222222",
+      stateHash:
+        "0x3333333333333333333333333333333333333333333333333333333333333333",
+      sourceRegistryId: "unit-registry",
+      updatedAt: "2026-05-20T00:00:00.000Z",
+      lastCheckpointBlock: 300,
+      lastCheckpointBlockHash:
+        "0x4444444444444444444444444444444444444444444444444444444444444444",
+      reason: null,
+      candidateId: "candidate-321",
+    };
+
+    await expect(
+      batchGetLatestClReplayMaintenanceStates({
+        db: new ReplayStateDb([{ ...state, status: "ready" }]),
+        tableName: "PoolState",
+        pools: [pool],
+      }),
+    ).rejects.toThrow(/Invalid CL replay maintenance DynamoDB item/);
+    await expect(
+      batchGetLatestClReplayMaintenanceStates({
+        db: new ReplayStateDb([{ ...state, cursorBlockHash: "0x1" }]),
+        tableName: "PoolState",
+        pools: [pool],
+      }),
+    ).rejects.toThrow(/Invalid CL replay maintenance DynamoDB item/);
+    await expect(
+      batchGetLatestClReplayMaintenanceStates({
+        db: new ReplayStateDb([{ ...state, sourceRegistryId: "" }]),
+        tableName: "PoolState",
+        pools: [pool],
+      }),
+    ).rejects.toThrow(/Invalid CL replay maintenance DynamoDB item/);
+  });
+
+  test("writes candidate replay chunks before candidate pointer and keeps candidates invisible to quote reads", async () => {
+    const pool = clReplayPool();
+    const rows = clReplayCandidateStateRowsFromSnapshot({
+      pool,
+      sqrtPriceX96: 2n ** 96n,
+      tick: 199_900,
+      liquidity: 123_456_789n,
+      fee: 100n,
+      observedThroughBlock: 321,
+      blockHash:
+        "0x1111111111111111111111111111111111111111111111111111111111111111",
+      parentHash:
+        "0x2222222222222222222222222222222222222222222222222222222222222222",
+      candidateId: "unit-candidate-321",
+      stateHash:
+        "0x3333333333333333333333333333333333333333333333333333333333333333",
+      sourceRegistryId: "unit-registry",
+      updatedAt: "2026-05-20T00:00:00.000Z",
+      bitmapWords: [
+        { wordPosition: 7, bitmap: 1n },
+        { wordPosition: 8, bitmap: 2n ** 255n },
+      ],
+      initializedTicks: [
+        { tick: 199_800, liquidityGross: 10n, liquidityNet: -10n },
+        { tick: 199_900, liquidityGross: 25n, liquidityNet: 15n },
+      ],
+      bitmapChunkSize: 1,
+      tickChunkSize: 1,
+    });
+    const db = new ReplayStateDb();
+
+    await expect(
+      putLatestClReplayCandidateState({
+        db,
+        tableName: "PoolState",
+        rows,
+      }),
+    ).resolves.toBe("written");
+    await expect(
+      batchGetLatestClReplayCandidateStates({
+        db,
+        tableName: "PoolState",
+        pools: [pool],
+      }),
+    ).resolves.toEqual([
+      {
+        latest: rows.latest,
+        bitmapWords: rows.bitmapChunks.flatMap((chunk) => chunk.bitmapWords),
+        initializedTicks: rows.tickChunks.flatMap(
+          (chunk) => chunk.initializedTicks,
+        ),
+      },
+    ]);
+    await expect(
+      batchGetLatestClReplayStates({
+        db,
+        tableName: "PoolState",
+        pools: [pool],
+      }),
+    ).resolves.toEqual([]);
+    expect(db.commands.map((command) => command.constructor.name)).toEqual([
+      "PutCommand",
+      "PutCommand",
+      "PutCommand",
+      "PutCommand",
+      "PutCommand",
+      "BatchGetCommand",
+      "BatchGetCommand",
+      "BatchGetCommand",
+    ]);
+    expect(rows.latest).toMatchObject({
+      sk: "cl-replay-candidate-v1",
+      stateKind: "cl-replay-candidate-v1",
+      candidateId: "unit-candidate-321",
+    });
   });
 
   test("keeps the published replay capsule when a same-block registry write is ignored", async () => {

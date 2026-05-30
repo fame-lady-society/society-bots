@@ -43,6 +43,8 @@ jobs:
         env:
           BASE_RPCS_JSON: ${{ secrets.BASE_RPCS_JSON }}
           FAME_POOL_STATE_SERVICE_TOKEN: ${{ secrets.FAME_POOL_STATE_DEV_SERVICE_TOKEN }}
+          FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE: ${{ vars.FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE }}
+          FAME_POOL_STATE_CL_REPLAY_TRUST_PROMOTION: ${{ vars.FAME_POOL_STATE_CL_REPLAY_TRUST_PROMOTION }}
         run: bash scripts/validate-fame-pool-state-deploy-config.sh
 
       - name: Deploy CDK Dev Stack
@@ -52,6 +54,8 @@ jobs:
           ENABLE_EVENT_SCHEDULES: "false"
           BASE_RPCS_JSON: ${{ secrets.BASE_RPCS_JSON }}
           FAME_POOL_STATE_SERVICE_TOKEN: ${{ secrets.FAME_POOL_STATE_DEV_SERVICE_TOKEN }}
+          FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE: ${{ vars.FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE }}
+          FAME_POOL_STATE_CL_REPLAY_TRUST_PROMOTION: ${{ vars.FAME_POOL_STATE_CL_REPLAY_TRUST_PROMOTION }}
           MAINNET_RPCS_JSON: ${{ secrets.MAINNET_RPCS_JSON }}
           SEPOLIA_RPCS_JSON: ${{ secrets.SEPOLIA_RPCS_JSON }}
           DISCORD_APP_ID: ${{ secrets.DISCORD_APP_ID }}
@@ -102,6 +106,8 @@ jobs:
         env:
           BASE_RPCS_JSON: ${{ secrets.BASE_RPCS_JSON }}
           FAME_POOL_STATE_SERVICE_TOKEN: ${{ secrets.FAME_POOL_STATE_DEV_SERVICE_TOKEN }}
+          FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE: ${{ vars.FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE }}
+          FAME_POOL_STATE_CL_REPLAY_TRUST_PROMOTION: ${{ vars.FAME_POOL_STATE_CL_REPLAY_TRUST_PROMOTION }}
         run: bash scripts/validate-fame-pool-state-deploy-config.sh
 
       - name: Bootstrap CDK
@@ -110,6 +116,8 @@ jobs:
           POOL_STATE_ONLY: "true"
           BASE_RPCS_JSON: ${{ secrets.BASE_RPCS_JSON }}
           FAME_POOL_STATE_DEV_SERVICE_TOKEN: ${{ secrets.FAME_POOL_STATE_DEV_SERVICE_TOKEN }}
+          FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE: ${{ vars.FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE }}
+          FAME_POOL_STATE_CL_REPLAY_TRUST_PROMOTION: ${{ vars.FAME_POOL_STATE_CL_REPLAY_TRUST_PROMOTION }}
         run: cdk bootstrap
         working-directory: deploy/
 
@@ -119,6 +127,8 @@ jobs:
           POOL_STATE_ONLY: "true"
           BASE_RPCS_JSON: ${{ secrets.BASE_RPCS_JSON }}
           FAME_POOL_STATE_DEV_SERVICE_TOKEN: ${{ secrets.FAME_POOL_STATE_DEV_SERVICE_TOKEN }}
+          FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE: ${{ vars.FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE }}
+          FAME_POOL_STATE_CL_REPLAY_TRUST_PROMOTION: ${{ vars.FAME_POOL_STATE_CL_REPLAY_TRUST_PROMOTION }}
         run: cdk deploy --require-approval never --all
         working-directory: deploy/
 
@@ -178,6 +188,8 @@ jobs:
         env:
           BASE_RPCS_JSON: ${{ secrets.BASE_RPCS_JSON }}
           FAME_POOL_STATE_SERVICE_TOKEN: ${{ secrets.FAME_POOL_STATE_PR_SERVICE_TOKEN }}
+          FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE: ${{ vars.FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE }}
+          FAME_POOL_STATE_CL_REPLAY_TRUST_PROMOTION: ${{ vars.FAME_POOL_STATE_CL_REPLAY_TRUST_PROMOTION }}
         run: bash scripts/validate-fame-pool-state-deploy-config.sh
 
       - name: Bootstrap CDK
@@ -192,6 +204,8 @@ jobs:
           ALCHEMY_WEBHOOK_SIGNING_KEY: ${{ secrets.ALCHEMY_WEBHOOK_SIGNING_KEY }}
           BASE_RPCS_JSON: ${{ secrets.BASE_RPCS_JSON }}
           FAME_POOL_STATE_SERVICE_TOKEN: ${{ secrets.FAME_POOL_STATE_PR_SERVICE_TOKEN }}
+          FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE: ${{ vars.FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE }}
+          FAME_POOL_STATE_CL_REPLAY_TRUST_PROMOTION: ${{ vars.FAME_POOL_STATE_CL_REPLAY_TRUST_PROMOTION }}
           MAINNET_RPCS_JSON: ${{ secrets.MAINNET_RPCS_JSON }}
           SEPOLIA_RPCS_JSON: ${{ secrets.SEPOLIA_RPCS_JSON }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}

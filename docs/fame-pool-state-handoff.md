@@ -107,6 +107,7 @@ Final todos before enabling `www` production helper env:
 - Run an authenticated helper smoke call.
 - Run indexed route-lab from `www` with `BASE_RPC_URL` or `FAME_POOL_STATE_CURRENT_BLOCK`.
 - Run a `www` quote API smoke check.
+- Run `yarn fame-pool-state:delta-replay-smoke <input-json>` with redacted indexer/quote evidence and attach the report.
 - Watch at least five scheduled indexer intervals and confirm non-regressing `observedThroughBlock`, no Lambda errors/throttles, and failure queue depth `0`.
 
 ## Registry Refresh
@@ -131,6 +132,8 @@ Status meanings:
 - `unsupported`: the pool is reviewed but not eligible for the requested indexed state surface.
 
 The producer freshness default is configured by `FAME_POOL_STATE_DEFAULT_MAX_FRESHNESS_BLOCKS`. Callers may ask for stricter freshness, but cannot loosen the producer default.
+
+Delta CL replay maintenance is separate from the quoteable replay pointer. The indexer may write `cl-replay-candidate-v1` shadow capsules and `cl-replay-maintenance-v1` lifecycle rows, then publish a quoteable replay pointer only after a checkpoint-clean trusted promotion. `/fame/pool-quotes` only emits `cl-quote-v1` when maintenance is trusted and exactly compatible with the replay pointer. Warming, event-gap, drift-failed, repairing, or source-mismatched maintenance rows surface as unavailable compact quote evidence so `www` keeps live fallback. The supported Slipstream maintenance event surface is `Swap`, `Mint`, `Burn`, and no-op `Collect`; unknown topics still fail closed.
 
 ## AWS Surface
 

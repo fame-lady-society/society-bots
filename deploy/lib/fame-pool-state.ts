@@ -21,6 +21,9 @@ export interface FamePoolStateProps {
   readonly apiReservedConcurrency?: number;
   readonly defaultMaxFreshnessBlocks?: number;
   readonly maxBatchSize?: number;
+  readonly clReplayMaintenanceMode?: "checkpoint" | "steady-state" | "repair";
+  readonly clReplayTrustPromotion?: boolean;
+  readonly clReplayMaxRangeBlocks?: number;
   readonly schedule?: cdk.Duration;
 }
 
@@ -104,6 +107,13 @@ export class FamePoolState extends Construct {
     const defaultMaxFreshnessBlocks =
       props.defaultMaxFreshnessBlocks?.toString() ?? "120";
     const maxBatchSize = props.maxBatchSize?.toString() ?? "64";
+    const clReplayMaintenanceMode =
+      props.clReplayMaintenanceMode ?? "checkpoint";
+    const clReplayTrustPromotion = props.clReplayTrustPromotion
+      ? "true"
+      : "false";
+    const clReplayMaxRangeBlocks =
+      props.clReplayMaxRangeBlocks?.toString() ?? "1000";
 
     const table = new dynamodb.Table(this, "FamePoolState", {
       partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
@@ -140,6 +150,10 @@ export class FamePoolState extends Construct {
       environment: {
         ...commonEnvironment,
         BASE_RPCS_JSON: baseRpcsJson,
+        FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE:
+          clReplayMaintenanceMode,
+        FAME_POOL_STATE_CL_REPLAY_TRUST_PROMOTION: clReplayTrustPromotion,
+        FAME_POOL_STATE_CL_REPLAY_MAX_RANGE_BLOCKS: clReplayMaxRangeBlocks,
       },
     });
     table.grantReadWriteData(indexerLambda);
@@ -271,7 +285,7 @@ export class FamePoolState extends Construct {
 
     const scheduleRule = new events.Rule(this, "FamePoolStateScheduleRule", {
       schedule: events.Schedule.rate(
-        props.schedule ?? cdk.Duration.minutes(30),
+        props.schedule ?? cdk.Duration.minutes(1),
       ),
     });
     scheduleRule.addTarget(

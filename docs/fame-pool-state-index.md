@@ -9,13 +9,14 @@
 - Concentrated-liquidity head snapshots: Slipstream, Slipstream2, Uniswap V3, and Uniswap V4 pools with reviewed fee metadata.
 - Concentrated-liquidity replay snapshots: exactly `slipstream-usdc-weth-100` with complete safe-block `cl-replay-v1` state for the first proof.
 - Tracked-only pools: stable Solidly, native wrap, pools missing reviewed CL metadata, and unknown unsupported invariants.
-- No factory discovery, stable math, broad concentrated-liquidity replay, event-driven tick maintenance, notifier behavior, or public solver routing is owned here.
+- No factory discovery, stable math, broad concentrated-liquidity replay, notifier behavior, or public solver routing is owned here.
 
 ## Runtime
 
 - `FamePoolState` CDK creates one DynamoDB table keyed by `pk` and `sk`, a scheduled indexer Lambda, and an authenticated read API Lambda.
 - The indexer scans Base `Sync` logs for quote-model pools, reconciles every quote-model pool with `getReserves` at the safe block, writes monotonic latest rows when reserves drift or rows are missing, updates `observedThroughBlock`, records complete CL head snapshots at the same safe block, captures a full `cl-replay-v1` Slipstream snapshot for `slipstream-usdc-weth-100`, and advances a cursor only after reserve reconciliation succeeds.
 - The replay snapshot lane reads slot0, current liquidity, dynamic pool fee, the full initialized tick bitmap word range, and initialized tick liquidity records at one safe block. It writes bitmap/tick chunks first, then publishes the latest replay pointer so the API never returns a partial snapshot as fresh replay state.
+- The delta replay maintenance lane is checkpoint-seeded and promotion-gated. It stores a separate `cl-replay-maintenance-v1` lifecycle row and non-quoteable `cl-replay-candidate-v1` capsule for supported `Swap`, `Mint`, and `Burn` deltas; `Collect` is decoded as a supported no-op for quote-state maintenance. Full snapshots remain the seed/checkpoint/repair artifact; warming, event-gap, drift-failed, and repairing maintenance state cannot publish compact CL quotes. Trusted promotion can publish the reducer-maintained capsule only when the checkpoint is drift-clean and the maintenance row is cursor/state-hash compatible.
 - The API serves bounded batch reads to server-side `www` callers. API Gateway uses a Lambda authorizer for the same service token before invoking the API Lambda, and the API Lambda keeps its own token check as defense in depth. The token must be supplied through `Authorization: Bearer <token>`.
 - The API Lambda dispatches only `/fame/pool-state` and `/fame/pool-quotes`; unknown paths return an invalid-request error instead of falling through to pool-state handling.
 - The indexer has SQS-backed async failure destinations plus passive CloudWatch alarms for Lambda errors, Lambda throttles, missed invocations, and non-empty failure queue depth. These alarms have no notification action by default; they are an inspectable health surface for a free community service.
@@ -50,7 +51,7 @@ Freshness is based on `observedThroughBlock`, not `lastReserveChangeBlock`.
 
 Reserve quote-model pools return `constant-product-quote-v1` rows when fresh matching reserve state is available. Each row includes pool identity, token direction, `amountIn`, `amountOut`, `quoteModel: "constant-product-reserves"`, `quoteModelVersion: 1`, `feeBps`, `feeSource: "registry-fee"`, `stateSource`, `observedThroughBlock`, source registry id, price-impact fields, and safe protocol evidence. The quote math matches the existing `www` constant-product reserve adapter: input fee in basis points is applied before the invariant quote, while price-impact evidence uses full input amount against pre/post reserves.
 
-`slipstream-usdc-weth-100` keeps its existing `cl-quote-v1` compact row shape and still omits raw replay arrays. Other reviewed-but-unquoted pools return `unavailable` with an enum reason such as `unsupported-pool`, `missing-indexed-state`, `stale-indexed-state`, `source-registry-mismatch`, `token-direction-mismatch`, `malformed-reserve-state`, `reserve-quote-failed`, `malformed-replay-state`, `outside-indexed-tick-range`, or `replay-failed`.
+`slipstream-usdc-weth-100` keeps its existing `cl-quote-v1` compact row shape and still omits raw replay arrays. A CL compact quote is emitted only when the replay pointer is fresh and the matching maintenance row is trusted, source-registry-compatible, cursor-current, and state-hash-compatible. Shadow reducer candidates or unpromoted producer state return `unavailable` with `producer-untrusted` until reviewed promotion evidence exists. Other reviewed-but-unquoted pools return `unavailable` with an enum reason such as `unsupported-pool`, `missing-indexed-state`, `stale-indexed-state`, `source-registry-mismatch`, `token-direction-mismatch`, `malformed-reserve-state`, `reserve-quote-failed`, `malformed-replay-state`, `outside-indexed-tick-range`, or `replay-failed`.
 
 The versioned producer fixture at `src/fame-swap-pool-state/fixtures/pool-quotes-v1.json` locks the reserve quote row shape and exact amount/price-impact semantics for every reserve quote-model pool in both directions.
 
@@ -58,7 +59,9 @@ The versioned producer fixture at `src/fame-swap-pool-state/fixtures/pool-quotes
 
 Pool-state Lambda logs use compact JSON envelopes with `level`, `event`, `timestamp`, and event-specific metadata. Do not log service tokens, authorization headers, full RPC URLs, raw request bodies, raw tick arrays, or raw replay payloads.
 
-Indexer logs use `event: "fame-pool-state-indexed"` with chain id, block range, event counts, seeded pool count, reconciled pool count, observed pool count, replay snapshot success/failure counts, replay sizing metrics, duration, and registry id. Replay snapshot failures use `level: "error"` and preserve fail-fast Lambda behavior.
+Indexer logs use `event: "fame-pool-state-indexed"` with chain id, block range, event counts, seeded pool count, reconciled pool count, observed pool count, replay snapshot success/failure counts, replay sizing metrics, replay maintenance metrics, duration, and registry id. Replay maintenance metrics include scanned ranges, scanned log count, applied event count, candidate write status, state hash, and bounded status/reason fields. Replay snapshot failures use `level: "error"` and preserve fail-fast Lambda behavior.
+
+Replay maintenance modes are operator-controlled with `FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE=checkpoint|steady-state|repair`, `FAME_POOL_STATE_CL_REPLAY_TRUST_PROMOTION=true|false`, and `FAME_POOL_STATE_CL_REPLAY_MAX_RANGE_BLOCKS`. The default remains checkpoint mode without trust promotion. Steady-state mode advances trusted reducer state from bounded log reads and avoids full replay snapshots; repair mode reseeds trusted state from a complete full checkpoint after drift has failed closed.
 
 API success logs use `event: "fame-pool-state-api-batch"` with registry id, current block, effective freshness, batch size, status counts, and compact replay counts when `cl-replay-v1` state is returned. Ordinary all-fresh non-replay batches are not logged at INFO. Replay responses, stale rows, unknown rows, unsupported rows, malformed requests, and dependency failures remain operator-visible.
 
@@ -133,11 +136,12 @@ Do not add email, pager, or chat notification actions for the first release unle
 - failure queue depth;
 - any RPC timeout, throttle, or cursor-lag notes.
 
-14. Run `www` route lab with `--indexed`, `BASE_RPC_URL` or `FAME_POOL_STATE_CURRENT_BLOCK`, and production-like helper env. The tool derives proof-only raw-state reads from `FAME_POOL_API_URL` plus `/fame/pool-state`; confirm the indexed summary reports `cl replay slipstream-usdc-weth-100 ...` while selected CL quotes remain live or recorded in shadow mode.
+14. Run `www` route lab with `--indexed`, `BASE_RPC_URL` or `FAME_POOL_STATE_CURRENT_BLOCK`, and production-like helper env. The tool derives proof-only raw-state reads from `FAME_POOL_API_URL` plus `/fame/pool-state`; confirm the indexed summary reports `cl replay slipstream-usdc-weth-100 fresh block ... ticks ... hash ...` after a trusted steady-state delta pass with `clReplaySnapshots: 0`.
 15. Run `www` CL replay parity with `bun scripts/fame-swap-cl-replay-parity.ts` and production-like helper/RPC env. The tool also derives `/fame/pool-state` from the same `FAME_POOL_API_URL` base. Promotion requires exact same-block `amountOut` equality for both WETH -> USDC and USDC -> WETH amount bands.
 16. Run a `www` quote API smoke check against `/fame/pool-quotes`.
-17. Record route-lab and parity evidence locations in the PR or release checklist. Evidence must cover indexed success plus fallback-relevant stale, unknown, unsupported, malformed, incomplete replay, and unavailable-helper cases.
-18. Enable `www` server env `FAME_POOL_API_URL` and `FAME_POOL_STATE_SERVICE_TOKEN` only after route-lab and parity proof are attached. Do not create `NEXT_PUBLIC_` variants.
+17. Run `yarn fame-pool-state:delta-replay-smoke <input-json>` against an allowlisted JSON bundle containing an indexer result and optional quote response. Attach the redacted report with maintenance status, scanned range, applied delta count, candidate write status, full snapshot count, provider read count, compact quote count, and unavailable reasons.
+18. Record route-lab, parity, and delta replay smoke evidence locations in the PR or release checklist. Evidence must cover indexed success plus fallback-relevant stale, unknown, unsupported, malformed, incomplete replay, producer-untrusted, and unavailable-helper cases.
+19. Enable `www` server env `FAME_POOL_API_URL` and `FAME_POOL_STATE_SERVICE_TOKEN` only after route-lab and parity proof are attached. Do not create `NEXT_PUBLIC_` variants.
 
 ## Durable Follow-Ups
 

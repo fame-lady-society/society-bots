@@ -195,6 +195,19 @@ function indexerResultLogFields(
       durationMs: metric.durationMs,
       stateHash: metric.stateHash,
     })),
+    clReplayMaintenanceMetrics: result.clReplayMaintenanceMetrics.map(
+      (metric) => ({
+        poolId: metric.poolId,
+        status: metric.status,
+        reason: metric.reason,
+        fromBlock: metric.fromBlock,
+        toBlock: metric.toBlock,
+        scannedLogCount: metric.scannedLogCount,
+        appliedEventCount: metric.appliedEventCount,
+        candidateWritten: metric.candidateWritten,
+        stateHash: metric.stateHash,
+      }),
+    ),
     sourceRegistryId: result.sourceRegistryId,
   };
 }

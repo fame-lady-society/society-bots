@@ -1,5 +1,8 @@
 import { baseClient } from "@/viem.ts";
 import {
+  FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE,
+  FAME_POOL_STATE_CL_REPLAY_MAX_RANGE_BLOCKS,
+  FAME_POOL_STATE_CL_REPLAY_TRUST_PROMOTION,
   FAME_POOL_STATE_CONFIRMATION_BLOCKS,
   FAME_POOL_STATE_TABLE_NAME,
 } from "../config.ts";
@@ -8,6 +11,7 @@ import {
   createViemPoolStateIndexerClient,
   indexFamePoolStates,
   type FamePoolStateIndexerClient,
+  type FameClReplayMaintenanceMode,
   type FamePoolStateIndexerResult,
 } from "../indexer.ts";
 import {
@@ -20,21 +24,33 @@ export type FamePoolStateIndexRunner = (options: {
   client?: FamePoolStateIndexerClient;
   tableName: string;
   confirmationBlocks: number;
+  clReplayMaintenanceMode: FameClReplayMaintenanceMode;
+  clReplayTrustPromotion: boolean;
+  clReplayMaxRangeBlocks: number;
 }) => Promise<FamePoolStateIndexerResult>;
 
 function defaultIndexPools({
   client,
   tableName,
   confirmationBlocks,
+  clReplayMaintenanceMode,
+  clReplayTrustPromotion,
+  clReplayMaxRangeBlocks,
 }: {
   client?: FamePoolStateIndexerClient;
   tableName: string;
   confirmationBlocks: number;
+  clReplayMaintenanceMode: FameClReplayMaintenanceMode;
+  clReplayTrustPromotion: boolean;
+  clReplayMaxRangeBlocks: number;
 }): Promise<FamePoolStateIndexerResult> {
   return indexFamePoolStates({
     client: client ?? createViemPoolStateIndexerClient(baseClient),
     tableName,
     confirmationBlocks,
+    clReplayMaintenanceMode,
+    clReplayTrustPromotion,
+    clReplayMaxRangeBlocks,
   });
 }
 
@@ -83,11 +99,17 @@ export async function handleFamePoolStateIndexer({
   client,
   tableName,
   confirmationBlocks,
+  clReplayMaintenanceMode,
+  clReplayTrustPromotion,
+  clReplayMaxRangeBlocks,
   indexPools = defaultIndexPools,
 }: {
   client?: FamePoolStateIndexerClient;
   tableName: string;
   confirmationBlocks: number;
+  clReplayMaintenanceMode?: FameClReplayMaintenanceMode;
+  clReplayTrustPromotion?: boolean;
+  clReplayMaxRangeBlocks?: number;
   indexPools?: FamePoolStateIndexRunner;
 }): Promise<void> {
   let result: FamePoolStateIndexerResult;
@@ -96,6 +118,12 @@ export async function handleFamePoolStateIndexer({
       client,
       tableName,
       confirmationBlocks,
+      clReplayMaintenanceMode:
+        clReplayMaintenanceMode ?? FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE,
+      clReplayTrustPromotion:
+        clReplayTrustPromotion ?? FAME_POOL_STATE_CL_REPLAY_TRUST_PROMOTION,
+      clReplayMaxRangeBlocks:
+        clReplayMaxRangeBlocks ?? FAME_POOL_STATE_CL_REPLAY_MAX_RANGE_BLOCKS,
     });
   } catch (error) {
     writePoolStateLog(
@@ -114,5 +142,8 @@ export async function handler(): Promise<void> {
   await handleFamePoolStateIndexer({
     tableName: FAME_POOL_STATE_TABLE_NAME,
     confirmationBlocks: FAME_POOL_STATE_CONFIRMATION_BLOCKS,
+    clReplayMaintenanceMode: FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE,
+    clReplayTrustPromotion: FAME_POOL_STATE_CL_REPLAY_TRUST_PROMOTION,
+    clReplayMaxRangeBlocks: FAME_POOL_STATE_CL_REPLAY_MAX_RANGE_BLOCKS,
   });
 }
