@@ -9,9 +9,9 @@ mode: repo-grounded
 
 ## Grounding Context
 
-`society-bots` owns the producer side of FAME indexed pool state and compact quote rows. The registry artifact is generated from `www`, not hand-curated here ([docs/fame-pool-state-index.md](../fame-pool-state-index.md)). The current documented scope is seven quote-model reserve pools, compact reserve quote rows, CL head snapshots, and exactly one CL replay compact quote pool: `slipstream-usdc-weth-100`.
+`society-bots` owns the producer side of FAME indexed pool state and compact quote rows. The registry artifact is generated from `www`, not hand-curated here ([docs/fame-pool-state-index.md](../fame-pool-state-index.md)). In this document, `www` means the GitHub project `fame-lady-society/www`; on this machine the companion checkout is `../fls-www`, not `../www`. The current documented scope is seven quote-model reserve pools, compact reserve quote rows, CL head snapshots, and exactly one CL replay compact quote pool: `slipstream-usdc-weth-100`.
 
-The current registry and companion `www` artifact are not the same shape. `society-bots` has 21 pools: seven reserve compact quote pools, one CL replay compact-configured pool, eleven other CL head-only pools, and two tracked-only pools. `www` has 26 pools; the six currently absent from the `society-bots` generated registry are `slipstream-spx-weth`, blocked `slipstream-usdc-weth-migrating-50`, `slipstream-msusd-usdc-a`, `slipstream-weth-mseth`, `slipstream2-msusd-mseth`, and `slipstream2-msusd-usdc-c`.
+The current registry and companion `www` artifact are not the same shape. `society-bots` has 21 pools: seven reserve compact quote pools, one CL replay compact-configured pool, eleven other CL head-only pools, and two tracked-only pools. The `fame-lady-society/www` artifact in local checkout `../fls-www` has 26 pools; the six currently absent from the `society-bots` generated registry are `slipstream-spx-weth`, blocked `slipstream-usdc-weth-migrating-50`, `slipstream-msusd-usdc-a`, `slipstream-weth-mseth`, `slipstream2-msusd-mseth`, and `slipstream2-msusd-usdc-c`.
 
 The present one-pool assumption is explicit. `society-bots` rejects any replay surface that is not `slipstream-usdc-weth-100`, and also asserts exactly one replay pool. The indexer loop is more general than that constraint: it derives `replayPools` from registry rows, then runs checkpoint, steady-state, repair, candidate-row, drift-check, and trusted-promotion logic across that set. `www` also keeps a singleton `CL_REPLAY_CAPABLE_FAME_POOL_IDS` list and derives compact quote capability from that list plus the reserve quote-model pool list.
 
@@ -55,7 +55,7 @@ External grounding supports a cautious expansion model. Uniswap V3 offchain stat
 
 **Axis:** Compact quote API and `www` fallback contract
 
-**Basis:** `direct:` `src/fame-swap-pool-state/cl-quote.ts` includes and emits `producer-untrusted`, while `../www/src/features/fame-swap/solver/quotes/indexedQuoteApiClient.ts` does not parse that reason.
+**Basis:** `direct:` `src/fame-swap-pool-state/cl-quote.ts` includes and emits `producer-untrusted`, while `../fls-www/src/features/fame-swap/solver/quotes/indexedQuoteApiClient.ts` does not parse that reason.
 
 **Rationale:** Expanding reducers will intentionally create candidate and untrusted rows. If the consumer cannot parse those rows, the fallback contract becomes noisier and less diagnostic exactly when activation broadens.
 
@@ -171,4 +171,3 @@ External grounding supports a cautious expansion model. Uniswap V3 offchain stat
 | 8 | Broad stable-pool quote support | Scope overrun; stable math is explicitly outside current supported-pool activation. |
 | 9 | Broad Uniswap V4 compact quote activation | Too risky as a near-term survivor because v4 hooks and PoolManager semantics need their own manifest before quote promotion. |
 | 10 | Public route rewrite around compact quotes | Scope overrun; `www` should preserve live fallback and route authority. |
-

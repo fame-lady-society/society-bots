@@ -9,11 +9,13 @@ deepened: 2026-05-19
 
 # feat: Add FAME CL Head Snapshots
 
-**Target repos:** `society-bots` and sibling `www`. Paths below are repo-relative within the repo named in each file list.
+**Target repos:** `society-bots` and the sibling `fls-www` checkout of GitHub `fame-lady-society/www`. Paths below are repo-relative within the repo named in each file list.
 
 ## Summary
 
 Add a concentrated-liquidity head snapshot lane for reviewed FAME route dependencies. `www` should generate the eligibility and client contract, while `society-bots` indexes complete current CL head state and exposes it as observational market state without becoming quote authority.
+
+Project identity note: `www` refers to the GitHub project `fame-lady-society/www`. On this machine, that companion checkout is cloned as `../fls-www`, not `../www`.
 
 ---
 

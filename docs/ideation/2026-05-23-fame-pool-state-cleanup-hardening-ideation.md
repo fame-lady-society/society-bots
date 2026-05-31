@@ -11,6 +11,8 @@ mode: repo-grounded
 
 The FAME pool-state helper has moved from release-readiness into a post-merge hardening phase. `main` now includes the first replayable `slipstream-usdc-weth-100` slice, including `cl-replay-v1` snapshots, registry schema v3, replay chunk TTLs, metadata-only stale replay responses, and Lambda failure semantics for CL replay capture failures.
 
+Project identity note: `www` refers to the GitHub project `fame-lady-society/www`. On this machine, that companion checkout is cloned as `../fls-www`, not `../www`.
+
 The cleanup scope is now broader than the pool-state helper alone: every active CloudWatch log group created by this CDK app should have an explicit retention posture. The requested policy is:
 
 - **Ethereum-related logs:** 30-day retention.

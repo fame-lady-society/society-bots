@@ -9,6 +9,8 @@ topic: fame-delta-cl-replay-index
 
 Build a delta-maintained CL replay index for the existing reviewed replay pools. Full snapshots remain the seed, checkpoint, and repair mechanism; normal trusted maintenance is earned through bounded event replay, drift checks, and explicit fallback-safe producer state.
 
+Project identity note: `www` refers to the GitHub project `fame-lady-society/www`. On this machine, that companion checkout is cloned as `../fls-www`, not `../www`.
+
 ---
 
 ## Problem Frame

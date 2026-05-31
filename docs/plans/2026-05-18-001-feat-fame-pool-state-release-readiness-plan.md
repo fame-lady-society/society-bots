@@ -12,6 +12,8 @@ origin: docs/brainstorms/2026-05-18-fame-pool-state-release-readiness-requiremen
 
 Harden the new FAME pool-state indexer and authenticated helper API so the PR is ready for review, merge, and the main-branch auto-deploy path. The implementation should turn the current release-readiness findings into deterministic deploy gates, typed helper failures, complete DynamoDB read semantics, indexer operational visibility, and durable smoke/route-lab evidence.
 
+Project identity note: `www` refers to the GitHub project `fame-lady-society/www`. On this machine, that companion checkout is cloned as `../fls-www`, not `../www`.
+
 ---
 
 ## Problem Frame
@@ -97,7 +99,7 @@ The main risk is not quote math moving into `society-bots`; `www` remains quote 
 - **DynamoDB partial batch reads fail loud in v1:** Surface any `UnprocessedKeys` as an incomplete helper read instead of adding in-request retry. This favors predictable quote latency and safe `www` fallback over hiding DynamoDB pressure behind a helper response that looks complete.
 - **Indexer proof uses modest passive health signals:** Add failure capture for async indexer invocations and passive CloudWatch alarms for obvious failure surfaces, with no notification action by default. Include missed scheduled invocations through AWS-native metrics, while keeping `observedThroughBlock` freshness proof in release evidence rather than a custom metric.
 - **First release uses short soak evidence:** Treat at least five scheduled intervals with successful runs and non-regressing `observedThroughBlock` as persuasive initial proof. Longer canaries are follow-up work.
-- **Route-lab evidence is a release gate, not an implementation dependency here:** The plan records the required `www` route-lab proof and evidence shape; any missing `www` route-lab behavior should become a companion `www` task rather than expanding `society-bots` quote authority.
+- **Route-lab evidence is a release gate, not an implementation dependency here:** The plan records the required `www` route-lab proof and evidence shape; any missing `www` route-lab behavior should become a companion `www` task in `fame-lady-society/www` (local checkout `../fls-www`) rather than expanding `society-bots` quote authority.
 
 ---
 
@@ -116,7 +118,7 @@ The main risk is not quote math moving into `society-bots`; `www` remains quote 
 
 - Exact helper/type names for the API error taxonomy.
 - Exact passive alarm resource names after fitting the CDK code style.
-- Whether the existing `www` route-lab indexed mode already covers every fallback case, or whether a companion `www` PR is needed.
+- Whether the existing `www` route-lab indexed mode already covers every fallback case, or whether a companion `www` PR is needed in `fame-lady-society/www` (local checkout `../fls-www`).
 - Exact release evidence location, because this may be a PR comment, checklist section, or linked artifact depending on how the PR is opened.
 
 ---
@@ -396,7 +398,7 @@ flowchart TB
 - `FAME_POOL_STATE_SERVICE_TOKEN` must be available to the main deploy context, and `FAME_POOL_STATE_PR_SERVICE_TOKEN` must be available to the PR deploy context.
 - A deployed helper endpoint and service token must be available before smoke, soak, and route-lab evidence can be captured.
 - The release owner must be able to inspect CloudWatch alarms/logs and the indexer failure destination for the deployed stack.
-- The companion `www` route-lab indexed mode must be available, or a companion `www` task must be completed before production helper env is enabled.
+- The companion `www` route-lab indexed mode must be available from `fame-lady-society/www` (local checkout `../fls-www`), or a companion `www` task must be completed before production helper env is enabled.
 
 ---
 

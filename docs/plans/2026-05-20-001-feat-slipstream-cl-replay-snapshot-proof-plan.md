@@ -8,11 +8,13 @@ origin: docs/brainstorms/2026-05-20-slipstream-usdc-weth-100-cl-replay-snapshot-
 
 # feat: Add Slipstream CL Replay Snapshot Proof
 
-**Target repos:** `society-bots` and sibling `www`. Paths below are repo-relative within the repo named in each file list.
+**Target repos:** `society-bots` and the sibling `fls-www` checkout of GitHub `fame-lady-society/www`. Paths below are repo-relative within the repo named in each file list.
 
 ## Summary
 
 Make `slipstream-usdc-weth-100` the first replay-capable concentrated-liquidity pool in the FAME quote stack. `society-bots` will publish a complete safe-block replay snapshot as raw indexed state, while `www` owns local Slipstream exact-input replay, shadow parity against the live quoter, fallback behavior, and promotion evidence.
+
+Project identity note: `www` refers to the GitHub project `fame-lady-society/www`. On this machine, that companion checkout is cloned as `../fls-www`, not `../www`.
 
 ---
 

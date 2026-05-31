@@ -11,6 +11,8 @@ mode: repo-grounded
 
 `society-bots` now owns the server-side FAME pool-state read model. Its current concentrated-liquidity lane is intentionally a head snapshot: pool identity, fee metadata, tick spacing, `sqrtPriceX96`, current tick, active liquidity, source, source registry id, and `observedThroughBlock`. The docs explicitly say this is not local CL replay authority and does not include tick bitmap/window data.
 
+Project identity note: `www` refers to the GitHub project `fame-lady-society/www`. On this machine, that companion checkout is cloned as `../fls-www`, not `../www`.
+
 `slipstream-usdc-weth-100` is already present in `society-bots` as an address-backed Slipstream pool at `0xb2cc224c1c9fee385f8ad6a55b4d94e92359dc59`, with WETH as `token0`, USDC as `token1`, `tickSpacing: 100`, and `stateSurface: "cl-head-snapshot"`.
 
 `www` is behind the `society-bots` registry contract: its generator still emits schema v1, marks CL pools as tracked-only with `unsupportedReason: "concentrated-liquidity"`, does not request `stateSurfaces`, and its indexed client/parser only accepts constant-product reserve rows. Its live Slipstream adapter already has the right execution authority: it reads `slot0`, reads active liquidity as evidence, calls the live Slipstream quoter, and owns route attribution and fallback.

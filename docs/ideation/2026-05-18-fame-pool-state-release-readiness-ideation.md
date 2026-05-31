@@ -11,6 +11,8 @@ mode: repo-grounded
 
 The current dirty worktree adds a new `src/fame-swap-pool-state` module, a generated Base pool registry, a scheduled indexer Lambda, DynamoDB latest-state and cursor helpers, an authenticated `POST /fame/pool-state` API, and CDK wiring through `deploy/lib/fame-pool-state.ts`, `deploy/lib/deploy-stack.ts`, and `deploy/lib/http-api.ts`.
 
+Project identity note: `www` refers to the GitHub project `fame-lady-society/www`. On this machine, that companion checkout is cloned as `../fls-www`, not `../www`.
+
 The registry currently covers 21 reviewed route-candidate pools from `www`: 7 quote-model pools and 14 tracked-only pools. `www` remains authoritative for route metadata, venue capability, and quote parity. `society-bots` owns only the indexed latest-state read model.
 
 Important release context from the handoff:
@@ -183,4 +185,3 @@ Primary sources used by the external grounding pass:
 | 7 | Blanket-400 variants from multiple frames | Duplicate of ranked idea 3. |
 | 8 | BatchGet partial-read variants from multiple frames | Duplicate of ranked idea 4. |
 | 9 | Separate DLQ, alarm, cursor-lag, and freshness ideas | Combined into ranked idea 5 because they are one operational readiness bundle. |
-

@@ -9,6 +9,8 @@ topic: slipstream-usdc-weth-100-cl-replay-snapshot-proof
 
 Build a snapshot-first proof that makes `slipstream-usdc-weth-100` locally replayable in shadow mode. `society-bots` will produce complete same-block replay state for this one pool; `www` will compare local replay against the live Slipstream quoter before any user-facing quote path can use indexed CL replay.
 
+Project identity note: `www` refers to the GitHub project `fame-lady-society/www`. On this machine, that companion checkout is cloned as `../fls-www`, not `../www`.
+
 ---
 
 ## Problem Frame

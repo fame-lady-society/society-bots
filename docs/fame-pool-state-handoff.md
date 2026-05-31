@@ -1,23 +1,23 @@
 # FAME Pool-State Index Handoff
 
-This repo now owns the `society-bots` side of the FAME pool-state read model used by `www` quote solving. The goal is to keep fast, fresh latest reserve and concentrated-liquidity head state available for the reviewed FAME swap pool universe, while leaving route authority and quote correctness tests in `www`.
+This repo now owns the `society-bots` side of the FAME pool-state read model used by `www` quote solving. Here `www` means the GitHub project `fame-lady-society/www`; on this machine, the companion checkout is `../fls-www`, not `../www`. The goal is to keep fast, fresh latest reserve and concentrated-liquidity head state available for the reviewed FAME swap pool universe, while leaving route authority and quote correctness tests in `www`.
 
 ## Cross-Repo Contract
 
 - `www` remains authoritative for reviewed pool metadata, route candidates, venue capability, and quote parity.
-- `society-bots` consumes a generated registry artifact from `www` and indexes current Base reserve state for quote-model-capable pools, CL head snapshots for reviewed CL pools, and one complete `cl-replay-v1` snapshot for `slipstream-usdc-weth-100`.
+- `society-bots` consumes a generated registry artifact from `fame-lady-society/www` (local checkout `../fls-www`) and indexes current Base reserve state for quote-model-capable pools, CL head snapshots for reviewed CL pools, and one complete `cl-replay-v1` snapshot for `slipstream-usdc-weth-100`.
 - `www` calls the authenticated `society-bots` API from server-side quote paths. If indexed state is stale, unknown, unsupported, malformed, or not a quote model the caller can replay, `www` falls back to its existing live quote adapter.
 - `society-bots` exposes raw replay primitives only. `www` owns Slipstream exact-input math, same-block live-quoter parity, route attribution, shadow mode, and any later promotion from live fallback to local CL quotes.
 
 Primary `www` references:
 
-- [Implementation plan](../../www/docs/plans/2026-05-17-001-feat-society-bots-fame-pool-state-plan.md)
-- [Route-lab indexed mode docs](../../www/docs/fame-swap-route-lab.md)
-- [Registry source](../../www/src/features/fame-swap/solver/poolStateRegistry.ts)
-- [Registry export script](../../www/scripts/fame-swap-pool-state-registry.ts)
-- [Indexed pool-state client](../../www/src/features/fame-swap/solver/quotes/indexedPoolStateClient.ts)
-- [Indexed reserve adapter](../../www/src/features/fame-swap/solver/quotes/indexedReserveAdapter.ts)
-- [Quote API wiring](../../www/src/app/api/fame/swap/quote/handler.ts)
+- [Implementation plan](../../fls-www/docs/plans/2026-05-17-001-feat-society-bots-fame-pool-state-plan.md)
+- [Route-lab indexed mode docs](../../fls-www/docs/fame-swap-route-lab.md)
+- [Registry source](../../fls-www/src/features/fame-swap/solver/poolStateRegistry.ts)
+- [Registry export script](../../fls-www/scripts/fame-swap-pool-state-registry.ts)
+- [Indexed pool-state client](../../fls-www/src/features/fame-swap/solver/quotes/indexedPoolStateClient.ts)
+- [Indexed reserve adapter](../../fls-www/src/features/fame-swap/solver/quotes/indexedReserveAdapter.ts)
+- [Quote API wiring](../../fls-www/src/app/api/fame/swap/quote/handler.ts)
 
 Primary `society-bots` references:
 
@@ -33,7 +33,7 @@ Primary `society-bots` references:
 
 The `society-bots` implementation adds a new `src/fame-swap-pool-state` module plus CDK wiring:
 
-- A generated Base v1 pool registry copied from `www`.
+- A generated Base v1 pool registry copied from the local `../fls-www` checkout of `fame-lady-society/www`.
 - Runtime validation for pool ids, addresses, capability flags, fees, and tracked-only reasons.
 - A DynamoDB latest-state table model keyed by exact pool identity plus a per-chain cursor.
 - A scheduled Base indexer Lambda that scans safe blocks for reserve-changing `Sync` logs, seeds quiet pools with `getReserves`, and advances the cursor only after successful processing.
@@ -51,7 +51,7 @@ Slipstream, Slipstream2, Uniswap V3, and Uniswap V4 pools with reviewed metadata
 
 ## Final Review Notes
 
-This section is for the `society-bots` coding agent doing the final review of this repo's side of the pool-state work. The companion `www` review is being handled separately.
+This section is for the `society-bots` coding agent doing the final review of this repo's side of the pool-state work. The companion `www` review is being handled separately in `fame-lady-society/www`, locally cloned as `../fls-www`.
 
 Recent follow-up changes in `society-bots`:
 
@@ -105,14 +105,14 @@ Final todos before enabling `www` production helper env:
 - Copy the emitted `FamePoolStateDevEndpointUrl` into `www` dev as server-only `FAME_POOL_STATE_API_URL`.
 - Set matching `FAME_POOL_STATE_SERVICE_TOKEN` in `www` dev.
 - Run an authenticated helper smoke call.
-- Run indexed route-lab from `www` with `BASE_RPC_URL` or `FAME_POOL_STATE_CURRENT_BLOCK`.
+- Run indexed route-lab from local `../fls-www` with `BASE_RPC_URL` or `FAME_POOL_STATE_CURRENT_BLOCK`.
 - Run a `www` quote API smoke check.
 - Run `yarn fame-pool-state:delta-replay-smoke <input-json>` with redacted indexer/quote evidence and attach the report.
 - Watch at least five scheduled indexer intervals and confirm non-regressing `observedThroughBlock`, no Lambda errors/throttles, and failure queue depth `0`.
 
 ## Registry Refresh
 
-When `www` changes the route universe, refresh the artifact from the `www` repo:
+When `www` changes the route universe, refresh the artifact from the local `../fls-www` checkout of `fame-lady-society/www`:
 
 ```sh
 bun scripts/fame-swap-pool-state-registry.ts > ../society-bots/src/fame-swap-pool-state/registry/base-v1-pools.json
@@ -187,7 +187,7 @@ TMPDIR=/tmp node --experimental-vm-modules ./node_modules/.bin/jest test/fame-po
 TMPDIR=/tmp ./node_modules/.bin/tsc --noEmit -p tsconfig.json
 ```
 
-Run from `www` when proving consumption:
+Run from local `../fls-www` when proving consumption:
 
 ```sh
 bun test src/features/fame-swap/solver/poolStateRegistry.test.ts src/features/fame-swap/solver/quotes/indexedPoolStateClient.test.ts src/features/fame-swap/solver/quotes/indexedReserveAdapter.test.ts src/features/fame-swap/solver/quotes/rankRoutes.test.ts src/features/fame-swap/solver/quoteWire.test.ts src/app/api/fame/swap/quote/route.test.ts scripts/fame-swap-route-lab.test.ts
