@@ -432,6 +432,61 @@ describe("FAME delta replay smoke report", () => {
     ).toBe(true);
   });
 
+  test("derives non-promotion groups from the activation report without named pool gates", () => {
+    const mutableRows = ACTIVATION_ROWS.map((entry) => {
+      if (
+        entry.poolId === "scale-equalizer-usdc-frxusd" ||
+        entry.poolId === "slipstream2-msusd-mseth" ||
+        entry.poolId === "slipstream2-msusd-usdc-c" ||
+        entry.poolId === LIVE_DEPENDENCY_POOL_ID ||
+        entry.poolId === "uniswap-v4-usdc-eth" ||
+        entry.poolId === "uniswap-v4-zora-eth"
+      ) {
+        return {
+          ...row(entry.poolId, "cl-head-only", "present", "none"),
+          ...(entry.poolId === LIVE_DEPENDENCY_POOL_ID
+            ? { liveRouteDependency: true }
+            : {}),
+        };
+      }
+      if (entry.poolId === "slipstream-usdc-weth-migrating-50") {
+        return unrepresented(entry.poolId);
+      }
+      return entry;
+    });
+
+    const report = buildFameDeltaReplaySmokeReport(
+      trustedActivationInput({
+        activationReport: activationReport(mutableRows),
+      }),
+    );
+
+    expect(report.activationEvidence.status).toBe("ready");
+    expect(report.activationEvidence.validationErrors).toEqual([]);
+    expect(report.activationEvidence.nonPromotion.trackedOnlyPoolIds).toEqual(
+      [],
+    );
+    expect(report.activationEvidence.nonPromotion.unsupportedPoolIds).toEqual(
+      [],
+    );
+    expect(report.activationEvidence.nonPromotion.blockedPoolIds).toEqual([]);
+    expect(
+      report.activationEvidence.nonPromotion.producerUnrepresentedPoolIds,
+    ).toEqual(
+      expect.arrayContaining(["slipstream-usdc-weth-migrating-50"]),
+    );
+    expect(report.activationEvidence.nonPromotion.clHeadOnlyPoolIds).toEqual(
+      expect.arrayContaining([
+        "scale-equalizer-usdc-frxusd",
+        "slipstream2-msusd-mseth",
+        "slipstream2-msusd-usdc-c",
+        LIVE_DEPENDENCY_POOL_ID,
+        "uniswap-v4-usdc-eth",
+        "uniswap-v4-zora-eth",
+      ]),
+    );
+  });
+
   test("fails activation evidence when route lab no longer selects the V4-dependent lane", () => {
     const report = buildFameDeltaReplaySmokeReport(
       trustedActivationInput({

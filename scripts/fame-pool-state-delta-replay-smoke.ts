@@ -14,21 +14,6 @@ const SELECTED_CL_ACTIVATION_CANDIDATE = "slipstream-basedflick-fame";
 const LIVE_ROUTE_DEPENDENCY = "uniswap-v4-basedflick-zora";
 const BASELINE_CL_COMPACT_POOL_ID = "slipstream-usdc-weth-100";
 const DEFAULT_PROVIDER_READ_THRESHOLD = 1_000;
-const REQUIRED_SLIPSTREAM2_NON_PROMOTED_POOL_IDS = [
-  "slipstream2-msusd-mseth",
-  "slipstream2-msusd-usdc-c",
-] as const;
-const REQUIRED_V4_UNSUPPORTED_POOL_IDS = [
-  "uniswap-v4-basedflick-zora",
-  "uniswap-v4-usdc-eth",
-  "uniswap-v4-zora-eth",
-] as const;
-const REQUIRED_STABLE_TRACKED_ONLY_POOL_IDS = [
-  "scale-equalizer-usdc-frxusd",
-] as const;
-const REQUIRED_BLOCKED_POOL_IDS = [
-  "slipstream-usdc-weth-migrating-50",
-] as const;
 const FAME_UPSTREAM_POOL_UNIVERSE_POOL_IDS = [
   "aerodrome-v2-usdc-weth",
   "scale-equalizer-frxusd-fame",
@@ -783,14 +768,6 @@ function selectedCompactClQuoteUsedCount(
   );
 }
 
-function includesAll(
-  actual: readonly string[],
-  expected: readonly string[],
-): boolean {
-  const actualSet = new Set(actual);
-  return expected.every((poolId) => actualSet.has(poolId));
-}
-
 function sortedStrings(values: readonly string[]): string[] {
   return [...values].sort((a, b) => a.localeCompare(b));
 }
@@ -1073,33 +1050,6 @@ function buildActivationEvidence({
   }
   if (!sourceRegistryCompatible) {
     validationErrors.push("Evidence source registry ids do not match.");
-  }
-  if (
-    !includesAll(
-      nonPromotion.producerUnrepresentedPoolIds,
-      REQUIRED_SLIPSTREAM2_NON_PROMOTED_POOL_IDS,
-    )
-  ) {
-    validationErrors.push("Missing Slipstream2 non-promotion evidence.");
-  }
-  if (
-    !includesAll(
-      nonPromotion.unsupportedPoolIds,
-      REQUIRED_V4_UNSUPPORTED_POOL_IDS,
-    )
-  ) {
-    validationErrors.push("Missing V4 unsupported non-promotion evidence.");
-  }
-  if (
-    !includesAll(
-      nonPromotion.trackedOnlyPoolIds,
-      REQUIRED_STABLE_TRACKED_ONLY_POOL_IDS,
-    )
-  ) {
-    validationErrors.push("Missing stable-pool tracked-only evidence.");
-  }
-  if (!includesAll(nonPromotion.blockedPoolIds, REQUIRED_BLOCKED_POOL_IDS)) {
-    validationErrors.push("Missing blocked migrating-pool evidence.");
   }
 
   return {
