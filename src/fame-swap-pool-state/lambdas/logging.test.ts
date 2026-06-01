@@ -4,10 +4,12 @@ import type {
   FamePoolStateBatchResponse,
   FamePoolStateResponseEntry,
 } from "../api.ts";
+import type { FamePoolQuoteBatchResponse } from "../cl-quote.ts";
 import type { FamePoolStateIndexerResult } from "../indexer.ts";
 import {
   logPoolStateApiBatch,
   logPoolStateIndexerResult,
+  poolQuoteApiBatchLogFields,
   poolStateApiBatchLogFields,
   shouldLogPoolStateApiBatch,
   writePoolStateLog,
@@ -132,6 +134,35 @@ function indexerResult(
     clReplayMaintenanceMetrics: [],
     sourceRegistryId: "registry",
     ...overrides,
+  };
+}
+
+function quoteBatchResponse(): FamePoolQuoteBatchResponse {
+  return {
+    sourceRegistryId: "registry",
+    currentBlock: 121,
+    producerMaxFreshnessBlocks: 120,
+    effectiveMaxFreshnessBlocks: 120,
+    quotes: [
+      {
+        status: "unavailable",
+        requested: {
+          poolId: "slipstream-basedflick-fame",
+          tokenIn: ADDRESS_A,
+          tokenOut: ADDRESS_B,
+          amountIn: "1000",
+        },
+        reason: "producer-untrusted",
+        poolId: "slipstream-basedflick-fame",
+        chainId: 8453,
+        poolAddress: ADDRESS_A,
+        observedThroughBlock: 120,
+        sourceRegistryId: "registry",
+        maxFreshnessBlocks: 120,
+        producerStatus: "warming",
+        producerReason: "shadow-not-promoted",
+      },
+    ],
   };
 }
 
@@ -287,5 +318,119 @@ describe("FAME pool-state Lambda logging", () => {
       errorLog.mockRestore();
       infoLog.mockRestore();
     }
+  });
+
+  test("summarizes selected candidate reducer metrics in indexer logs", () => {
+    const infoLog = jest.spyOn(console, "log").mockImplementation(() => {
+      return undefined;
+    });
+
+    try {
+      logPoolStateIndexerResult(
+        indexerResult({
+          clReplayMetrics: [
+            {
+              poolId: "slipstream-basedflick-fame",
+              bitmapWordCount: 4,
+              initializedTickCount: 5,
+              bitmapChunkCount: 2,
+              tickChunkCount: 3,
+              providerReadCount: 41,
+              durationMs: 99,
+              stateHash: HEX_32,
+            },
+          ],
+          clReplayMaintenanceMetrics: [
+            {
+              poolId: "slipstream-basedflick-fame",
+              status: "trusted",
+              reason: null,
+              fromBlock: 119,
+              toBlock: 121,
+              scannedLogCount: 7,
+              appliedEventCount: 3,
+              candidateWritten: true,
+              stateHash: HEX_32,
+            },
+          ],
+        }),
+      );
+
+      expect(infoLog).toHaveBeenCalledTimes(1);
+      expect(parseLogLine(infoLog.mock.calls[0]?.[0])).toMatchObject({
+        selectedClReplayCandidate: {
+          poolId: "slipstream-basedflick-fame",
+          providerReadCount: 41,
+          bitmapWordCount: 4,
+          initializedTickCount: 5,
+          bitmapChunkCount: 2,
+          tickChunkCount: 3,
+          scannedLogCount: 7,
+          appliedEventCount: 3,
+          maintenanceStatus: "trusted",
+          maintenanceReason: null,
+          candidateWritten: true,
+          stateHash: HEX_32,
+        },
+      });
+    } finally {
+      infoLog.mockRestore();
+    }
+  });
+
+  test("summarizes pool quote unavailable reasons without raw replay state", () => {
+    expect(poolQuoteApiBatchLogFields(quoteBatchResponse())).toMatchObject({
+      routeKind: "pool-quotes",
+      statusCounts: {
+        unavailable: 1,
+      },
+      reasonCounts: {
+        "producer-untrusted": 1,
+      },
+      selectedClReplayCandidateQuote: {
+        poolId: "slipstream-basedflick-fame",
+        returned: 1,
+        statusCounts: {
+          unavailable: 1,
+        },
+        reasonCounts: {
+          "producer-untrusted": 1,
+        },
+      },
+    });
+  });
+
+  test("scopes selected candidate quote reasons within mixed batches", () => {
+    const response = quoteBatchResponse();
+    response.quotes.push({
+      status: "unavailable",
+      requested: {
+        poolId: "uniswap-v4-basedflick-zora",
+        tokenIn: ADDRESS_A,
+        tokenOut: ADDRESS_B,
+        amountIn: "1000",
+      },
+      reason: "unsupported-pool",
+    });
+
+    expect(poolQuoteApiBatchLogFields(response)).toMatchObject({
+      statusCounts: {
+        unavailable: 2,
+      },
+      reasonCounts: {
+        "producer-untrusted": 1,
+        "unsupported-pool": 1,
+      },
+      selectedClReplayCandidateQuote: {
+        poolId: "slipstream-basedflick-fame",
+        returned: 1,
+        statusCounts: {
+          unavailable: 1,
+        },
+        reasonCounts: {
+          "producer-untrusted": 1,
+        },
+      },
+    });
   });
 });

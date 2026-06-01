@@ -39,6 +39,7 @@ describe("FAME swap pool-state registry", () => {
       quoteModelPools.every(
         (pool) =>
           pool.stateSurface === "constant-product-reserves" &&
+          pool.activationStatus === "reserve-compact-quote-active" &&
           pool.replaySurface === null &&
           pool.quoteModel === "constant-product-reserves" &&
           pool.unsupportedReason === null,
@@ -66,6 +67,7 @@ describe("FAME swap pool-state registry", () => {
     });
 
     expect(stable?.capability).toBe("tracked-only");
+    expect(stable?.activationStatus).toBe("tracked-only");
     expect(stable?.unsupportedReason).toBe("stable-pool");
     expect(stable?.stateSurface).toBeNull();
   });
@@ -83,8 +85,15 @@ describe("FAME swap pool-state registry", () => {
     const uniswapV4 = famePoolStateRegistry.pools.find(
       (pool) => pool.venue === "uniswap-v4",
     );
+    const candidate = getFamePoolStateRegistryEntry({
+      poolId: "slipstream-basedflick-fame",
+    });
+    const v4Dependency = getFamePoolStateRegistryEntry({
+      poolId: "uniswap-v4-basedflick-zora",
+    });
 
     expect(uniswapV3?.capability).toBe("market-state");
+    expect(uniswapV3?.activationStatus).toBe("cl-head-only");
     expect(uniswapV3?.stateSurface).toBe("cl-head-snapshot");
     expect(uniswapV3?.poolAddress).not.toBeNull();
     expect(uniswapV3?.tickSpacing).not.toBeNull();
@@ -99,20 +108,34 @@ describe("FAME swap pool-state registry", () => {
     expect(uniswapV4?.poolAddress).toBeNull();
     expect(uniswapV4?.poolKey).not.toBeNull();
     expect(uniswapV4?.stateViewAddress).not.toBeNull();
+    expect(candidate?.capability).toBe("market-state");
+    expect(candidate?.activationStatus).toBe("cl-compact-quote-active");
+    expect(candidate?.factoryAddress).toBe(
+      "0x5e7bb104d84c7cb9b682aac2f3d509f5f406809a",
+    );
+    expect(candidate?.replaySurface).toBe("cl-replay-v1");
+    expect(v4Dependency?.capability).toBe("market-state");
+    expect(v4Dependency?.activationStatus).toBe("unsupported");
+    expect(v4Dependency?.replaySurface).toBeNull();
   });
 
-  test("marks only slipstream-usdc-weth-100 as replay-capable", () => {
+  test("marks only activation-approved Slipstream v1 rows as replay-capable", () => {
     const replayPools = famePoolStateRegistry.pools.filter(
       (pool) => pool.replaySurface === "cl-replay-v1",
     );
 
-    expect(replayPools.map((pool) => pool.id)).toEqual([
+    expect(replayPools.map((pool) => pool.id).sort()).toEqual([
+      "slipstream-basedflick-fame",
       "slipstream-usdc-weth-100",
     ]);
-    expect(replayPools[0]?.stateSurface).toBe("cl-head-snapshot");
-    expect(replayPools[0]?.venue).toBe("aerodrome-slipstream");
-    expect(replayPools[0]?.tickSpacing).toBe(100);
-    expect(replayPools[0]?.poolAddress).toBe(
+    const baseline = replayPools.find(
+      (pool) => pool.id === "slipstream-usdc-weth-100",
+    );
+    expect(baseline?.activationStatus).toBe("cl-compact-quote-active");
+    expect(baseline?.stateSurface).toBe("cl-head-snapshot");
+    expect(baseline?.venue).toBe("aerodrome-slipstream");
+    expect(baseline?.tickSpacing).toBe(100);
+    expect(baseline?.poolAddress).toBe(
       "0xb2cc224c1c9fee385f8ad6a55b4d94e92359dc59",
     );
   });
@@ -127,7 +150,7 @@ describe("FAME swap pool-state registry", () => {
     );
   });
 
-  test("requires explicit replaySurface fields in schema v3 rows", () => {
+  test("requires explicit replaySurface fields in schema v4 rows", () => {
     const [firstPool, ...remainingPools] = famePoolStateRegistry.pools;
     if (!firstPool) throw new Error("Generated registry has no pools.");
     const poolWithoutReplaySurface: Record<string, unknown> = { ...firstPool };
@@ -140,6 +163,42 @@ describe("FAME swap pool-state registry", () => {
 
     expect(() => parseFamePoolStateRegistry(broken)).toThrow(
       /replaySurface: missing required field/,
+    );
+  });
+
+  test("requires explicit activationStatus fields in schema v4 rows", () => {
+    const [firstPool, ...remainingPools] = famePoolStateRegistry.pools;
+    if (!firstPool) throw new Error("Generated registry has no pools.");
+    const poolWithoutActivationStatus: Record<string, unknown> = {
+      ...firstPool,
+    };
+    delete poolWithoutActivationStatus.activationStatus;
+
+    const broken = {
+      ...famePoolStateRegistry,
+      pools: [poolWithoutActivationStatus, ...remainingPools],
+    };
+
+    expect(() => parseFamePoolStateRegistry(broken)).toThrow(
+      /activationStatus: missing required field/,
+    );
+  });
+
+  test("requires explicit factoryAddress fields in schema v4 rows", () => {
+    const [firstPool, ...remainingPools] = famePoolStateRegistry.pools;
+    if (!firstPool) throw new Error("Generated registry has no pools.");
+    const poolWithoutFactoryAddress: Record<string, unknown> = {
+      ...firstPool,
+    };
+    delete poolWithoutFactoryAddress.factoryAddress;
+
+    const broken = {
+      ...famePoolStateRegistry,
+      pools: [poolWithoutFactoryAddress, ...remainingPools],
+    };
+
+    expect(() => parseFamePoolStateRegistry(broken)).toThrow(
+      /factoryAddress: missing required field/,
     );
   });
 
@@ -178,13 +237,39 @@ describe("FAME swap pool-state registry", () => {
     );
   });
 
-  test("rejects replay-surface rows outside the one-pool milestone", () => {
+  test("rejects Slipstream market-state rows without factory identity", () => {
+    const clPool = famePoolStateRegistry.pools.find(
+      (pool) =>
+        pool.capability === "market-state" &&
+        pool.venue === "aerodrome-slipstream",
+    );
+    if (!clPool)
+      throw new Error(
+        "Generated registry has no Slipstream market-state pool.",
+      );
+    const broken = {
+      ...famePoolStateRegistry,
+      pools: [
+        {
+          ...clPool,
+          factoryAddress: null,
+        },
+      ],
+    };
+
+    expect(() => parseFamePoolStateRegistry(broken)).toThrow(
+      /Slipstream market-state pool must have factoryAddress/,
+    );
+  });
+
+  test("rejects replay-surface rows without compact quote activation", () => {
     const replayPool = famePoolStateRegistry.pools.find(
       (pool) => pool.id === "slipstream-usdc-weth-100",
     );
     const otherClPool = famePoolStateRegistry.pools.find(
       (pool) =>
         pool.id !== "slipstream-usdc-weth-100" &&
+        pool.id !== "slipstream-basedflick-fame" &&
         pool.capability === "market-state" &&
         pool.venue === "aerodrome-slipstream",
     );
@@ -193,14 +278,54 @@ describe("FAME swap pool-state registry", () => {
     }
     const broken = {
       ...famePoolStateRegistry,
+      pools: [{ ...otherClPool, replaySurface: "cl-replay-v1" }, replayPool],
+    };
+
+    expect(() => parseFamePoolStateRegistry(broken)).toThrow(
+      /replaySurface requires cl-compact-quote-active activationStatus/,
+    );
+  });
+
+  test("rejects Slipstream2 replay inheritance", () => {
+    const replayPool = famePoolStateRegistry.pools.find(
+      (pool) => pool.id === "slipstream-usdc-weth-100",
+    );
+    if (!replayPool) {
+      throw new Error("Generated registry missing CL replay fixture.");
+    }
+    const broken = {
+      ...famePoolStateRegistry,
       pools: [
-        { ...replayPool, replaySurface: null },
-        { ...otherClPool, replaySurface: "cl-replay-v1" },
+        {
+          ...replayPool,
+          id: "slipstream2-test",
+          venue: "aerodrome-slipstream2",
+          venueFamily: "Slipstream2",
+          activationStatus: "cl-compact-quote-active",
+          replaySurface: "cl-replay-v1",
+        },
       ],
     };
 
     expect(() => parseFamePoolStateRegistry(broken)).toThrow(
-      /only slipstream-usdc-weth-100 can have replaySurface/,
+      /replaySurface pool must be Slipstream v1/,
+    );
+  });
+
+  test("rejects active CL compact quote rows without replay surface", () => {
+    const replayPool = famePoolStateRegistry.pools.find(
+      (pool) => pool.id === "slipstream-usdc-weth-100",
+    );
+    if (!replayPool) {
+      throw new Error("Generated registry missing CL replay fixture.");
+    }
+    const broken = {
+      ...famePoolStateRegistry,
+      pools: [{ ...replayPool, replaySurface: null }],
+    };
+
+    expect(() => parseFamePoolStateRegistry(broken)).toThrow(
+      /cl-compact-quote-active pool must have cl-replay-v1/,
     );
   });
 });

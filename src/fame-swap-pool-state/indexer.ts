@@ -13,6 +13,7 @@ import {
 } from "../events.ts";
 import type { baseClient } from "../viem.ts";
 import {
+  batchGetLatestClReplayCandidateStates,
   batchGetLatestClHeadStates,
   batchGetLatestClReplayMaintenanceStates,
   batchGetLatestClReplayStates,
@@ -33,12 +34,18 @@ import {
   sourceRegistryIdFor,
   type FameClHeadSnapshotRegistryEntry,
   type FameClHeadSource,
-  type FameClReplayRegistryEntry,
   type FameClReplayMaintenanceState,
+  type FameClReplayCandidateStateCapsule,
   type FameClReplayStateCapsule,
   type FameClReplayStateRows,
   type PoolStateDocumentClient,
 } from "./dynamodb/pool-state.ts";
+import {
+  FAME_SELECTED_CL_REPLAY_CANDIDATE_POOL_ID,
+  clReplayReducerManifestForPool,
+  isClReplayReducerManifestPool,
+  type FameClReplayReducerRegistryEntry,
+} from "./cl-reducer-manifests.ts";
 import { famePoolStateRegistry } from "./registry/index.ts";
 import type {
   FamePoolStateRegistryEntry,
@@ -47,7 +54,13 @@ import type {
 
 type QuoteModelPool = FamePoolStateRegistryEntry & { poolAddress: Address };
 type ClHeadPool = FameClHeadSnapshotRegistryEntry;
-type ClReplayPool = FameClReplayRegistryEntry;
+type ClReplayPool = FameClReplayReducerRegistryEntry;
+type ClReplaySeedCapsule =
+  | FameClReplayStateCapsule
+  | FameClReplayCandidateStateCapsule;
+type ClReplayTrustedCursorCheck =
+  | { canAdvance: true; reason: null }
+  | { canAdvance: false; reason: string | null };
 type FamePoolStateSyncEventKind = "uint112-reserves" | "uint256-reserves";
 
 const CL_MIN_TICK = -887_272;
@@ -552,14 +565,18 @@ function clHeadPools(registry: FamePoolStateRegistryFile): ClHeadPool[] {
 }
 
 function clReplayPools(registry: FamePoolStateRegistryFile): ClReplayPool[] {
-  return registry.pools.filter(
-    (pool): pool is ClReplayPool =>
+  return registry.pools.filter((pool): pool is ClReplayPool => {
+    if (pool.id === FAME_SELECTED_CL_REPLAY_CANDIDATE_POOL_ID) {
+      return isClReplayReducerManifestPool(pool);
+    }
+    return (
       pool.replaySurface === "cl-replay-v1" &&
       pool.stateSurface === "cl-head-snapshot" &&
       pool.tickSpacing !== null &&
       pool.poolAddress !== null &&
-      pool.venue === "aerodrome-slipstream",
-  );
+      pool.venue === "aerodrome-slipstream"
+    );
+  });
 }
 
 function syncEventKind(pool: QuoteModelPool): FamePoolStateSyncEventKind {
@@ -815,7 +832,9 @@ function clReplayCapsuleFromRows(
   return {
     latest: rows.latest,
     bitmapWords: rows.bitmapChunks.flatMap((chunk) => chunk.bitmapWords),
-    initializedTicks: rows.tickChunks.flatMap((chunk) => chunk.initializedTicks),
+    initializedTicks: rows.tickChunks.flatMap(
+      (chunk) => chunk.initializedTicks,
+    ),
   };
 }
 
@@ -861,7 +880,7 @@ function clReplayMaintenanceMatchesLatest({
   sourceRegistryId,
 }: {
   maintenance: FameClReplayMaintenanceState | null;
-  latest: FameClReplayStateCapsule | null;
+  latest: ClReplaySeedCapsule | null;
   sourceRegistryId: string;
 }): boolean {
   return (
@@ -1153,7 +1172,7 @@ export function applyClReplayDeltas({
   updatedAt,
 }: {
   pool: ClReplayPool;
-  seed: FameClReplayStateCapsule | null;
+  seed: ClReplaySeedCapsule | null;
   events: readonly FameClReplayNormalizedEvent[];
   fee?: bigint;
   observedThroughBlock: number;
@@ -1222,8 +1241,14 @@ export function applyClReplayDeltas({
       };
     }
     try {
-      assertTickAligned({ tick: event.tickLower, tickSpacing: pool.tickSpacing });
-      assertTickAligned({ tick: event.tickUpper, tickSpacing: pool.tickSpacing });
+      assertTickAligned({
+        tick: event.tickLower,
+        tickSpacing: pool.tickSpacing,
+      });
+      assertTickAligned({
+        tick: event.tickUpper,
+        tickSpacing: pool.tickSpacing,
+      });
     } catch {
       return {
         status: "event-gap",
@@ -1361,6 +1386,42 @@ function errorMessage(error: unknown): string {
   }
   if (typeof error === "string" && error.length > 0) return error;
   return "Unknown error";
+}
+
+function errorText(error: unknown): string {
+  if (error instanceof Error && error.message.length > 0) {
+    return error.message;
+  }
+  if (typeof error === "string" && error.length > 0) return error;
+  return "Unknown error";
+}
+
+function safeDependencyErrorMessage(error: unknown): string {
+  const raw = errorText(error);
+  return (
+    raw
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find(
+        (line) =>
+          line.length > 0 &&
+          !/\b(request body|response body|raw response|response headers|set-cookie|calldata|approval|swap request|private key|signer|authorization|api[-_ ]?key)\b|(?:^|[\s"'{}:,])(?:secret|token|access[_-]?token|refresh[_-]?token|authorization)(?:[-_ ]?(?:key|token))?["']?\s*[:=]/i.test(
+            line,
+          ),
+      ) ?? "Dependency read failed."
+  )
+    .replace(/(?:https?|wss?):\/\/\S+/g, "[redacted-url]")
+    .replace(/\b(?:bearer|token)\s+[a-z0-9._~+/=-]+/gi, "[redacted-secret]")
+    .replace(/0x[a-fA-F0-9]{64,}/g, "[redacted-hex]");
+}
+
+function maintenanceReasonCode(
+  reason: string | null | undefined,
+): string | null {
+  if (reason === null || reason === undefined) return null;
+  const trimmed = reason.trim();
+  if (/^[a-z0-9][a-z0-9-]{0,79}$/u.test(trimmed)) return trimmed;
+  return "dependency-error";
 }
 
 export async function getSlipstreamClReplaySnapshot({
@@ -2012,7 +2073,7 @@ export async function indexFamePoolStates({
     if (!pool) throw new Error("CL head read result missing pool.");
     clHeadFailures.push({
       poolId: pool.id,
-      message: errorMessage(result.reason),
+      message: safeDependencyErrorMessage(result.reason),
     });
   });
   let clHeadWrittenPools = 0;
@@ -2053,6 +2114,15 @@ export async function indexFamePoolStates({
   const latestClReplayByPoolId = new Map(
     latestClReplayStates.map((state) => [state.latest.poolId, state]),
   );
+  const latestClReplayCandidateStates =
+    await batchGetLatestClReplayCandidateStates({
+      db,
+      tableName,
+      pools: replayPools,
+    });
+  const latestClReplayCandidateByPoolId = new Map(
+    latestClReplayCandidateStates.map((state) => [state.latest.poolId, state]),
+  );
   const latestClReplayMaintenanceStates =
     await batchGetLatestClReplayMaintenanceStates({
       db,
@@ -2067,24 +2137,55 @@ export async function indexFamePoolStates({
       ? null
       : await readBlockIdentity({ client, blockNumber: observedThroughBlock });
   const replayFromBlockByPoolId = new Map<string, number>();
+  const trustedCursorCheckByPoolId = new Map<
+    string,
+    ClReplayTrustedCursorCheck
+  >();
   for (const pool of replayPools) {
     const latest = latestClReplayByPoolId.get(pool.id) ?? null;
+    const latestCandidate =
+      latestClReplayCandidateByPoolId.get(pool.id) ?? null;
+    const latestForMaintenance =
+      pool.replaySurface === "cl-replay-v1" ? latest : latestCandidate;
     const maintenance = latestClReplayMaintenanceByPoolId.get(pool.id) ?? null;
     const canAdvanceTrustedState = clReplayMaintenanceMatchesLatest({
       maintenance,
-      latest,
+      latest: latestForMaintenance,
       sourceRegistryId,
     });
+    let trustedCursorCheck: ClReplayTrustedCursorCheck = {
+      canAdvance: false,
+      reason: null,
+    };
     if (
       (clReplayMaintenanceMode === "checkpoint" ||
         clReplayMaintenanceMode === "steady-state") &&
       canAdvanceTrustedState &&
       maintenance !== null
     ) {
-      replayFromBlockByPoolId.set(pool.id, maintenance.cursorBlock + 1);
-    } else {
-      replayFromBlockByPoolId.set(pool.id, observedThroughBlock + 1);
+      try {
+        const cursorIdentity = await readBlockIdentity({
+          client,
+          blockNumber: maintenance.cursorBlock,
+        });
+        trustedCursorCheck =
+          cursorIdentity.blockHash === maintenance.cursorBlockHash
+            ? { canAdvance: true, reason: null }
+            : { canAdvance: false, reason: "cursor-block-hash-mismatch" };
+      } catch (error) {
+        trustedCursorCheck = {
+          canAdvance: false,
+          reason: maintenanceReasonCode(errorMessage(error)),
+        };
+      }
     }
+    trustedCursorCheckByPoolId.set(pool.id, trustedCursorCheck);
+    replayFromBlockByPoolId.set(
+      pool.id,
+      trustedCursorCheck.canAdvance && maintenance !== null
+        ? maintenance.cursorBlock + 1
+        : observedThroughBlock + 1,
+    );
   }
   const replayScanFromBlock =
     replayFromBlockByPoolId.size === 0
@@ -2143,7 +2244,7 @@ export async function indexFamePoolStates({
     if (!pool) throw new Error("CL replay read result missing pool.");
     clReplayFailures.push({
       poolId: pool.id,
-      message: errorMessage(result.reason),
+      message: safeDependencyErrorMessage(result.reason),
     });
   });
 
@@ -2158,13 +2259,15 @@ export async function indexFamePoolStates({
       sourceRegistryId,
       updatedAt,
     });
-    const result = await putLatestClReplayState({
-      db,
-      tableName,
-      rows,
-    });
     clReplayRowsByPoolId.set(pool.id, rows);
-    if (result === "written") clReplayWrittenPools += 1;
+    if (pool.replaySurface === "cl-replay-v1") {
+      const result = await putLatestClReplayState({
+        db,
+        tableName,
+        rows,
+      });
+      if (result === "written") clReplayWrittenPools += 1;
+    }
     clReplayMetrics.push({
       poolId: pool.id,
       bitmapWordCount: rows.latest.bitmapWordCount,
@@ -2181,12 +2284,15 @@ export async function indexFamePoolStates({
   for (const pool of replayPools) {
     const snapshotRows = clReplayRowsByPoolId.get(pool.id);
     const latest = latestClReplayByPoolId.get(pool.id) ?? null;
+    const latestCandidate =
+      latestClReplayCandidateByPoolId.get(pool.id) ?? null;
+    const latestForMaintenance =
+      pool.replaySurface === "cl-replay-v1" ? latest : latestCandidate;
     const maintenance = latestClReplayMaintenanceByPoolId.get(pool.id) ?? null;
-    const canAdvanceTrustedState = clReplayMaintenanceMatchesLatest({
-      maintenance,
-      latest,
-      sourceRegistryId,
-    });
+    const trustedCursorCheck = trustedCursorCheckByPoolId.get(pool.id) ?? {
+      canAdvance: false,
+      reason: null,
+    };
     const snapshotSeed = snapshotRows
       ? clReplayCapsuleFromRows(snapshotRows)
       : null;
@@ -2195,9 +2301,9 @@ export async function indexFamePoolStates({
         ? snapshotSeed
         : clReplayMaintenanceMode === "checkpoint" &&
             snapshotSeed &&
-            !canAdvanceTrustedState
+            !trustedCursorCheck.canAdvance
           ? snapshotSeed
-          : latest ?? snapshotSeed;
+          : (latestForMaintenance ?? snapshotSeed);
     const replayFromBlockForPool =
       replayFromBlockByPoolId.get(pool.id) ?? observedThroughBlock + 1;
     const poolLogs = (clReplayRawLogsByPoolId.get(pool.id) ?? []).filter(
@@ -2213,9 +2319,34 @@ export async function indexFamePoolStates({
     let applyResult: FameClReplayDeltaApplyResult;
     try {
       if (
+        (clReplayMaintenanceMode === "checkpoint" ||
+          clReplayMaintenanceMode === "repair") &&
+        snapshotRows === undefined
+      ) {
+        applyResult = {
+          status: "event-gap",
+          reason:
+            trustedCursorCheck.reason ??
+            `${clReplayMaintenanceMode}-snapshot-required`,
+          appliedEventCount: 0,
+        };
+      } else if (
+        clReplayMaintenanceMode === "steady-state" &&
+        !trustedCursorCheck.canAdvance
+      ) {
+        applyResult = {
+          status: "event-gap",
+          reason: trustedCursorCheck.reason ?? "trusted-cursor-required",
+          appliedEventCount: 0,
+        };
+      } else if (
         replayFromBlockForPool <= observedThroughBlock &&
         observedThroughBlock - replayFromBlockForPool + 1 >
-          clReplayMaxRangeBlocks
+          Math.min(
+            clReplayMaxRangeBlocks,
+            clReplayReducerManifestForPool(pool)?.maxMaintenanceRangeBlocks ??
+              clReplayMaxRangeBlocks,
+          )
       ) {
         applyResult = {
           status: "event-gap",
@@ -2223,19 +2354,6 @@ export async function indexFamePoolStates({
           appliedEventCount: 0,
         };
       } else {
-        if (
-          clReplayMaintenanceMode === "steady-state" &&
-          maintenance !== null &&
-          replayFromBlockForPool <= observedThroughBlock
-        ) {
-          const cursorIdentity = await readBlockIdentity({
-            client,
-            blockNumber: maintenance.cursorBlock,
-          });
-          if (cursorIdentity.blockHash !== maintenance.cursorBlockHash) {
-            throw new Error("cursor-block-hash-mismatch");
-          }
-        }
         const events = normalizeClReplayLogs({ pool, logs: poolLogs });
         if (targetBlockIdentity === null) {
           throw new Error("target-block-unavailable");
@@ -2250,7 +2368,8 @@ export async function indexFamePoolStates({
           events,
           fee,
           observedThroughBlock,
-          blockHash: snapshotRows?.latest.blockHash ?? targetBlockIdentity.blockHash,
+          blockHash:
+            snapshotRows?.latest.blockHash ?? targetBlockIdentity.blockHash,
           parentHash:
             snapshotRows?.latest.parentHash ?? targetBlockIdentity.parentHash,
           candidateId: `cl-replay-candidate-v1:${pool.id}:${observedThroughBlock.toString()}:${sourceRegistryId}`,
@@ -2261,7 +2380,8 @@ export async function indexFamePoolStates({
     } catch (error) {
       applyResult = {
         status: "event-gap",
-        reason: errorMessage(error),
+        reason:
+          maintenanceReasonCode(errorMessage(error)) ?? "dependency-error",
         appliedEventCount: 0,
       };
     }
@@ -2283,32 +2403,41 @@ export async function indexFamePoolStates({
       stateHash = applyResult.rows.latest.stateHash;
       candidateId = applyResult.rows.latest.candidateId;
       const driftClean =
-        snapshotRows === undefined ||
-        snapshotRows.latest.stateHash === applyResult.rows.latest.stateHash;
+        snapshotRows !== undefined
+          ? snapshotRows.latest.stateHash === applyResult.rows.latest.stateHash
+          : clReplayMaintenanceMode === "steady-state" &&
+            trustedCursorCheck.canAdvance;
       if (clReplayTrustPromotion && driftClean) {
-        quoteableRows = clReplayRowsFromCandidateRows({
-          pool,
-          rows: applyResult.rows,
-        });
-        await putLatestClReplayState({
-          db,
-          tableName,
-          rows: quoteableRows,
-        });
+        if (pool.replaySurface === "cl-replay-v1") {
+          quoteableRows = clReplayRowsFromCandidateRows({
+            pool,
+            rows: applyResult.rows,
+          });
+          await putLatestClReplayState({
+            db,
+            tableName,
+            rows: quoteableRows,
+          });
+        }
         maintenanceStatus = "trusted";
         reason = null;
       } else if (clReplayTrustPromotion) {
         maintenanceStatus = "drift-failed";
         reason = "checkpoint-state-hash-mismatch";
       } else {
-        maintenanceStatus = "warming";
-        reason = "shadow-not-promoted";
+        maintenanceStatus =
+          clReplayMaintenanceMode === "repair" ? "repairing" : "warming";
+        reason =
+          clReplayMaintenanceMode === "repair"
+            ? "repair-not-promoted"
+            : "shadow-not-promoted";
       }
     } else {
       maintenanceStatus = applyResult.status;
       reason = applyResult.reason;
     }
 
+    const maintenanceReason = maintenanceReasonCode(reason);
     await putLatestClReplayMaintenanceState({
       db,
       tableName,
@@ -2346,7 +2475,7 @@ export async function indexFamePoolStates({
           snapshotRows?.latest.blockHash ??
           maintenance?.lastCheckpointBlockHash ??
           null,
-        reason,
+        reason: maintenanceReason,
         candidateId,
       },
     });
@@ -2354,7 +2483,7 @@ export async function indexFamePoolStates({
     clReplayMaintenanceMetrics.push({
       poolId: pool.id,
       status: maintenanceStatus,
-      reason,
+      reason: maintenanceReason,
       fromBlock: fromBlockForMetric,
       toBlock: observedThroughBlock,
       scannedLogCount: poolLogs.length,

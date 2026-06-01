@@ -30,6 +30,7 @@ import {
   type PoolStateDocumentClient,
   type PoolStateDynamoResponse,
 } from "./pool-state.ts";
+import { FAME_SELECTED_CL_REPLAY_CANDIDATE_POOL_ID } from "../cl-reducer-manifests.ts";
 import { famePoolStateRegistry } from "../registry/index.ts";
 import type { FamePoolStateRegistryEntry } from "../types.ts";
 
@@ -224,8 +225,7 @@ class ReplayStateDb implements PoolStateDocumentClient {
         const incomingIsStale =
           current.cursorBlock > incoming.cursorBlock ||
           (current.cursorBlock === incoming.cursorBlock &&
-            current.cursorTransactionIndex >
-              incoming.cursorTransactionIndex) ||
+            current.cursorTransactionIndex > incoming.cursorTransactionIndex) ||
           (current.cursorBlock === incoming.cursorBlock &&
             current.cursorTransactionIndex ===
               incoming.cursorTransactionIndex &&
@@ -332,10 +332,32 @@ function clReplayPool(): FameClReplayRegistryEntry {
   };
 }
 
+function clReplayCandidatePool(): FameClReplayRegistryEntry {
+  const pool = famePoolStateRegistry.pools.find(
+    (entry) => entry.id === FAME_SELECTED_CL_REPLAY_CANDIDATE_POOL_ID,
+  );
+  if (
+    !pool ||
+    pool.stateSurface !== "cl-head-snapshot" ||
+    pool.poolAddress === null ||
+    pool.tickSpacing === null ||
+    pool.venue !== "aerodrome-slipstream"
+  ) {
+    throw new Error("Missing replay candidate Slipstream pool.");
+  }
+  return {
+    ...pool,
+    stateSurface: pool.stateSurface,
+    poolAddress: pool.poolAddress,
+    tickSpacing: pool.tickSpacing,
+    venue: pool.venue,
+  };
+}
+
 describe("FAME pool-state DynamoDB mapping", () => {
   test("includes the helper registry contract version in source registry ids", () => {
     expect(sourceRegistryIdFor(famePoolStateRegistry.source)).toMatch(
-      /^pool-state-registry-v3:0x[0-9a-f]{64}:0x[0-9a-f]{64}$/,
+      /^pool-state-registry-v4:0x[0-9a-f]{64}:0x[0-9a-f]{64}:0x[0-9a-f]{64}$/,
     );
   });
 
@@ -605,7 +627,9 @@ describe("FAME pool-state DynamoDB mapping", () => {
         state: warmingState,
       }),
     ).resolves.toBe("written");
-    expect(db.items.get(`${warmingState.pk}\u0000cl-replay-v1`)).toBeUndefined();
+    expect(
+      db.items.get(`${warmingState.pk}\u0000cl-replay-v1`),
+    ).toBeUndefined();
   });
 
   test("rejects stale replay maintenance cursor writes", async () => {
@@ -722,11 +746,11 @@ describe("FAME pool-state DynamoDB mapping", () => {
   });
 
   test("writes candidate replay chunks before candidate pointer and keeps candidates invisible to quote reads", async () => {
-    const pool = clReplayPool();
+    const pool = clReplayCandidatePool();
     const rows = clReplayCandidateStateRowsFromSnapshot({
       pool,
       sqrtPriceX96: 2n ** 96n,
-      tick: 199_900,
+      tick: 200_000,
       liquidity: 123_456_789n,
       fee: 100n,
       observedThroughBlock: 321,
@@ -744,8 +768,8 @@ describe("FAME pool-state DynamoDB mapping", () => {
         { wordPosition: 8, bitmap: 2n ** 255n },
       ],
       initializedTicks: [
-        { tick: 199_800, liquidityGross: 10n, liquidityNet: -10n },
-        { tick: 199_900, liquidityGross: 25n, liquidityNet: 15n },
+        { tick: 198_000, liquidityGross: 10n, liquidityNet: -10n },
+        { tick: 200_000, liquidityGross: 25n, liquidityNet: 15n },
       ],
       bitmapChunkSize: 1,
       tickChunkSize: 1,
@@ -1027,10 +1051,10 @@ describe("FAME pool-state DynamoDB mapping", () => {
       }),
     ).rejects.toThrow(/Invalid CL replay tick chunk DynamoDB item/);
 
-    const {
-      expiresAt: _expiresAt,
-      ...tickChunkWithoutExpiresAt
-    } = firstItem(rows.tickChunks, "CL replay tick chunk");
+    const { expiresAt: _expiresAt, ...tickChunkWithoutExpiresAt } = firstItem(
+      rows.tickChunks,
+      "CL replay tick chunk",
+    );
     await expect(
       batchGetLatestClReplayStates({
         db: new ReplayStateDb([

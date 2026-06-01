@@ -153,8 +153,7 @@ export type FameClReplayMaintenanceStatus =
   | "repairing"
   | "event-gap";
 
-export interface FameClReplayMaintenanceState
-  extends Record<string, unknown> {
+export interface FameClReplayMaintenanceState extends Record<string, unknown> {
   pk: string;
   sk: "cl-replay-maintenance-v1";
   stateKind: "cl-replay-maintenance-v1";
@@ -347,7 +346,6 @@ export type FameClHeadSnapshotRegistryEntry = FamePoolStateRegistryEntry & {
 };
 
 export type FameClReplayRegistryEntry = FameClHeadSnapshotRegistryEntry & {
-  replaySurface: "cl-replay-v1";
   venue: "aerodrome-slipstream";
   poolAddress: Address;
 };
@@ -492,10 +490,10 @@ export function cursorKey(chainId: number): { pk: string; sk: "cursor" } {
 export function sourceRegistryIdFor(
   registrySource: Pick<
     FamePoolStateRegistrySource,
-    "poolsJsonHash" | "solverRoutesJsonHash"
+    "poolsJsonHash" | "solverRoutesJsonHash" | "activationLedgerHash"
   >,
 ): string {
-  return `pool-state-registry-v${FAME_POOL_STATE_REGISTRY_SCHEMA_VERSION.toString()}:${registrySource.poolsJsonHash}:${registrySource.solverRoutesJsonHash}`;
+  return `pool-state-registry-v${FAME_POOL_STATE_REGISTRY_SCHEMA_VERSION.toString()}:${registrySource.poolsJsonHash}:${registrySource.solverRoutesJsonHash}:${registrySource.activationLedgerHash}`;
 }
 
 export function comparePoolStateEventVersions(
@@ -1581,11 +1579,7 @@ function completeReplayCandidateCapsuleFromItems({
     (chunk) => chunk.initializedTicks,
   );
   if (
-    !replayCandidateCapsuleMatchesPointer(
-      latest,
-      bitmapWords,
-      initializedTicks,
-    )
+    !replayCandidateCapsuleMatchesPointer(latest, bitmapWords, initializedTicks)
   ) {
     return null;
   }

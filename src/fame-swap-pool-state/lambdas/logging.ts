@@ -2,7 +2,11 @@ import type {
   FamePoolStateBatchResponse,
   FamePoolStateResponseEntry,
 } from "../api.ts";
-import type { FamePoolQuoteBatchResponse } from "../cl-quote.ts";
+import { FAME_SELECTED_CL_REPLAY_CANDIDATE_POOL_ID } from "../cl-reducer-manifests.ts";
+import type {
+  FamePoolQuoteBatchResponse,
+  FamePoolQuoteResponseEntry,
+} from "../cl-quote.ts";
 import type { FamePoolStateIndexerResult } from "../indexer.ts";
 
 export type PoolStateLogLevel = "error" | "info" | "warn";
@@ -33,6 +37,28 @@ interface ClReplayLogSummary extends PoolStateLogFields {
   tickChunkCount: number;
 }
 
+interface SelectedClReplayCandidateLogSummary extends PoolStateLogFields {
+  poolId: string;
+  providerReadCount: number | null;
+  bitmapWordCount: number | null;
+  initializedTickCount: number | null;
+  bitmapChunkCount: number | null;
+  tickChunkCount: number | null;
+  scannedLogCount: number | null;
+  appliedEventCount: number | null;
+  maintenanceStatus: string | null;
+  maintenanceReason: string | null;
+  candidateWritten: boolean | null;
+  stateHash: string | null;
+}
+
+interface SelectedClReplayCandidateQuoteLogSummary extends PoolStateLogFields {
+  poolId: string;
+  returned: number;
+  statusCounts: Record<string, number>;
+  reasonCounts: Record<string, number>;
+}
+
 type ClReplayResponseEntry = Extract<
   FamePoolStateResponseEntry,
   { stateKind: "cl-replay-v1" }
@@ -47,17 +73,38 @@ function statusCounts(response: Pick<FamePoolStateBatchResponse, "pools">) {
 }
 
 function poolQuoteStatusCounts(
-  response: Pick<FamePoolQuoteBatchResponse, "quotes">,
+  quotes: FamePoolQuoteResponseEntry[],
 ) {
   const statusCounts: Record<string, number> = {};
   const reasonCounts: Record<string, number> = {};
-  for (const quote of response.quotes) {
+  for (const quote of quotes) {
     statusCounts[quote.status] = (statusCounts[quote.status] ?? 0) + 1;
     if (quote.status === "unavailable") {
       reasonCounts[quote.reason] = (reasonCounts[quote.reason] ?? 0) + 1;
     }
   }
   return { statusCounts, reasonCounts };
+}
+
+function poolQuotePoolId(quote: FamePoolQuoteResponseEntry): string {
+  return quote.status === "unavailable" ? quote.requested.poolId : quote.poolId;
+}
+
+function selectedClReplayCandidateQuoteLogSummary(
+  response: Pick<FamePoolQuoteBatchResponse, "quotes">,
+): SelectedClReplayCandidateQuoteLogSummary | null {
+  const selectedQuotes = response.quotes.filter(
+    (quote) => poolQuotePoolId(quote) === FAME_SELECTED_CL_REPLAY_CANDIDATE_POOL_ID,
+  );
+  if (selectedQuotes.length === 0) return null;
+
+  const counts = poolQuoteStatusCounts(selectedQuotes);
+  return {
+    poolId: FAME_SELECTED_CL_REPLAY_CANDIDATE_POOL_ID,
+    returned: selectedQuotes.length,
+    statusCounts: counts.statusCounts,
+    reasonCounts: counts.reasonCounts,
+  };
 }
 
 function isClReplayResponse(
@@ -120,8 +167,8 @@ export function poolStateApiBatchLogFields(
 export function poolQuoteApiBatchLogFields(
   response: FamePoolQuoteBatchResponse,
 ): PoolStateLogFields {
-  const counts = poolQuoteStatusCounts(response);
-  return {
+  const counts = poolQuoteStatusCounts(response.quotes);
+  const fields: PoolStateLogFields = {
     routeKind: "pool-quotes",
     sourceRegistryId: response.sourceRegistryId,
     currentBlock: response.currentBlock,
@@ -130,6 +177,11 @@ export function poolQuoteApiBatchLogFields(
     statusCounts: counts.statusCounts,
     reasonCounts: counts.reasonCounts,
   };
+  const selectedCandidate = selectedClReplayCandidateQuoteLogSummary(response);
+  if (selectedCandidate) {
+    fields.selectedClReplayCandidateQuote = selectedCandidate;
+  }
+  return fields;
 }
 
 export function writePoolStateLog(
@@ -160,7 +212,7 @@ export function writePoolStateLog(
 function indexerResultLogFields(
   result: FamePoolStateIndexerResult,
 ): PoolStateLogFields {
-  return {
+  const fields: PoolStateLogFields = {
     chainId: result.chainId,
     durationMs: result.durationMs,
     fromBlock: result.fromBlock,
@@ -209,6 +261,36 @@ function indexerResultLogFields(
       }),
     ),
     sourceRegistryId: result.sourceRegistryId,
+  };
+  const selectedCandidate = selectedClReplayCandidateLogSummary(result);
+  if (selectedCandidate) fields.selectedClReplayCandidate = selectedCandidate;
+  return fields;
+}
+
+function selectedClReplayCandidateLogSummary(
+  result: FamePoolStateIndexerResult,
+): SelectedClReplayCandidateLogSummary | null {
+  const snapshot = result.clReplayMetrics.find(
+    (metric) => metric.poolId === FAME_SELECTED_CL_REPLAY_CANDIDATE_POOL_ID,
+  );
+  const maintenance = result.clReplayMaintenanceMetrics.find(
+    (metric) => metric.poolId === FAME_SELECTED_CL_REPLAY_CANDIDATE_POOL_ID,
+  );
+  if (!snapshot && !maintenance) return null;
+
+  return {
+    poolId: FAME_SELECTED_CL_REPLAY_CANDIDATE_POOL_ID,
+    providerReadCount: snapshot?.providerReadCount ?? null,
+    bitmapWordCount: snapshot?.bitmapWordCount ?? null,
+    initializedTickCount: snapshot?.initializedTickCount ?? null,
+    bitmapChunkCount: snapshot?.bitmapChunkCount ?? null,
+    tickChunkCount: snapshot?.tickChunkCount ?? null,
+    scannedLogCount: maintenance?.scannedLogCount ?? null,
+    appliedEventCount: maintenance?.appliedEventCount ?? null,
+    maintenanceStatus: maintenance?.status ?? null,
+    maintenanceReason: maintenance?.reason ?? null,
+    candidateWritten: maintenance?.candidateWritten ?? null,
+    stateHash: maintenance?.stateHash ?? snapshot?.stateHash ?? null,
   };
 }
 

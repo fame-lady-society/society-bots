@@ -10,6 +10,7 @@ import {
   type FamePoolQuoteRequest,
 } from "./cl-quote.ts";
 import {
+  clReplayCandidateStateRowsFromSnapshot,
   clReplayStateRowsFromSnapshot,
   latestClHeadStateFromSnapshot,
   latestClReplayMaintenanceStateKey,
@@ -19,6 +20,9 @@ import {
   type FameClHeadLatestState,
   type FameClHeadSnapshotRegistryEntry,
   type FameClReplayBitmapChunkState,
+  type FameClReplayCandidateBitmapChunkState,
+  type FameClReplayCandidateLatestState,
+  type FameClReplayCandidateTickChunkState,
   type FameClReplayLatestState,
   type FameClReplayMaintenanceState,
   type FameClReplayRegistryEntry,
@@ -34,7 +38,7 @@ type SentCommand = Parameters<PoolStateDocumentClient["send"]>[0];
 
 const ADDRESS_A = "0x0000000000000000000000000000000000000001" as Address;
 const POOL_QUOTES_V1_FIXTURE_SHA256 =
-  "492e125de5f865f2ef88dd63d5965bd835c3c068d2565cfd355ef93fb28fe763";
+  "1167e7daf16ed8c90c01b053dce24bb08579aef88a24a1ae1a756b290c34237d";
 
 class BatchStateDb implements PoolStateDocumentClient {
   public readCount = 0;
@@ -44,6 +48,9 @@ class BatchStateDb implements PoolStateDocumentClient {
     states: readonly (
       | FameClHeadLatestState
       | FameClReplayBitmapChunkState
+      | FameClReplayCandidateBitmapChunkState
+      | FameClReplayCandidateLatestState
+      | FameClReplayCandidateTickChunkState
       | FameClReplayLatestState
       | FameClReplayMaintenanceState
       | FameClReplayTickChunkState
@@ -105,6 +112,9 @@ function recordFromState(
   state:
     | FameClHeadLatestState
     | FameClReplayBitmapChunkState
+    | FameClReplayCandidateBitmapChunkState
+    | FameClReplayCandidateLatestState
+    | FameClReplayCandidateTickChunkState
     | FameClReplayLatestState
     | FameClReplayMaintenanceState
     | FameClReplayTickChunkState
@@ -180,6 +190,55 @@ function clReplayPool(): FameClReplayRegistryEntry {
     entry.venue !== "aerodrome-slipstream"
   ) {
     throw new Error("Missing CL replay pool.");
+  }
+  return {
+    ...entry,
+    replaySurface: entry.replaySurface,
+    stateSurface: entry.stateSurface,
+    poolAddress: entry.poolAddress,
+    tickSpacing: entry.tickSpacing,
+    venue: entry.venue,
+  };
+}
+
+function clReplayCandidatePool(): FameClReplayRegistryEntry {
+  const entry = famePoolStateRegistry.pools.find(
+    (pool) => pool.id === "slipstream-basedflick-fame",
+  );
+  if (
+    !entry ||
+    entry.stateSurface !== "cl-head-snapshot" ||
+    entry.poolAddress === null ||
+    entry.tickSpacing === null ||
+    entry.venue !== "aerodrome-slipstream"
+  ) {
+    throw new Error("Missing CL replay candidate pool.");
+  }
+  return {
+    ...entry,
+    activationStatus: "cl-replay-candidate",
+    replaySurface: null,
+    stateSurface: entry.stateSurface,
+    poolAddress: entry.poolAddress,
+    tickSpacing: entry.tickSpacing,
+    venue: entry.venue,
+  };
+}
+
+function selectedActiveClReplayPool(): FameClReplayRegistryEntry {
+  const entry = famePoolStateRegistry.pools.find(
+    (pool) => pool.id === "slipstream-basedflick-fame",
+  );
+  if (
+    !entry ||
+    entry.activationStatus !== "cl-compact-quote-active" ||
+    entry.replaySurface !== "cl-replay-v1" ||
+    entry.stateSurface !== "cl-head-snapshot" ||
+    entry.poolAddress === null ||
+    entry.tickSpacing === null ||
+    entry.venue !== "aerodrome-slipstream"
+  ) {
+    throw new Error("Missing active selected CL replay pool.");
   }
   return {
     ...entry,
@@ -296,6 +355,36 @@ function quoteClReplayRowsForPool(pool: FameClReplayRegistryEntry) {
   });
 }
 
+function quoteClReplayCandidateRowsForPool(pool: FameClReplayRegistryEntry) {
+  return clReplayCandidateStateRowsFromSnapshot({
+    pool,
+    sqrtPriceX96: 2n ** 96n,
+    tick: 0,
+    liquidity: 1_000_000_000_000_000_000n,
+    fee: 100n,
+    observedThroughBlock: 120,
+    blockHash:
+      "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    parentHash:
+      "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    candidateId: "unit-cl-candidate",
+    stateHash:
+      "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    sourceRegistryId: sourceRegistryIdFor(famePoolStateRegistry.source),
+    updatedAt: "2026-05-20T00:00:00.000Z",
+    bitmapWords: [
+      { wordPosition: -1, bitmap: 1n << 255n },
+      { wordPosition: 0, bitmap: 2n },
+    ],
+    initializedTicks: [
+      { tick: -100, liquidityGross: 1_000n, liquidityNet: -1_000n },
+      { tick: 100, liquidityGross: 1_000n, liquidityNet: 1_000n },
+    ],
+    bitmapChunkSize: 1,
+    tickChunkSize: 1,
+  });
+}
+
 function trustedMaintenanceForReplayRows(
   pool: FameClReplayRegistryEntry,
   rows: ReturnType<typeof clReplayStateRowsFromSnapshot>,
@@ -323,12 +412,50 @@ function trustedMaintenanceForReplayRows(
   };
 }
 
+function trustedMaintenanceForReplayCandidateRows(
+  pool: FameClReplayRegistryEntry,
+  rows: ReturnType<typeof clReplayCandidateStateRowsFromSnapshot>,
+): FameClReplayMaintenanceState {
+  return {
+    ...latestClReplayMaintenanceStateKey(pool),
+    stateKind: "cl-replay-maintenance-v1",
+    poolId: pool.id,
+    chainId: pool.chainId,
+    poolAddress: pool.poolAddress,
+    status: "trusted",
+    cursorBlock: rows.latest.observedThroughBlock,
+    cursorBlockHash: rows.latest.blockHash,
+    cursorTransactionIndex: Number.MAX_SAFE_INTEGER,
+    cursorLogIndex: Number.MAX_SAFE_INTEGER,
+    targetBlock: rows.latest.observedThroughBlock,
+    targetBlockHash: rows.latest.blockHash,
+    stateHash: rows.latest.stateHash,
+    sourceRegistryId: rows.latest.sourceRegistryId,
+    updatedAt: "2026-05-20T00:00:00.000Z",
+    lastCheckpointBlock: rows.latest.observedThroughBlock,
+    lastCheckpointBlockHash: rows.latest.blockHash,
+    reason: null,
+    candidateId: rows.latest.candidateId,
+  };
+}
+
 function warmingMaintenanceForReplayRows(
   pool: FameClReplayRegistryEntry,
   rows: ReturnType<typeof clReplayStateRowsFromSnapshot>,
 ): FameClReplayMaintenanceState {
   return {
     ...trustedMaintenanceForReplayRows(pool, rows),
+    status: "warming",
+    reason: "shadow-not-promoted",
+  };
+}
+
+function warmingMaintenanceForReplayCandidateRows(
+  pool: FameClReplayRegistryEntry,
+  rows: ReturnType<typeof clReplayCandidateStateRowsFromSnapshot>,
+): FameClReplayMaintenanceState {
+  return {
+    ...trustedMaintenanceForReplayCandidateRows(pool, rows),
     status: "warming",
     reason: "shadow-not-promoted",
   };
@@ -383,6 +510,16 @@ function poolQuotesFixtureResponse(): Record<string, unknown> {
   const parsed: unknown = JSON.parse(readFileSync(fixtureUrl, "utf8"));
   const fixture = parseFixtureObject(parsed, "$");
   return parseFixtureObject(fixture.response, "$.response");
+}
+
+function poolQuotesFixtureUnavailableExamples(): Record<string, unknown>[] {
+  const fixtureUrl = new URL("./fixtures/pool-quotes-v1.json", import.meta.url);
+  const parsed: unknown = JSON.parse(readFileSync(fixtureUrl, "utf8"));
+  const fixture = parseFixtureObject(parsed, "$");
+  return parseFixtureQuotes(
+    fixture.unavailableExamples,
+    "$.unavailableExamples",
+  );
 }
 
 function fixtureQuoteRequests(
@@ -581,6 +718,37 @@ describe("FAME pool-state API contract", () => {
     });
   });
 
+  test("returns selected active CL replay state for indexed route-lab requests", async () => {
+    const pool = selectedActiveClReplayPool();
+    const rows = clReplayRowsForPool(pool);
+    const response = await handleFamePoolStateBatchRequest({
+      request: {
+        currentBlock: 125,
+        stateSurfaces: ["cl-replay-v1"],
+        pools: [{ poolId: pool.id }],
+      },
+      tableName: "PoolState",
+      db: new BatchStateDb([
+        trustedMaintenanceForReplayRows(pool, rows),
+        rows.latest,
+        ...rows.bitmapChunks,
+        ...rows.tickChunks,
+      ]),
+      producerMaxFreshnessBlocks: 120,
+    });
+
+    expect(response.pools[0]).toMatchObject({
+      status: "fresh",
+      stateKind: "cl-replay-v1",
+      poolId: pool.id,
+      poolAddress: pool.poolAddress,
+      snapshotId: "unit-cl-replay",
+      sourceRegistryId: sourceRegistryIdFor(famePoolStateRegistry.source),
+      bitmapWordCount: 2,
+      initializedTickCount: 2,
+    });
+  });
+
   test("returns compact CL quotes without raw replay arrays", async () => {
     const pool = clReplayPool();
     const rows = quoteClReplayRowsForPool(pool);
@@ -663,6 +831,165 @@ describe("FAME pool-state API contract", () => {
     });
   });
 
+  test("returns selected compact CL quotes from trusted replay state", async () => {
+    const pool = selectedActiveClReplayPool();
+    const rows = quoteClReplayRowsForPool(pool);
+    const response = await handleFamePoolQuoteBatchRequest({
+      request: {
+        currentBlock: 125,
+        quotes: [
+          {
+            poolId: pool.id,
+            tokenIn: pool.token0,
+            tokenOut: pool.token1,
+            amountIn: "1000000",
+          },
+          {
+            poolId: pool.id,
+            tokenIn: pool.token1,
+            tokenOut: pool.token0,
+            amountIn: "1000000",
+          },
+        ],
+      },
+      tableName: "PoolState",
+      db: new BatchStateDb([
+        trustedMaintenanceForReplayRows(pool, rows),
+        rows.latest,
+        ...rows.bitmapChunks,
+        ...rows.tickChunks,
+      ]),
+      producerMaxFreshnessBlocks: 120,
+    });
+
+    expect(response.quotes).toEqual([
+      expect.objectContaining({
+        status: "quoted",
+        quoteKind: "cl-quote-v1",
+        poolId: pool.id,
+        poolAddress: pool.poolAddress,
+        tokenIn: pool.token0,
+        tokenOut: pool.token1,
+        amountIn: "1000000",
+        amountOut: "999899",
+        snapshotId: "unit-cl-quote",
+        stateHash:
+          "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        sourceRegistryId: sourceRegistryIdFor(famePoolStateRegistry.source),
+      }),
+      expect.objectContaining({
+        status: "quoted",
+        quoteKind: "cl-quote-v1",
+        poolId: pool.id,
+        tokenIn: pool.token1,
+        tokenOut: pool.token0,
+        amountIn: "1000000",
+        amountOut: "999899",
+        snapshotId: "unit-cl-quote",
+      }),
+    ]);
+    for (const quote of response.quotes) {
+      expect(quote).not.toHaveProperty("bitmapWords");
+      expect(quote).not.toHaveProperty("initializedTicks");
+    }
+  });
+
+  test("does not serve compact CL quotes from candidate-only replay state", async () => {
+    const pool = clReplayCandidatePool();
+    const rows = quoteClReplayCandidateRowsForPool(pool);
+    const response = await handleFamePoolQuoteBatchRequest({
+      request: {
+        currentBlock: 125,
+        quotes: [
+          {
+            poolId: pool.id,
+            tokenIn: pool.token0,
+            tokenOut: pool.token1,
+            amountIn: "1000000",
+          },
+        ],
+      },
+      tableName: "PoolState",
+      registry: {
+        ...famePoolStateRegistry,
+        pools: famePoolStateRegistry.pools.map((entry) =>
+          entry.id === pool.id ? pool : entry,
+        ),
+      },
+      db: new BatchStateDb([
+        trustedMaintenanceForReplayCandidateRows(pool, rows),
+        rows.latest,
+        ...rows.bitmapChunks,
+        ...rows.tickChunks,
+      ]),
+      producerMaxFreshnessBlocks: 120,
+    });
+
+    expect(response.quotes[0]).toMatchObject({
+      status: "unavailable",
+      reason: "unsupported-pool",
+      poolId: pool.id,
+      poolAddress: pool.poolAddress,
+    });
+  });
+
+  test("returns unavailable selected quotes before seed or trusted maintenance", async () => {
+    const pool = selectedActiveClReplayPool();
+    const rows = quoteClReplayRowsForPool(pool);
+    const missingResponse = await handleFamePoolQuoteBatchRequest({
+      request: {
+        currentBlock: 125,
+        quotes: [
+          {
+            poolId: pool.id,
+            tokenIn: pool.token0,
+            tokenOut: pool.token1,
+            amountIn: "1000000",
+          },
+        ],
+      },
+      tableName: "PoolState",
+      db: new BatchStateDb([]),
+      producerMaxFreshnessBlocks: 120,
+    });
+    const untrustedResponse = await handleFamePoolQuoteBatchRequest({
+      request: {
+        currentBlock: 125,
+        quotes: [
+          {
+            poolId: pool.id,
+            tokenIn: pool.token0,
+            tokenOut: pool.token1,
+            amountIn: "1000000",
+          },
+        ],
+      },
+      tableName: "PoolState",
+      db: new BatchStateDb([
+        warmingMaintenanceForReplayRows(pool, rows),
+        rows.latest,
+        ...rows.bitmapChunks,
+        ...rows.tickChunks,
+      ]),
+      producerMaxFreshnessBlocks: 120,
+    });
+
+    expect(missingResponse.quotes[0]).toMatchObject({
+      status: "unavailable",
+      reason: "missing-indexed-state",
+      poolId: pool.id,
+      poolAddress: pool.poolAddress,
+    });
+    expect(untrustedResponse.quotes[0]).toMatchObject({
+      status: "unavailable",
+      reason: "producer-untrusted",
+      poolId: pool.id,
+      observedThroughBlock: 120,
+      producerStatus: "warming",
+      producerReason: "shadow-not-promoted",
+    });
+  });
+
   test("matches the golden compact reserve quote fixture for every quote-model pool", async () => {
     const fixtureBytes = readFileSync(
       new URL("./fixtures/pool-quotes-v1.json", import.meta.url),
@@ -699,6 +1026,26 @@ describe("FAME pool-state API contract", () => {
       expect(quote).not.toHaveProperty("reserve1");
       expect(quote).not.toHaveProperty("k");
     }
+  });
+
+  test("documents producer-untrusted compact quote fixture examples", () => {
+    const [baselineProducerUntrusted, candidateProducerUntrusted] =
+      poolQuotesFixtureUnavailableExamples();
+
+    expect(baselineProducerUntrusted).toMatchObject({
+      status: "unavailable",
+      reason: "producer-untrusted",
+      poolId: "slipstream-usdc-weth-100",
+      producerStatus: "trusted",
+      producerReason: null,
+    });
+    expect(candidateProducerUntrusted).toMatchObject({
+      status: "unavailable",
+      reason: "producer-untrusted",
+      poolId: "slipstream-basedflick-fame",
+      producerStatus: "warming",
+      producerReason: "shadow-not-promoted",
+    });
   });
 
   test("quotes reserve and Slipstream compact rows in one batch", async () => {
@@ -968,8 +1315,11 @@ describe("FAME pool-state API contract", () => {
   test("returns unavailable CL quotes for untrusted producer maintenance without loading chunks", async () => {
     const pool = clReplayPool();
     const rows = quoteClReplayRowsForPool(pool);
+    const maintenance = warmingMaintenanceForReplayRows(pool, rows);
+    maintenance.reason =
+      'response body {"token":"unit-secret"} https://rpc.example/raw';
     const db = new BatchStateDb([
-      warmingMaintenanceForReplayRows(pool, rows),
+      maintenance,
       rows.latest,
       ...rows.bitmapChunks,
       ...rows.tickChunks,
@@ -997,8 +1347,10 @@ describe("FAME pool-state API contract", () => {
       poolId: pool.id,
       observedThroughBlock: 120,
       producerStatus: "warming",
-      producerReason: "shadow-not-promoted",
+      producerReason: "redacted-reason",
     });
+    expect(JSON.stringify(response)).not.toContain("unit-secret");
+    expect(JSON.stringify(response)).not.toContain("rpc.example");
     expect(db.readCount).toBe(2);
   });
 

@@ -169,6 +169,8 @@ type ReserveQuotePool = FamePoolStateRegistryEntry & {
   fee: Extract<FamePoolStateFeeDescriptor, { status: "available" }>;
 };
 type ClReplayPool = FameClReplayRegistryEntry;
+type ClReplayQuoteLatestState = FameClReplayLatestState;
+type ClReplayQuoteStateCapsule = FameClReplayStateCapsule;
 type ReplayFailureReason = Extract<
   FamePoolQuoteUnavailableReason,
   "malformed-replay-state" | "outside-indexed-tick-range" | "replay-failed"
@@ -369,7 +371,7 @@ function clReplayLatestStateMatchesRegistry({
   entry,
   sourceRegistryId,
 }: {
-  latest: FameClReplayLatestState;
+  latest: ClReplayQuoteLatestState;
   entry: ClReplayPool;
   sourceRegistryId: string;
 }): boolean {
@@ -390,7 +392,7 @@ function clReplayStateMatchesRegistry({
   entry,
   sourceRegistryId,
 }: {
-  state: FameClReplayStateCapsule;
+  state: ClReplayQuoteStateCapsule;
   entry: ClReplayPool;
   sourceRegistryId: string;
 }): boolean {
@@ -408,7 +410,7 @@ function clReplayMaintenanceCompatible({
   sourceRegistryId,
 }: {
   maintenance: FameClReplayMaintenanceState | undefined;
-  latest: FameClReplayLatestState;
+  latest: ClReplayQuoteLatestState;
   sourceRegistryId: string;
 }): boolean {
   return (
@@ -424,6 +426,10 @@ function clReplayMaintenanceCompatible({
     maintenance.targetBlockHash === latest.blockHash &&
     maintenance.stateHash === latest.stateHash
   );
+}
+
+function clReplaySnapshotId(latest: ClReplayQuoteLatestState): string {
+  return latest.snapshotId;
 }
 
 function reserveStateMatchesRegistry({
@@ -645,7 +651,7 @@ function nextInitializedTick(
   return ticks.find((tick) => tick.tick > currentTick) ?? null;
 }
 
-function replayTicks(state: FameClReplayStateCapsule): ReplayTick[] | null {
+function replayTicks(state: ClReplayQuoteStateCapsule): ReplayTick[] | null {
   const ticks = state.initializedTicks.map((tick) => {
     const liquidityGross = parseUnsignedDecimal(tick.liquidityGross);
     const liquidityNet = parseSignedDecimal(tick.liquidityNet);
@@ -663,7 +669,7 @@ function replayTicks(state: FameClReplayStateCapsule): ReplayTick[] | null {
 }
 
 function replaySlipstreamExactInput(options: {
-  state: FameClReplayStateCapsule;
+  state: ClReplayQuoteStateCapsule;
   zeroForOne: boolean;
   amountIn: bigint;
 }): { amountOut: bigint; sqrtPriceX96After: bigint } | ReplayFailureReason {
@@ -746,6 +752,13 @@ function unavailable(
     reason,
     ...metadata,
   };
+}
+
+function safeProducerReason(reason: string | null | undefined): string | null {
+  if (reason === null || reason === undefined) return null;
+  const trimmed = reason.trim();
+  if (/^[a-z0-9][a-z0-9-]{0,79}$/u.test(trimmed)) return trimmed;
+  return "redacted-reason";
 }
 
 function constantProductAmountOut(options: {
@@ -987,7 +1000,7 @@ function quoteFromReserveState(options: {
 
 function quoteFromReplayState(options: {
   request: FamePoolQuoteRequest;
-  state: FameClReplayStateCapsule;
+  state: ClReplayQuoteStateCapsule;
   maxFreshnessBlocks: number;
 }): FamePoolQuoteResponseEntry {
   const { request, state } = options;
@@ -1048,7 +1061,7 @@ function quoteFromReplayState(options: {
     observedThroughBlock: latest.observedThroughBlock,
     blockHash: latest.blockHash,
     parentHash: latest.parentHash,
-    snapshotId: latest.snapshotId,
+    snapshotId: clReplaySnapshotId(latest),
     stateHash: latest.stateHash,
     source: latest.source,
     sourceRegistryId: latest.sourceRegistryId,
@@ -1101,6 +1114,7 @@ export async function handleFamePoolQuoteBatchRequest({
       )
       .map((entry) => [entry.id, entry]),
   );
+  const clReplayPools = [...clReplayPoolsById.values()];
   const reserveStates = await batchGetLatestPoolStates({
     db,
     tableName,
@@ -1109,12 +1123,12 @@ export async function handleFamePoolQuoteBatchRequest({
   const latestStates = await batchGetLatestClReplayPointers({
     db,
     tableName,
-    pools: [...clReplayPoolsById.values()],
+    pools: clReplayPools,
   });
   const maintenanceStates = await batchGetLatestClReplayMaintenanceStates({
     db,
     tableName,
-    pools: [...clReplayPoolsById.values()],
+    pools: clReplayPools,
   });
   const maintenanceStatesByPoolId = new Map(
     maintenanceStates.map((state) => [state.poolId, state]),
@@ -1289,7 +1303,7 @@ export async function handleFamePoolQuoteBatchRequest({
           sourceRegistryId: latest.sourceRegistryId,
           maxFreshnessBlocks: effectiveMaxFreshnessBlocks,
           producerStatus: maintenance?.status,
-          producerReason: maintenance?.reason,
+          producerReason: safeProducerReason(maintenance?.reason),
         });
       }
 

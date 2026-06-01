@@ -5,9 +5,9 @@
 ## Scope
 
 - Quote-model reserve pools: Uniswap V2, volatile Solidly/Equalizer, and volatile Aerodrome V2.
-- Compact quote rows: `/fame/pool-quotes` returns `constant-product-quote-v1` rows for quote-model reserve pools and `cl-quote-v1` rows for `slipstream-usdc-weth-100`.
+- Compact quote rows: `/fame/pool-quotes` returns `constant-product-quote-v1` rows for quote-model reserve pools, `cl-quote-v1` rows for baseline `slipstream-usdc-weth-100`, and evidence-only `cl-quote-v1` rows for selected candidate `slipstream-basedflick-fame` when its reducer maintenance state is trusted.
 - Concentrated-liquidity head snapshots: Slipstream, Slipstream2, Uniswap V3, and Uniswap V4 pools with reviewed fee metadata.
-- Concentrated-liquidity replay snapshots: exactly `slipstream-usdc-weth-100` with complete safe-block `cl-replay-v1` state for the first proof.
+- Concentrated-liquidity replay snapshots: baseline `slipstream-usdc-weth-100` and selected candidate `slipstream-basedflick-fame` with complete safe-block replay state. The selected candidate can remain producer-side candidate state while `www` decides whether to use the compact quote evidence.
 - Tracked-only pools: stable Solidly, native wrap, pools missing reviewed CL metadata, and unknown unsupported invariants.
 - No factory discovery, stable math, broad concentrated-liquidity replay, notifier behavior, or public solver routing is owned here.
 
@@ -51,7 +51,11 @@ Freshness is based on `observedThroughBlock`, not `lastReserveChangeBlock`.
 
 Reserve quote-model pools return `constant-product-quote-v1` rows when fresh matching reserve state is available. Each row includes pool identity, token direction, `amountIn`, `amountOut`, `quoteModel: "constant-product-reserves"`, `quoteModelVersion: 1`, `feeBps`, `feeSource: "registry-fee"`, `stateSource`, `observedThroughBlock`, source registry id, price-impact fields, and safe protocol evidence. The quote math matches the existing `www` constant-product reserve adapter: input fee in basis points is applied before the invariant quote, while price-impact evidence uses full input amount against pre/post reserves.
 
-`slipstream-usdc-weth-100` keeps its existing `cl-quote-v1` compact row shape and still omits raw replay arrays. A CL compact quote is emitted only when the replay pointer is fresh and the matching maintenance row is trusted, source-registry-compatible, cursor-current, and state-hash-compatible. Shadow reducer candidates or unpromoted producer state return `unavailable` with `producer-untrusted` until reviewed promotion evidence exists. Other reviewed-but-unquoted pools return `unavailable` with an enum reason such as `unsupported-pool`, `missing-indexed-state`, `stale-indexed-state`, `source-registry-mismatch`, `token-direction-mismatch`, `malformed-reserve-state`, `reserve-quote-failed`, `malformed-replay-state`, `outside-indexed-tick-range`, or `replay-failed`.
+`slipstream-usdc-weth-100` keeps its existing `cl-quote-v1` compact row shape and still omits raw replay arrays. `slipstream-basedflick-fame` uses the same compact quote row shape as selected-route activation evidence, even while the producer registry row remains a replay candidate. `www` is responsible for reading its activation ledger and deciding whether that row is route-eligible.
+
+A CL compact quote is emitted only when the replay pointer or candidate pointer is fresh and the matching maintenance row is trusted, source-registry-compatible, cursor-current, and state-hash-compatible. Warming, event-gap, drift-failed, repairing, or source-mismatched producer state returns `unavailable` with `producer-untrusted`. Other reviewed-but-unquoted pools return `unavailable` with an enum reason such as `unsupported-pool`, `missing-indexed-state`, `stale-indexed-state`, `source-registry-mismatch`, `token-direction-mismatch`, `malformed-reserve-state`, `reserve-quote-failed`, `malformed-replay-state`, `outside-indexed-tick-range`, or `replay-failed`.
+
+Selected-route activation evidence is deliberately route-bounded. A compact quote for `slipstream-basedflick-fame` does not imply Uniswap V4 compact quote support; the selected basedflick/ZORA route still depends on live quoting for `uniswap-v4-basedflick-zora`.
 
 The versioned producer fixture at `src/fame-swap-pool-state/fixtures/pool-quotes-v1.json` locks the reserve quote row shape and exact amount/price-impact semantics for every reserve quote-model pool in both directions.
 
@@ -139,9 +143,10 @@ Do not add email, pager, or chat notification actions for the first release unle
 14. Run `www` route lab with `--indexed`, `BASE_RPC_URL` or `FAME_POOL_STATE_CURRENT_BLOCK`, and production-like helper env. The tool derives proof-only raw-state reads from `FAME_POOL_API_URL` plus `/fame/pool-state`; confirm the indexed summary reports `cl replay slipstream-usdc-weth-100 fresh block ... ticks ... hash ...` after a trusted steady-state delta pass with `clReplaySnapshots: 0`.
 15. Run `www` CL replay parity with `bun scripts/fame-swap-cl-replay-parity.ts` and production-like helper/RPC env. The tool also derives `/fame/pool-state` from the same `FAME_POOL_API_URL` base. Promotion requires exact same-block `amountOut` equality for both WETH -> USDC and USDC -> WETH amount bands.
 16. Run a `www` quote API smoke check against `/fame/pool-quotes`.
-17. Run `yarn fame-pool-state:delta-replay-smoke <input-json>` against an allowlisted JSON bundle containing an indexer result and optional quote response. Attach the redacted report with maintenance status, scanned range, applied delta count, candidate write status, full snapshot count, provider read count, compact quote count, and unavailable reasons.
-18. Record route-lab, parity, and delta replay smoke evidence locations in the PR or release checklist. Evidence must cover indexed success plus fallback-relevant stale, unknown, unsupported, malformed, incomplete replay, producer-untrusted, and unavailable-helper cases.
-19. Enable `www` server env `FAME_POOL_API_URL` and `FAME_POOL_STATE_SERVICE_TOKEN` only after route-lab and parity proof are attached. Do not create `NEXT_PUBLIC_` variants.
+17. Run `yarn fame-pool-state:delta-replay-smoke <input-json>` against an allowlisted JSON bundle containing the indexer result, `/fame/pool-quotes` response, `www` activation report, indexed route-lab rows, and optional `providerReadThreshold`. The bundle must include a selected-pool provider-read metric, even when route-lab evidence comes from a later steady-state run with `clReplaySnapshots: 0`. Attach the redacted report with maintenance status, scanned range, applied delta count, candidate write status, full snapshot count, provider read count, compact quote count, unavailable reasons, selected route dependency, and operator gates.
+18. Confirm the report's `activationEvidence.status` is `ready`. A blocked report must explain the failing gate, such as missing route-lab selection, non-trusted maintenance, provider reads over threshold, source-registry mismatch, missing unavailable reason counts, or more than one additional compact CL pool claim.
+19. Record route-lab, parity, and delta replay smoke evidence locations in the PR or release checklist. Evidence must cover indexed success plus fallback-relevant stale, unknown, unsupported, malformed, incomplete replay, producer-untrusted, and unavailable-helper cases.
+20. Enable `www` server env `FAME_POOL_API_URL` and `FAME_POOL_STATE_SERVICE_TOKEN` only after route-lab and parity proof are attached. Do not create `NEXT_PUBLIC_` variants.
 
 ## Durable Follow-Ups
 

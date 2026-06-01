@@ -34,6 +34,7 @@ import {
   latestClReplayMaintenanceStateKey,
   latestClReplayStateKey,
   latestPoolStateKey,
+  putLatestClReplayMaintenanceState,
   putLatestClReplayState,
   sourceRegistryIdFor,
   type FameClHeadSnapshotRegistryEntry,
@@ -41,6 +42,10 @@ import {
   type PoolStateDocumentClient,
   type PoolStateDynamoResponse,
 } from "./dynamodb/pool-state.ts";
+import {
+  FAME_SELECTED_CL_REPLAY_CANDIDATE_POOL_ID,
+  type FameClReplayReducerRegistryEntry,
+} from "./cl-reducer-manifests.ts";
 import { famePoolStateRegistry } from "./registry/index.ts";
 import type {
   FamePoolStateRegistryEntry,
@@ -199,9 +204,15 @@ class FakePoolStateClient implements FamePoolStateIndexerClient {
   >();
   public clReplayFeesByPoolId = new Map<string, bigint>();
   public clReplayLogs: readonly FameClReplayRawLog[] = [];
+  public blockIdentitiesByNumber = new Map<
+    number,
+    { hash: Hex | null; parentHash: Hex }
+  >();
   public failingReserveAddress: Address | null = null;
   public failingClHeadPoolId: string | null = null;
   public failingClReplayPoolId: string | null = null;
+  public failingClHeadError: unknown = new Error("CL head read failed");
+  public failingClReplayError: unknown = new Error("CL replay read failed");
 
   constructor(
     private readonly logs: readonly FamePoolStateSyncLog[],
@@ -216,12 +227,18 @@ class FakePoolStateClient implements FamePoolStateIndexerClient {
     return this.latestBlock;
   }
 
-  async getBlock(): Promise<{ hash: Hex | null; parentHash: Hex }> {
-    return {
-      hash: "0x1111111111111111111111111111111111111111111111111111111111111111",
-      parentHash:
-        "0x2222222222222222222222222222222222222222222222222222222222222222",
-    };
+  async getBlock(options?: {
+    blockNumber: bigint;
+  }): Promise<{ hash: Hex | null; parentHash: Hex }> {
+    return (
+      this.blockIdentitiesByNumber.get(
+        options ? Number(options.blockNumber) : Number(this.latestBlock),
+      ) ?? {
+        hash: "0x1111111111111111111111111111111111111111111111111111111111111111",
+        parentHash:
+          "0x2222222222222222222222222222222222222222222222222222222222222222",
+      }
+    );
   }
 
   async getSyncLogs(options: {
@@ -258,7 +275,7 @@ class FakePoolStateClient implements FamePoolStateIndexerClient {
     pool: FameClHeadSnapshotRegistryEntry;
   }): Promise<FameClHeadSnapshotRead> {
     if (options.pool.id === this.failingClHeadPoolId) {
-      throw new Error("CL head read failed");
+      throw this.failingClHeadError;
     }
     return (
       this.clHeadSnapshotsByPoolId.get(options.pool.id) ?? {
@@ -277,7 +294,7 @@ class FakePoolStateClient implements FamePoolStateIndexerClient {
     pool: FameClReplayRegistryEntry;
   }): Promise<FameClReplaySnapshotRead> {
     if (options.pool.id === this.failingClReplayPoolId) {
-      throw new Error("CL replay read failed");
+      throw this.failingClReplayError;
     }
     return (
       this.clReplaySnapshotsByPoolId.get(options.pool.id) ?? {
@@ -489,14 +506,16 @@ function clHeadPool(id: string): FameClHeadSnapshotRegistryEntry {
   };
 }
 
-function clReplayPool(): FameClReplayRegistryEntry {
+function clReplayPool(): FameClReplayReducerRegistryEntry {
   const entry = registryEntry("slipstream-usdc-weth-100");
   if (
     entry.replaySurface !== "cl-replay-v1" ||
     entry.stateSurface !== "cl-head-snapshot" ||
     entry.poolAddress === null ||
+    entry.factoryAddress === null ||
     entry.tickSpacing === null ||
-    entry.venue !== "aerodrome-slipstream"
+    entry.venue !== "aerodrome-slipstream" ||
+    entry.activationStatus !== "cl-compact-quote-active"
   ) {
     throw new Error("slipstream-usdc-weth-100 is not CL replay eligible.");
   }
@@ -505,8 +524,44 @@ function clReplayPool(): FameClReplayRegistryEntry {
     replaySurface: entry.replaySurface,
     stateSurface: entry.stateSurface,
     poolAddress: entry.poolAddress,
+    factoryAddress: entry.factoryAddress,
     tickSpacing: entry.tickSpacing,
     venue: entry.venue,
+    activationStatus: entry.activationStatus,
+  };
+}
+
+function clReplayCandidatePool(): FameClReplayReducerRegistryEntry {
+  const entry = registryEntry(FAME_SELECTED_CL_REPLAY_CANDIDATE_POOL_ID);
+  if (
+    entry.stateSurface !== "cl-head-snapshot" ||
+    entry.poolAddress === null ||
+    entry.factoryAddress === null ||
+    entry.tickSpacing === null ||
+    entry.venue !== "aerodrome-slipstream"
+  ) {
+    throw new Error(
+      "slipstream-basedflick-fame is not CL replay candidate eligible.",
+    );
+  }
+  return {
+    ...entry,
+    activationStatus: "cl-replay-candidate",
+    replaySurface: null,
+    stateSurface: entry.stateSurface,
+    poolAddress: entry.poolAddress,
+    factoryAddress: entry.factoryAddress,
+    tickSpacing: entry.tickSpacing,
+    venue: entry.venue,
+  };
+}
+
+function clReplayPromotedCandidatePool(): FameClReplayReducerRegistryEntry {
+  const candidate = clReplayCandidatePool();
+  return {
+    ...candidate,
+    activationStatus: "cl-compact-quote-active",
+    replaySurface: "cl-replay-v1",
   };
 }
 
@@ -586,14 +641,16 @@ function swapReplayLog(
 ): FameClReplayRawLog {
   return replayLogFixture(pool, {
     ...order,
-    topics: strictTopics(encodeEventTopics({
-      abi: [ClReplaySwapEventAbi],
-      eventName: "Swap",
-      args: {
-        sender: UNIT_ADDRESS_1,
-        recipient: UNIT_ADDRESS_2,
-      },
-    })),
+    topics: strictTopics(
+      encodeEventTopics({
+        abi: [ClReplaySwapEventAbi],
+        eventName: "Swap",
+        args: {
+          sender: UNIT_ADDRESS_1,
+          recipient: UNIT_ADDRESS_2,
+        },
+      }),
+    ),
     data: encodeAbiParameters(
       [
         { name: "amount0", type: "int256" },
@@ -613,15 +670,17 @@ function mintReplayLog(
 ): FameClReplayRawLog {
   return replayLogFixture(pool, {
     ...order,
-    topics: strictTopics(encodeEventTopics({
-      abi: [ClReplayMintEventAbi],
-      eventName: "Mint",
-      args: {
-        owner: UNIT_ADDRESS_2,
-        tickLower: -200,
-        tickUpper: 300,
-      },
-    })),
+    topics: strictTopics(
+      encodeEventTopics({
+        abi: [ClReplayMintEventAbi],
+        eventName: "Mint",
+        args: {
+          owner: UNIT_ADDRESS_2,
+          tickLower: -200,
+          tickUpper: 300,
+        },
+      }),
+    ),
     data: encodeAbiParameters(
       [
         { name: "sender", type: "address" },
@@ -640,15 +699,17 @@ function burnReplayLog(
 ): FameClReplayRawLog {
   return replayLogFixture(pool, {
     ...order,
-    topics: strictTopics(encodeEventTopics({
-      abi: [ClReplayBurnEventAbi],
-      eventName: "Burn",
-      args: {
-        owner: UNIT_ADDRESS_2,
-        tickLower: -200,
-        tickUpper: 300,
-      },
-    })),
+    topics: strictTopics(
+      encodeEventTopics({
+        abi: [ClReplayBurnEventAbi],
+        eventName: "Burn",
+        args: {
+          owner: UNIT_ADDRESS_2,
+          tickLower: -200,
+          tickUpper: 300,
+        },
+      }),
+    ),
     data: encodeAbiParameters(
       [
         { name: "amount", type: "uint128" },
@@ -666,15 +727,17 @@ function collectReplayLog(
 ): FameClReplayRawLog {
   return replayLogFixture(pool, {
     ...order,
-    topics: strictTopics(encodeEventTopics({
-      abi: [ClReplayCollectEventAbi],
-      eventName: "Collect",
-      args: {
-        owner: UNIT_ADDRESS_1,
-        tickLower: -200,
-        tickUpper: 300,
-      },
-    })),
+    topics: strictTopics(
+      encodeEventTopics({
+        abi: [ClReplayCollectEventAbi],
+        eventName: "Collect",
+        args: {
+          owner: UNIT_ADDRESS_1,
+          tickLower: -200,
+          tickUpper: 300,
+        },
+      }),
+    ),
     data: encodeAbiParameters(
       [
         { name: "recipient", type: "address" },
@@ -865,9 +928,9 @@ describe("FAME pool-state indexer", () => {
       data: "0x",
     });
 
-    expect(() =>
-      normalizeClReplayLogs({ pool, logs: [unsupported] }),
-    ).toThrow(FameClReplayLogNormalizationError);
+    expect(() => normalizeClReplayLogs({ pool, logs: [unsupported] })).toThrow(
+      FameClReplayLogNormalizationError,
+    );
     expect(() =>
       normalizeClReplayLogs({
         pool,
@@ -1245,6 +1308,321 @@ describe("FAME pool-state indexer", () => {
       reason: "shadow-not-promoted",
       candidateId: expect.stringContaining(replayPool.id),
     });
+  });
+
+  test("maintains the selected Slipstream candidate without publishing quoteable replay state", async () => {
+    const candidatePool = clReplayCandidatePool();
+    const db = new InMemoryPoolStateDb();
+    const client = new FakePoolStateClient([], 120n);
+    client.clReplaySnapshotsByPoolId.set(candidatePool.id, {
+      sqrtPriceX96: 2n ** 96n,
+      tick: 200_000,
+      liquidity: 7_777n,
+      fee: 100n,
+      blockHash:
+        "0x1111111111111111111111111111111111111111111111111111111111111111",
+      parentHash:
+        "0x2222222222222222222222222222222222222222222222222222222222222222",
+      bitmapWords: [{ wordPosition: 0, bitmap: 1n << 100n }],
+      initializedTicks: [
+        { tick: 200_000, liquidityGross: 77n, liquidityNet: 77n },
+      ],
+      providerReadCount: 41,
+      durationMs: 99,
+    });
+
+    const result = await indexFamePoolStates({
+      client,
+      db,
+      tableName: "PoolState",
+      registry: registryWithPools([candidatePool]),
+      clReplayTrustPromotion: true,
+      now: new Date("2026-05-20T00:00:00.000Z"),
+    });
+
+    expect(result).toMatchObject({
+      clReplaySnapshots: 1,
+      clReplayWrittenPools: 0,
+      clReplayMaintenanceMetrics: [
+        {
+          poolId: candidatePool.id,
+          status: "trusted",
+          reason: null,
+          fromBlock: 118,
+          toBlock: 118,
+          scannedLogCount: 0,
+          appliedEventCount: 0,
+          candidateWritten: true,
+          stateHash: expect.stringMatching(/^0x[0-9a-f]{64}$/),
+        },
+      ],
+    });
+    expect(db.getLatestClReplay(candidatePool)).toBeUndefined();
+    expect(db.getLatestClReplayCandidate(candidatePool)).toMatchObject({
+      stateKind: "cl-replay-candidate-v1",
+      poolId: candidatePool.id,
+      tick: 200_000,
+      liquidity: "7777",
+      observedThroughBlock: 118,
+    });
+    expect(db.getLatestClReplayMaintenance(candidatePool)).toMatchObject({
+      status: "trusted",
+      reason: null,
+      candidateId: expect.stringContaining(candidatePool.id),
+    });
+  });
+
+  test("publishes selected Slipstream replay rows only after compact quote activation", async () => {
+    const promotedPool = clReplayPromotedCandidatePool();
+    const db = new InMemoryPoolStateDb();
+    const client = new FakePoolStateClient([], 120n);
+    client.clReplaySnapshotsByPoolId.set(promotedPool.id, {
+      sqrtPriceX96: 2n ** 96n,
+      tick: 200_000,
+      liquidity: 7_777n,
+      fee: 100n,
+      blockHash:
+        "0x1111111111111111111111111111111111111111111111111111111111111111",
+      parentHash:
+        "0x2222222222222222222222222222222222222222222222222222222222222222",
+      bitmapWords: [{ wordPosition: 0, bitmap: 1n << 100n }],
+      initializedTicks: [
+        { tick: 200_000, liquidityGross: 77n, liquidityNet: 77n },
+      ],
+      providerReadCount: 41,
+      durationMs: 99,
+    });
+
+    const result = await indexFamePoolStates({
+      client,
+      db,
+      tableName: "PoolState",
+      registry: registryWithPools([promotedPool]),
+      clReplayTrustPromotion: true,
+      now: new Date("2026-05-20T00:00:00.000Z"),
+    });
+
+    expect(result).toMatchObject({
+      clReplaySnapshots: 1,
+      clReplayWrittenPools: 1,
+      clReplayMaintenanceMetrics: [
+        {
+          poolId: promotedPool.id,
+          status: "trusted",
+          reason: null,
+          candidateWritten: true,
+        },
+      ],
+    });
+    expect(db.getLatestClReplay(promotedPool)).toMatchObject({
+      stateKind: "cl-replay-v1",
+      poolId: promotedPool.id,
+      tick: 200_000,
+      liquidity: "7777",
+      observedThroughBlock: 118,
+    });
+  });
+
+  test("requires a complete checkpoint snapshot before trusting selected candidate maintenance", async () => {
+    const candidatePool = clReplayCandidatePool();
+    const db = new InMemoryPoolStateDb();
+    const client = new FakePoolStateClient([], 120n);
+    client.failingClReplayPoolId = candidatePool.id;
+
+    const result = await indexFamePoolStates({
+      client,
+      db,
+      tableName: "PoolState",
+      registry: registryWithPools([candidatePool]),
+      clReplayTrustPromotion: true,
+      now: new Date("2026-05-20T00:00:00.000Z"),
+    });
+
+    expect(result).toMatchObject({
+      clReplaySnapshots: 0,
+      clReplayFailedPools: 1,
+      clReplayMaintenanceMetrics: [
+        {
+          poolId: candidatePool.id,
+          status: "event-gap",
+          reason: "checkpoint-snapshot-required",
+          candidateWritten: false,
+          stateHash: null,
+        },
+      ],
+    });
+    expect(db.getLatestClReplay(candidatePool)).toBeUndefined();
+    expect(db.getLatestClReplayCandidate(candidatePool)).toBeUndefined();
+  });
+
+  test("keeps selected candidate steady-state untrusted without a matching trusted cursor", async () => {
+    const candidatePool = clReplayCandidatePool();
+    const db = new InMemoryPoolStateDb();
+    const seedClient = new FakePoolStateClient([], 120n);
+    seedClient.clReplaySnapshotsByPoolId.set(candidatePool.id, {
+      sqrtPriceX96: 2n ** 96n,
+      tick: 200_000,
+      liquidity: 7_777n,
+      fee: 100n,
+      blockHash:
+        "0x1111111111111111111111111111111111111111111111111111111111111111",
+      parentHash:
+        "0x2222222222222222222222222222222222222222222222222222222222222222",
+      bitmapWords: [{ wordPosition: 0, bitmap: 1n << 100n }],
+      initializedTicks: [
+        { tick: 200_000, liquidityGross: 77n, liquidityNet: 77n },
+      ],
+      providerReadCount: 41,
+      durationMs: 99,
+    });
+
+    await indexFamePoolStates({
+      client: seedClient,
+      db,
+      tableName: "PoolState",
+      registry: registryWithPools([candidatePool]),
+      clReplayTrustPromotion: true,
+      now: new Date("2026-05-20T00:00:00.000Z"),
+    });
+    const maintenance = db.getLatestClReplayMaintenance(candidatePool);
+    if (!maintenance) throw new Error("Missing seeded candidate maintenance.");
+    await putLatestClReplayMaintenanceState({
+      db,
+      tableName: "PoolState",
+      state: {
+        ...maintenance,
+        status: "event-gap",
+        reason: "unit-event-gap",
+      } as Parameters<typeof putLatestClReplayMaintenanceState>[0]["state"],
+    });
+
+    const result = await indexFamePoolStates({
+      client: new FakePoolStateClient([], 123n),
+      db,
+      tableName: "PoolState",
+      registry: registryWithPools([candidatePool]),
+      clReplayMaintenanceMode: "steady-state",
+      clReplayTrustPromotion: true,
+      now: new Date("2026-05-20T00:01:00.000Z"),
+    });
+
+    expect(result.clReplayMaintenanceMetrics).toMatchObject([
+      {
+        poolId: candidatePool.id,
+        status: "event-gap",
+        reason: "trusted-cursor-required",
+        candidateWritten: false,
+      },
+    ]);
+    expect(db.getLatestClReplayCandidate(candidatePool)).toMatchObject({
+      observedThroughBlock: 118,
+    });
+  });
+
+  test("fails loudly when selected candidate registry identity drifts before maintenance", async () => {
+    const candidatePool: FamePoolStateRegistryEntry = {
+      ...clReplayCandidatePool(),
+      venue: "aerodrome-slipstream2",
+      venueFamily: "Slipstream2",
+    };
+
+    await expect(
+      indexFamePoolStates({
+        client: new FakePoolStateClient([], 120n),
+        db: new InMemoryPoolStateDb(),
+        tableName: "PoolState",
+        registry: registryWithPools([candidatePool]),
+        clReplayTrustPromotion: true,
+        now: new Date("2026-05-20T00:00:00.000Z"),
+      }),
+    ).rejects.toThrow(/Aerodrome Slipstream v1/);
+  });
+
+  test("advances trusted candidate maintenance only when the cursor block is canonical", async () => {
+    const candidatePool = clReplayCandidatePool();
+    const db = new InMemoryPoolStateDb();
+    const seedClient = new FakePoolStateClient([], 120n);
+    seedClient.clReplaySnapshotsByPoolId.set(candidatePool.id, {
+      sqrtPriceX96: 2n ** 96n,
+      tick: 200_000,
+      liquidity: 7_777n,
+      fee: 100n,
+      blockHash:
+        "0x1111111111111111111111111111111111111111111111111111111111111111",
+      parentHash:
+        "0x2222222222222222222222222222222222222222222222222222222222222222",
+      bitmapWords: [{ wordPosition: 0, bitmap: 1n << 100n }],
+      initializedTicks: [
+        { tick: 200_000, liquidityGross: 77n, liquidityNet: 77n },
+      ],
+      providerReadCount: 41,
+      durationMs: 99,
+    });
+
+    await indexFamePoolStates({
+      client: seedClient,
+      db,
+      tableName: "PoolState",
+      registry: registryWithPools([candidatePool]),
+      clReplayTrustPromotion: true,
+      now: new Date("2026-05-20T00:00:00.000Z"),
+    });
+
+    const steadyClient = new FakePoolStateClient([], 123n);
+    const steadyResult = await indexFamePoolStates({
+      client: steadyClient,
+      db,
+      tableName: "PoolState",
+      registry: registryWithPools([candidatePool]),
+      clReplayMaintenanceMode: "steady-state",
+      clReplayTrustPromotion: true,
+      now: new Date("2026-05-20T00:01:00.000Z"),
+    });
+
+    expect(steadyResult).toMatchObject({
+      clReplaySnapshots: 0,
+      clReplayMaintenanceMetrics: [
+        {
+          poolId: candidatePool.id,
+          status: "trusted",
+          reason: null,
+          fromBlock: 119,
+          toBlock: 121,
+          scannedLogCount: 0,
+          appliedEventCount: 0,
+          candidateWritten: true,
+        },
+      ],
+    });
+    expect(db.getLatestClReplay(candidatePool)).toBeUndefined();
+    expect(db.getLatestClReplayCandidate(candidatePool)).toMatchObject({
+      observedThroughBlock: 121,
+      liquidity: "7777",
+    });
+
+    const mismatchClient = new FakePoolStateClient([], 124n);
+    mismatchClient.blockIdentitiesByNumber.set(121, {
+      hash: "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      parentHash:
+        "0x2222222222222222222222222222222222222222222222222222222222222222",
+    });
+    const mismatchResult = await indexFamePoolStates({
+      client: mismatchClient,
+      db,
+      tableName: "PoolState",
+      registry: registryWithPools([candidatePool]),
+      clReplayMaintenanceMode: "steady-state",
+      clReplayTrustPromotion: true,
+      now: new Date("2026-05-20T00:02:00.000Z"),
+    });
+
+    expect(mismatchResult.clReplayMaintenanceMetrics).toMatchObject([
+      {
+        poolId: candidatePool.id,
+        status: "event-gap",
+        reason: "cursor-block-hash-mismatch",
+      },
+    ]);
   });
 
   test("promotes checkpoint-clean CL replay state and advances it in steady-state without full snapshots", async () => {
@@ -1695,6 +2073,42 @@ describe("FAME pool-state indexer", () => {
       liquidity: "456",
     });
     expect(db.getLatestClReplay(replayPool)).toBeUndefined();
+  });
+
+  test("redacts dependency diagnostics from CL head and replay failures", async () => {
+    const failedClPool = clHeadPool("uniswap-v3-usdc-weth-5bps");
+    const replayPool = clReplayPool();
+    const db = new InMemoryPoolStateDb();
+    const client = new FakePoolStateClient([], 120n);
+    client.failingClHeadPoolId = failedClPool.id;
+    client.failingClReplayPoolId = replayPool.id;
+    client.failingClHeadError = new Error(
+      'RPC failed.\nrequest body {"authorization":"Bearer unit-token"}\nhttps://unit:secret@example.invalid/base',
+    );
+    client.failingClReplayError = new Error(
+      'raw response {"access_token":"super-secret"}\nURL: https://example.invalid/super-secret\nbearer abc.def',
+    );
+
+    const result = await indexFamePoolStates({
+      client,
+      db,
+      tableName: "PoolState",
+      registry: registryWithPools([failedClPool, replayPool]),
+      now: new Date("2026-05-20T00:00:00.000Z"),
+    });
+
+    const serialized = JSON.stringify({
+      clHeadFailures: result.clHeadFailures,
+      clReplayFailures: result.clReplayFailures,
+    });
+    expect(serialized).not.toMatch(
+      /unit-token|super-secret|unit:secret|request body|raw response|authorization|access_token|abc\.def/i,
+    );
+    expect(result.clHeadFailures[0]?.message).toBe("RPC failed.");
+    expect(result.clReplayFailures[0]?.message).toContain("[redacted-url]");
+    expect(() => assertNoClReplaySnapshotFailures(result)).toThrow(
+      /\[redacted-url\]/,
+    );
   });
 
   test("throws an operational error when required CL replay snapshots fail", () => {

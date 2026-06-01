@@ -5,9 +5,9 @@ This repo now owns the `society-bots` side of the FAME pool-state read model use
 ## Cross-Repo Contract
 
 - `www` remains authoritative for reviewed pool metadata, route candidates, venue capability, and quote parity.
-- `society-bots` consumes a generated registry artifact from `fame-lady-society/www` (local checkout `../fls-www`) and indexes current Base reserve state for quote-model-capable pools, CL head snapshots for reviewed CL pools, and one complete `cl-replay-v1` snapshot for `slipstream-usdc-weth-100`.
+- `society-bots` consumes a generated registry artifact from `fame-lady-society/www` (local checkout `../fls-www`) and indexes current Base reserve state for quote-model-capable pools, CL head snapshots for reviewed CL pools, the baseline `cl-replay-v1` snapshot for `slipstream-usdc-weth-100`, and selected candidate replay state for `slipstream-basedflick-fame`.
 - `www` calls the authenticated `society-bots` API from server-side quote paths. If indexed state is stale, unknown, unsupported, malformed, or not a quote model the caller can replay, `www` falls back to its existing live quote adapter.
-- `society-bots` exposes raw replay primitives only. `www` owns Slipstream exact-input math, same-block live-quoter parity, route attribution, shadow mode, and any later promotion from live fallback to local CL quotes.
+- `society-bots` exposes raw replay primitives plus compact quote evidence. `www` owns route eligibility, selected-route attribution, same-block parity, and live-quoter fallback.
 
 Primary `www` references:
 
@@ -41,13 +41,27 @@ The `society-bots` implementation adds a new `src/fame-swap-pool-state` module p
 - An authenticated HTTP API route, `POST /fame/pool-state`, for bounded batch latest-state reads, protected by both API Gateway Lambda authorizer and API Lambda token checks.
 - Structured indexer/API logs for freshness, status counts, registry id, and block coverage.
 - Passive operational health signals: SQS-backed async failure destinations plus no-action CloudWatch alarms for indexer Lambda errors, indexer Lambda throttles, missed invocations, and failure queue depth.
-- A replay snapshot lane for `slipstream-usdc-weth-100`: slot0, current liquidity, dynamic fee, full initialized tick bitmap words, initialized tick liquidity records, block identity, chunk counts, and state hash.
+- Replay snapshot lanes for baseline `slipstream-usdc-weth-100` and selected candidate `slipstream-basedflick-fame`: slot0, current liquidity, dynamic fee, full initialized tick bitmap words, initialized tick liquidity records, block identity, chunk counts, and state hash.
 
 The indexed quote-model pool set covers Uniswap V2 constant-product pools plus volatile Solidly/Equalizer and volatile Aerodrome V2 pools. Stable pools, native wrapping, pools missing reviewed CL metadata, and unknown invariants stay visible as tracked-only or unsupported.
 
 Slipstream, Slipstream2, Uniswap V3, and Uniswap V4 pools with reviewed metadata now have complete CL head snapshots: identity, fee metadata, tick spacing, state-view address where relevant, `sqrtPriceX96`, current tick, active liquidity, source, registry provenance, and `observedThroughBlock`. These rows are not local CL replay authority, do not carry tick-boundary warnings, and must not make `www` skip live reads for CL quote math.
 
-`slipstream-usdc-weth-100` is the sole exception for replay state. It can publish a complete `cl-replay-v1` capsule, but the capsule is still indexed market-state evidence, not quote authority. `www` must reject stale, future-block, incomplete, malformed, mismatched-registry, mismatched-token-order, outside-range, replay-failed, or parity-failed state and serve the live quoter result while shadow mode is active.
+`slipstream-usdc-weth-100` is the baseline replay proof. The selected `slipstream-basedflick-fame` lane may also publish trusted reducer candidate state and compact `cl-quote-v1` evidence. That evidence is not a broad producer-side promotion; `www` owns route eligibility through its activation ledger and must keep `uniswap-v4-basedflick-zora` as a live quote dependency.
+
+## Activation Evidence Bundle
+
+Use `yarn fame-pool-state:delta-replay-smoke <input-json>` as the single redacted bundle for the selected pool activation lane. The input JSON should contain:
+
+- `indexer`: the indexer result, including `sourceRegistryId`, `observedThroughBlock`, `clReplaySnapshots`, `clReplayMetrics`, and `clReplayMaintenanceMetrics`. Include a selected-pool provider-read metric in `clReplayMetrics`; a later steady-state route-lab run with zero snapshots is not enough by itself for the provider-read gate.
+- `quoteResponse`: the `/fame/pool-quotes` response, including compact quote rows and typed unavailable rows.
+- `activationReport`: JSON from `../fls-www` `bun scripts/fame-swap-pool-activation-report.ts`.
+- `routeLab`: JSON rows from `../fls-www` indexed route lab, ideally scoped with `--route <artifact-id>` to the selected basedflick/ZORA route.
+- `providerReadThreshold`: optional numeric gate for CL replay read volume.
+
+The report includes source registry id, replay snapshot count, provider read count, maintenance trust state, scanned log range, applied delta count, candidate write status, compact quote counts, fallback counts, unavailable reasons, selected route quote sources, and non-promotion status groups. `activationEvidence.status: "ready"` means all operator gates passed: trusted maintenance, no event-gap/repair/drift state, provider reads within threshold, route-lab selected `slipstream-basedflick-fame` with compact indexed quote evidence, route-lab kept `uniswap-v4-basedflick-zora` live, quote fallback counts were explained, and the activation report shows exactly one additional compact CL pool claim beyond baseline `slipstream-usdc-weth-100`.
+
+`activationEvidence.status: "blocked"` is still useful evidence. It preserves reducer candidate state and lists the missing or failed gates so the operator can decide whether to keep gathering data, fix an integration issue, or leave the candidate unpromoted.
 
 ## Final Review Notes
 
@@ -102,12 +116,12 @@ Final todos before enabling `www` production helper env:
 
 - Set or generate `FAME_POOL_STATE_DEV_SERVICE_TOKEN`.
 - Deploy with `DEPLOY_POOL_STATE_DEV`.
-- Copy the emitted `FamePoolStateDevEndpointUrl` into `www` dev as server-only `FAME_POOL_STATE_API_URL`.
+- Copy the emitted pool API base URL into `www` dev as server-only `FAME_POOL_API_URL`. Do not use an endpoint-specific `/fame/pool-state` or `/fame/pool-quotes` URL.
 - Set matching `FAME_POOL_STATE_SERVICE_TOKEN` in `www` dev.
 - Run an authenticated helper smoke call.
 - Run indexed route-lab from local `../fls-www` with `BASE_RPC_URL` or `FAME_POOL_STATE_CURRENT_BLOCK`.
 - Run a `www` quote API smoke check.
-- Run `yarn fame-pool-state:delta-replay-smoke <input-json>` with redacted indexer/quote evidence and attach the report.
+- Run `yarn fame-pool-state:delta-replay-smoke <input-json>` with redacted indexer, quote, activation-report, and route-lab evidence; attach the report.
 - Watch at least five scheduled indexer intervals and confirm non-regressing `observedThroughBlock`, no Lambda errors/throttles, and failure queue depth `0`.
 
 ## Registry Refresh
@@ -133,7 +147,7 @@ Status meanings:
 
 The producer freshness default is configured by `FAME_POOL_STATE_DEFAULT_MAX_FRESHNESS_BLOCKS`. Callers may ask for stricter freshness, but cannot loosen the producer default.
 
-Delta CL replay maintenance is separate from the quoteable replay pointer. The indexer may write `cl-replay-candidate-v1` shadow capsules and `cl-replay-maintenance-v1` lifecycle rows, then publish a quoteable replay pointer only after a checkpoint-clean trusted promotion. `/fame/pool-quotes` only emits `cl-quote-v1` when maintenance is trusted and exactly compatible with the replay pointer. Warming, event-gap, drift-failed, repairing, or source-mismatched maintenance rows surface as unavailable compact quote evidence so `www` keeps live fallback. The supported Slipstream maintenance event surface is `Swap`, `Mint`, `Burn`, and no-op `Collect`; unknown topics still fail closed.
+Delta CL replay maintenance is separate from the quoteable replay pointer. The indexer may write `cl-replay-candidate-v1` capsules and `cl-replay-maintenance-v1` lifecycle rows, then publish a quoteable replay pointer only after a checkpoint-clean trusted promotion. For the selected basedflick/FAME lane, `/fame/pool-quotes` may emit `cl-quote-v1` from trusted candidate state so `www` can decide route eligibility without raw ticks. Warming, event-gap, drift-failed, repairing, or source-mismatched maintenance rows surface as unavailable compact quote evidence so `www` keeps live fallback. The supported Slipstream maintenance event surface is `Swap`, `Mint`, `Burn`, and no-op `Collect`; unknown topics still fail closed.
 
 ## AWS Surface
 
@@ -145,7 +159,7 @@ Delta CL replay maintenance is separate from the quoteable replay pointer. The i
 - EventBridge schedule: defaults to once per minute.
 - HTTP API route: `POST /fame/pool-state`.
 
-The API accepts auth through `Authorization: Bearer <token>`. `www` should set `FAME_POOL_STATE_API_URL` and `FAME_POOL_STATE_SERVICE_TOKEN` only on the server side.
+The API accepts auth through `Authorization: Bearer <token>`. `www` should set `FAME_POOL_API_URL` and `FAME_POOL_STATE_SERVICE_TOKEN` only on the server side.
 
 PR deploys must run under `STAGE=PR-<number>` so they synthesize `Bot-PR-<number>` and `BotCert-PR-<number>` instead of the shared dev stack. Cleanup deletes only those named CloudFormation stacks and does not require the production helper token.
 
@@ -191,8 +205,8 @@ Run from local `../fls-www` when proving consumption:
 
 ```sh
 bun test src/features/fame-swap/solver/poolStateRegistry.test.ts src/features/fame-swap/solver/quotes/indexedPoolStateClient.test.ts src/features/fame-swap/solver/quotes/indexedReserveAdapter.test.ts src/features/fame-swap/solver/quotes/rankRoutes.test.ts src/features/fame-swap/solver/quoteWire.test.ts src/app/api/fame/swap/quote/route.test.ts scripts/fame-swap-route-lab.test.ts
-BASE_RPC_URL=<rpc> FAME_POOL_STATE_API_URL=<url> FAME_POOL_STATE_SERVICE_TOKEN=<token> bun scripts/fame-swap-route-lab.ts --indexed
-BASE_RPC_URL=<rpc> FAME_POOL_STATE_API_URL=<url> FAME_POOL_STATE_SERVICE_TOKEN=<token> bun scripts/fame-swap-cl-replay-parity.ts
+BASE_RPC_URL=<rpc> FAME_POOL_API_URL=<url> FAME_POOL_STATE_SERVICE_TOKEN=<token> bun scripts/fame-swap-route-lab.ts --indexed
+BASE_RPC_URL=<rpc> FAME_POOL_API_URL=<url> FAME_POOL_STATE_SERVICE_TOKEN=<token> bun scripts/fame-swap-cl-replay-parity.ts
 ```
 
 Attach durable release evidence before enabling `www` production helper env:
@@ -201,6 +215,7 @@ Attach durable release evidence before enabling `www` production helper env:
 - Soak: at least five scheduled indexer intervals with recent success logs, non-regressing `observedThroughBlock`, no unexpected errors/throttles, and failure queue depth `0`.
 - Route lab: indexed success plus fallback-relevant stale, unknown, unsupported, malformed, and unavailable-helper cases.
 - CL replay parity: exact same-block local-vs-live `amountOut` equality for representative WETH -> USDC and USDC -> WETH amounts, with snapshot id, block, state hash, bitmap word count, and initialized tick count attached.
+- Activation bundle: delta replay smoke report with `activationEvidence.status`, selected candidate compact quote count, selected basedflick/ZORA route dependency, V4 live dependency, and explicit non-promotion statuses for Slipstream2, V4, stable, producer-unrepresented, and blocked migrating pools.
 - Evidence location: PR comment, checklist section, or linked artifact that reviewers can inspect without reconstructing the process from chat.
 
 ## Durable Follow-Ups
