@@ -27,6 +27,33 @@ export interface FamePoolStateProps {
   readonly schedule?: cdk.Duration;
 }
 
+export function famePoolStateClReplayMaintenanceModeFromEnv(
+  value: string | undefined,
+): "checkpoint" | "steady-state" | "repair" {
+  if (!value || value.trim().length === 0) return "steady-state";
+  if (
+    value === "checkpoint" ||
+    value === "steady-state" ||
+    value === "repair"
+  ) {
+    return value;
+  }
+  throw new Error(
+    "FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE must be checkpoint, steady-state, or repair.",
+  );
+}
+
+export function famePoolStateClReplayTrustPromotionFromEnv(
+  value: string | undefined,
+): boolean {
+  if (!value || value.trim().length === 0) return true;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  throw new Error(
+    "FAME_POOL_STATE_CL_REPLAY_TRUST_PROMOTION must be true or false.",
+  );
+}
+
 function bundlePoolStateLambda(entrypoint: string, options?: BuildOptions) {
   const outfile = path.join(
     cdk.FileSystem.mkdtemp(path.basename(entrypoint)),
@@ -108,10 +135,9 @@ export class FamePoolState extends Construct {
       props.defaultMaxFreshnessBlocks?.toString() ?? "120";
     const maxBatchSize = props.maxBatchSize?.toString() ?? "64";
     const clReplayMaintenanceMode =
-      props.clReplayMaintenanceMode ?? "checkpoint";
-    const clReplayTrustPromotion = props.clReplayTrustPromotion
-      ? "true"
-      : "false";
+      props.clReplayMaintenanceMode ?? "steady-state";
+    const clReplayTrustPromotion =
+      (props.clReplayTrustPromotion ?? true) ? "true" : "false";
     const clReplayMaxRangeBlocks =
       props.clReplayMaxRangeBlocks?.toString() ?? "1000";
 
@@ -150,8 +176,7 @@ export class FamePoolState extends Construct {
       environment: {
         ...commonEnvironment,
         BASE_RPCS_JSON: baseRpcsJson,
-        FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE:
-          clReplayMaintenanceMode,
+        FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE: clReplayMaintenanceMode,
         FAME_POOL_STATE_CL_REPLAY_TRUST_PROMOTION: clReplayTrustPromotion,
         FAME_POOL_STATE_CL_REPLAY_MAX_RANGE_BLOCKS: clReplayMaxRangeBlocks,
       },
@@ -284,9 +309,7 @@ export class FamePoolState extends Construct {
     table.grantReadData(apiLambda);
 
     const scheduleRule = new events.Rule(this, "FamePoolStateScheduleRule", {
-      schedule: events.Schedule.rate(
-        props.schedule ?? cdk.Duration.minutes(1),
-      ),
+      schedule: events.Schedule.rate(props.schedule ?? cdk.Duration.minutes(1)),
     });
     scheduleRule.addTarget(
       new eventTargets.LambdaFunction(indexerLambda, {

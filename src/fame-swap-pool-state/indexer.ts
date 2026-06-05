@@ -712,7 +712,9 @@ function v4ClReplayPools({
 }): V4ClReplayPool[] {
   return registry.pools.filter((pool): pool is V4ClReplayPool => {
     if (pool.id !== FAME_V4_ZORA_QUOTE_LANE_POOL_ID) return false;
-    if (classifyV4ZoraQuoteLane(pool, provenance).status !== "target-eligible") {
+    if (
+      classifyV4ZoraQuoteLane(pool, provenance).status !== "target-eligible"
+    ) {
       return false;
     }
     return (
@@ -1178,6 +1180,23 @@ function clReplayMaintenanceMatchesLatest({
     maintenance.cursorBlock === latest.latest.observedThroughBlock &&
     maintenance.cursorBlockHash === latest.latest.blockHash &&
     maintenance.stateHash === latest.latest.stateHash
+  );
+}
+
+function clReplayNeedsSteadyStateCheckpointBootstrap({
+  maintenance,
+  latest,
+  sourceRegistryId,
+}: {
+  maintenance: FameClReplayMaintenanceState | null;
+  latest: ClReplaySeedCapsule | null;
+  sourceRegistryId: string;
+}): boolean {
+  return (
+    latest === null ||
+    maintenance === null ||
+    latest.latest.sourceRegistryId !== sourceRegistryId ||
+    maintenance.sourceRegistryId !== sourceRegistryId
   );
 }
 
@@ -2295,7 +2314,11 @@ export function createViemPoolStateIndexerClient(
           getBlock(options) {
             return client.getBlock(options);
           },
-          getSlot0({ stateViewAddress, poolKey, blockNumber: readBlockNumber }) {
+          getSlot0({
+            stateViewAddress,
+            poolKey,
+            blockNumber: readBlockNumber,
+          }) {
             return client.readContract({
               address: stateViewAddress,
               abi: UniswapV4StateViewSlot0Abi,
@@ -2693,6 +2716,7 @@ export async function indexFamePoolStates({
     string,
     ClReplayTrustedCursorCheck
   >();
+  const steadyStateCheckpointBootstrapPoolIds = new Set<string>();
   for (const pool of replayPools) {
     const latest = latestClReplayByPoolId.get(pool.id) ?? null;
     const latestCandidate =
@@ -2705,6 +2729,17 @@ export async function indexFamePoolStates({
       latest: latestForMaintenance,
       sourceRegistryId,
     });
+    if (
+      clReplayMaintenanceMode === "steady-state" &&
+      !canAdvanceTrustedState &&
+      clReplayNeedsSteadyStateCheckpointBootstrap({
+        maintenance,
+        latest: latestForMaintenance,
+        sourceRegistryId,
+      })
+    ) {
+      steadyStateCheckpointBootstrapPoolIds.add(pool.id);
+    }
     let trustedCursorCheck: ClReplayTrustedCursorCheck = {
       canAdvance: false,
       reason: null,
@@ -2767,21 +2802,24 @@ export async function indexFamePoolStates({
     clReplayRawLogsByPoolId.set(pool.id, poolLogs);
   }
 
-  const clReplayReads =
+  const clReplaySnapshotPools =
     clReplayMaintenanceMode !== "steady-state"
-      ? await Promise.allSettled(
-          replayPools.map(async (pool) => {
-            const snapshot = await client.getClReplaySnapshot({
-              pool,
-              blockNumber: safeBlock,
-            });
-            return {
-              pool,
-              snapshot,
-            };
-          }),
-        )
-      : [];
+      ? replayPools
+      : replayPools.filter((pool) =>
+          steadyStateCheckpointBootstrapPoolIds.has(pool.id),
+        );
+  const clReplayReads = await Promise.allSettled(
+    clReplaySnapshotPools.map(async (pool) => {
+      const snapshot = await client.getClReplaySnapshot({
+        pool,
+        blockNumber: safeBlock,
+      });
+      return {
+        pool,
+        snapshot,
+      };
+    }),
+  );
   const clReplaySnapshots: {
     pool: ClReplayPool;
     snapshot: FameClReplaySnapshotRead;
@@ -2792,7 +2830,7 @@ export async function indexFamePoolStates({
       clReplaySnapshots.push(result.value);
       return;
     }
-    const pool = replayPools[index];
+    const pool = clReplaySnapshotPools[index];
     if (!pool) throw new Error("CL replay read result missing pool.");
     clReplayFailures.push({
       poolId: pool.id,
@@ -2899,6 +2937,10 @@ export async function indexFamePoolStates({
   const clReplayMaintenanceMetrics: FameClReplayMaintenanceMetric[] = [];
   for (const pool of replayPools) {
     const snapshotRows = clReplayRowsByPoolId.get(pool.id);
+    const steadyStateCheckpointBootstrap =
+      clReplayMaintenanceMode === "steady-state" &&
+      steadyStateCheckpointBootstrapPoolIds.has(pool.id) &&
+      snapshotRows !== undefined;
     const latest = latestClReplayByPoolId.get(pool.id) ?? null;
     const latestCandidate =
       latestClReplayCandidateByPoolId.get(pool.id) ?? null;
@@ -2915,7 +2957,8 @@ export async function indexFamePoolStates({
     const seed =
       clReplayMaintenanceMode === "repair" && snapshotSeed
         ? snapshotSeed
-        : clReplayMaintenanceMode === "checkpoint" &&
+        : (clReplayMaintenanceMode === "checkpoint" ||
+              steadyStateCheckpointBootstrap) &&
             snapshotSeed &&
             !trustedCursorCheck.canAdvance
           ? snapshotSeed
@@ -2948,7 +2991,8 @@ export async function indexFamePoolStates({
         };
       } else if (
         clReplayMaintenanceMode === "steady-state" &&
-        !trustedCursorCheck.canAdvance
+        !trustedCursorCheck.canAdvance &&
+        !steadyStateCheckpointBootstrap
       ) {
         applyResult = {
           status: "event-gap",

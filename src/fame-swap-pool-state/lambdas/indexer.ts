@@ -14,6 +14,8 @@ import {
   type FameClReplayMaintenanceMode,
   type FamePoolStateIndexerResult,
 } from "../indexer.ts";
+import { FAME_V4_ZORA_APPROVED_PROVENANCE } from "../v4-zora-manifests.ts";
+import type { FamePoolStateV4ZoraProvenanceEvidence } from "../types.ts";
 import {
   logPoolStateIndexerResult,
   writePoolStateLog,
@@ -27,6 +29,7 @@ export type FamePoolStateIndexRunner = (options: {
   clReplayMaintenanceMode: FameClReplayMaintenanceMode;
   clReplayTrustPromotion: boolean;
   clReplayMaxRangeBlocks: number;
+  v4ZoraProvenance?: FamePoolStateV4ZoraProvenanceEvidence;
 }) => Promise<FamePoolStateIndexerResult>;
 
 function defaultIndexPools({
@@ -36,6 +39,7 @@ function defaultIndexPools({
   clReplayMaintenanceMode,
   clReplayTrustPromotion,
   clReplayMaxRangeBlocks,
+  v4ZoraProvenance,
 }: {
   client?: FamePoolStateIndexerClient;
   tableName: string;
@@ -43,6 +47,7 @@ function defaultIndexPools({
   clReplayMaintenanceMode: FameClReplayMaintenanceMode;
   clReplayTrustPromotion: boolean;
   clReplayMaxRangeBlocks: number;
+  v4ZoraProvenance?: FamePoolStateV4ZoraProvenanceEvidence;
 }): Promise<FamePoolStateIndexerResult> {
   return indexFamePoolStates({
     client: client ?? createViemPoolStateIndexerClient(baseClient),
@@ -51,6 +56,7 @@ function defaultIndexPools({
     clReplayMaintenanceMode,
     clReplayTrustPromotion,
     clReplayMaxRangeBlocks,
+    v4ZoraProvenance,
   });
 }
 
@@ -102,6 +108,7 @@ export async function handleFamePoolStateIndexer({
   clReplayMaintenanceMode,
   clReplayTrustPromotion,
   clReplayMaxRangeBlocks,
+  v4ZoraProvenance = FAME_V4_ZORA_APPROVED_PROVENANCE,
   indexPools = defaultIndexPools,
 }: {
   client?: FamePoolStateIndexerClient;
@@ -110,6 +117,7 @@ export async function handleFamePoolStateIndexer({
   clReplayMaintenanceMode?: FameClReplayMaintenanceMode;
   clReplayTrustPromotion?: boolean;
   clReplayMaxRangeBlocks?: number;
+  v4ZoraProvenance?: FamePoolStateV4ZoraProvenanceEvidence;
   indexPools?: FamePoolStateIndexRunner;
 }): Promise<void> {
   let result: FamePoolStateIndexerResult;
@@ -124,6 +132,7 @@ export async function handleFamePoolStateIndexer({
         clReplayTrustPromotion ?? FAME_POOL_STATE_CL_REPLAY_TRUST_PROMOTION,
       clReplayMaxRangeBlocks:
         clReplayMaxRangeBlocks ?? FAME_POOL_STATE_CL_REPLAY_MAX_RANGE_BLOCKS,
+      v4ZoraProvenance,
     });
   } catch (error) {
     writePoolStateLog(

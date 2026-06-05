@@ -131,4 +131,35 @@ describe("FAME pool-state indexer Lambda", () => {
       errorLog.mockRestore();
     }
   });
+
+  test("passes approved BASEDFLICK/ZORA provenance to the indexer runner", async () => {
+    const { handleFamePoolStateIndexer } = await loadIndexerModule();
+    const infoLog = jest.spyOn(console, "log").mockImplementation(() => {
+      return undefined;
+    });
+
+    try {
+      await handleFamePoolStateIndexer({
+        tableName: "PoolState",
+        confirmationBlocks: 2,
+        indexPools: async (options) => {
+          expect(options.v4ZoraProvenance).toMatchObject({
+            status: "verified",
+            source: "zora-factory-event",
+            chainId: 8453,
+            factoryAddress: "0x777777751622c0d3258f214f9df38e35bf45baf3",
+            coinAddress: "0x15e012abf9d32cd67fc6cf480ea0e318e9ed5926",
+            poolKey:
+              "0x0fe6333346fcd0ffa4be3fda91f271bda52c6755f604b06483b709666d363628",
+            poolId:
+              "0x0fe6333346fcd0ffa4be3fda91f271bda52c6755f604b06483b709666d363628",
+            eventName: "OperatorApprovedZoraProtocolPool",
+          });
+          return indexerResult();
+        },
+      });
+    } finally {
+      infoLog.mockRestore();
+    }
+  });
 });

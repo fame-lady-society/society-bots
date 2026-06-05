@@ -1055,16 +1055,18 @@ describe("FAME pool-state indexer", () => {
       providerReadCount: 42,
     });
     expect(snapshot.bitmapWords).toHaveLength(36);
-    expect(
-      snapshot.bitmapWords.filter((word) => word.bitmap !== 0n),
-    ).toEqual([{ wordPosition: -1, bitmap: (1n << 168n) | (1n << 169n) }]);
+    expect(snapshot.bitmapWords.filter((word) => word.bitmap !== 0n)).toEqual([
+      { wordPosition: -1, bitmap: (1n << 168n) | (1n << 169n) },
+    ]);
     expect(client.tickBitmapWordPositions).toHaveLength(36);
     expect(client.tickBitmapWordPositions[0]).toBe(-18);
     expect(client.tickBitmapWordPositions.at(-1)).toBe(17);
     expect(client.tickIndexes).toEqual([-17_600, -17_400]);
-    expect(client.stateViewAddresses.every((address) => address === pool.stateViewAddress)).toBe(
-      true,
-    );
+    expect(
+      client.stateViewAddresses.every(
+        (address) => address === pool.stateViewAddress,
+      ),
+    ).toBe(true);
     expect(client.poolKeys.every((poolKey) => poolKey === pool.poolKey)).toBe(
       true,
     );
@@ -1086,9 +1088,7 @@ describe("FAME pool-state indexer", () => {
 
     expect(snapshot.initializedTicks).toHaveLength(0);
     expect(snapshot.bitmapWords).toHaveLength(36);
-    expect(snapshot.bitmapWords.every((word) => word.bitmap === 0n)).toBe(
-      true,
-    );
+    expect(snapshot.bitmapWords.every((word) => word.bitmap === 0n)).toBe(true);
     expect(client.tickIndexes).toHaveLength(0);
   });
 
@@ -1840,6 +1840,105 @@ describe("FAME pool-state indexer", () => {
     ]);
     expect(db.getLatestClReplayCandidate(candidatePool)).toMatchObject({
       observedThroughBlock: 118,
+    });
+  });
+
+  test("checkpoint-bootstraps steady-state replay when the source registry changes", async () => {
+    const replayPool = clReplayPool();
+    const oldRegistry = registryWithPools(
+      [replayPool],
+      "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    );
+    const newRegistry = registryWithPools(
+      [replayPool],
+      "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    );
+    const db = new InMemoryPoolStateDb();
+    const seedClient = new FakePoolStateClient([], 120n);
+    seedClient.clReplaySnapshotsByPoolId.set(replayPool.id, {
+      sqrtPriceX96: 2n ** 96n,
+      tick: 199_900,
+      liquidity: 1_000n,
+      fee: 100n,
+      blockHash:
+        "0x1111111111111111111111111111111111111111111111111111111111111111",
+      parentHash:
+        "0x2222222222222222222222222222222222222222222222222222222222222222",
+      bitmapWords: [{ wordPosition: 7, bitmap: 1n << 207n }],
+      initializedTicks: [
+        { tick: 199_900, liquidityGross: 25n, liquidityNet: 15n },
+      ],
+      providerReadCount: 5,
+      durationMs: 12,
+    });
+
+    await indexFamePoolStates({
+      client: seedClient,
+      db,
+      tableName: "PoolState",
+      registry: oldRegistry,
+      clReplayTrustPromotion: true,
+      now: new Date("2026-05-20T00:00:00.000Z"),
+    });
+
+    const bootstrapClient = new FakePoolStateClient([], 123n);
+    bootstrapClient.clReplaySnapshotsByPoolId.set(replayPool.id, {
+      sqrtPriceX96: 2n ** 96n,
+      tick: 200_000,
+      liquidity: 2_000n,
+      fee: 100n,
+      blockHash:
+        "0x3333333333333333333333333333333333333333333333333333333333333333",
+      parentHash:
+        "0x4444444444444444444444444444444444444444444444444444444444444444",
+      bitmapWords: [{ wordPosition: 7, bitmap: 1n << 208n }],
+      initializedTicks: [
+        { tick: 200_000, liquidityGross: 30n, liquidityNet: 20n },
+      ],
+      providerReadCount: 7,
+      durationMs: 14,
+    });
+
+    const result = await indexFamePoolStates({
+      client: bootstrapClient,
+      db,
+      tableName: "PoolState",
+      registry: newRegistry,
+      clReplayMaintenanceMode: "steady-state",
+      clReplayTrustPromotion: true,
+      now: new Date("2026-05-20T00:01:00.000Z"),
+    });
+
+    const newSourceRegistryId = sourceRegistryIdFor(newRegistry.source);
+    expect(result).toMatchObject({
+      clReplaySnapshots: 1,
+      clReplayWrittenPools: 1,
+      clReplayMaintenanceMetrics: [
+        {
+          poolId: replayPool.id,
+          status: "trusted",
+          reason: null,
+          fromBlock: 121,
+          toBlock: 121,
+          scannedLogCount: 0,
+          appliedEventCount: 0,
+          candidateWritten: true,
+          stateHash: expect.stringMatching(/^0x[0-9a-f]{64}$/),
+        },
+      ],
+      sourceRegistryId: newSourceRegistryId,
+    });
+    expect(db.getLatestClReplay(replayPool)).toMatchObject({
+      observedThroughBlock: 121,
+      tick: 200_000,
+      liquidity: "2000",
+      sourceRegistryId: newSourceRegistryId,
+    });
+    expect(db.getLatestClReplayMaintenance(replayPool)).toMatchObject({
+      status: "trusted",
+      reason: null,
+      cursorBlock: 121,
+      sourceRegistryId: newSourceRegistryId,
     });
   });
 

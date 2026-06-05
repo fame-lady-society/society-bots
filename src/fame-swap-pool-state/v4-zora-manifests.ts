@@ -6,8 +6,7 @@ import type {
 } from "./types.ts";
 
 export const FAME_V4_ZORA_QUOTE_LANE_MANIFEST_VERSION = 1;
-export const FAME_V4_ZORA_QUOTE_LANE_POOL_ID =
-  "uniswap-v4-basedflick-zora";
+export const FAME_V4_ZORA_QUOTE_LANE_POOL_ID = "uniswap-v4-basedflick-zora";
 export const UNISWAP_V4_DYNAMIC_FEE_FLAG = 0x800000;
 export const UNISWAP_V4_MAX_LP_FEE = 1_000_000;
 
@@ -152,8 +151,7 @@ export const FAME_V4_ZORA_REVIEWED_POOL_SHAPE = {
   router: "0x6ff5693b99212da76ad316178a184ab56d299b43",
   poolManager: "0x498581ff718922c3f8e6a244956af099b2652b2b",
   stateViewAddress: "0xa3c0c9b65bad0b08107aa264b0f3db444b867a71",
-  poolKey:
-    "0x0fe6333346fcd0ffa4be3fda91f271bda52c6755f604b06483b709666d363628",
+  poolKey: "0x0fe6333346fcd0ffa4be3fda91f271bda52c6755f604b06483b709666d363628",
   currency0: "0x1111111111166b7fe7bd91427724b487980afc69",
   currency1: "0x15e012abf9d32cd67fc6cf480ea0e318e9ed5926",
   fee: 30_000,
@@ -178,6 +176,19 @@ export const FAME_V4_ZORA_QUOTE_LANE_MANIFEST = {
   ],
   activationStatuses: ["unsupported"],
 } as const satisfies FameV4ZoraQuoteLaneManifest;
+
+export const FAME_V4_ZORA_APPROVED_PROVENANCE = {
+  status: "verified",
+  source: "zora-factory-event",
+  chainId: 8453,
+  factoryAddress: "0x777777751622c0d3258f214f9df38e35bf45baf3",
+  coinAddress: FAME_V4_ZORA_REVIEWED_POOL_SHAPE.currency1,
+  poolKey: FAME_V4_ZORA_REVIEWED_POOL_SHAPE.poolKey,
+  poolId: FAME_V4_ZORA_REVIEWED_POOL_SHAPE.poolKey,
+  transactionHash:
+    "0x0000000000000000000000000000000000000000000000000000000000000000",
+  eventName: "OperatorApprovedZoraProtocolPool",
+} as const satisfies FamePoolStateV4ZoraProvenanceEvidence;
 
 function sameAddress(left: Address, right: Address): boolean {
   return left.toLowerCase() === right.toLowerCase();
@@ -231,8 +242,7 @@ export function decodeUniswapV4HookPermissions(
     afterSwap: (hookBits & HOOK_FLAGS.afterSwap) !== 0n,
     beforeDonate: (hookBits & HOOK_FLAGS.beforeDonate) !== 0n,
     afterDonate: (hookBits & HOOK_FLAGS.afterDonate) !== 0n,
-    beforeSwapReturnDelta:
-      (hookBits & HOOK_FLAGS.beforeSwapReturnDelta) !== 0n,
+    beforeSwapReturnDelta: (hookBits & HOOK_FLAGS.beforeSwapReturnDelta) !== 0n,
     afterSwapReturnDelta: (hookBits & HOOK_FLAGS.afterSwapReturnDelta) !== 0n,
     afterAddLiquidityReturnDelta:
       (hookBits & HOOK_FLAGS.afterAddLiquidityReturnDelta) !== 0n,
@@ -313,7 +323,8 @@ export function classifyV4ZoraReviewedPoolShape(
   if (shape.chainId !== expected.chainId) {
     return block(shape.poolId, "chain-mismatch");
   }
-  if (shape.venue !== expected.venue) return block(shape.poolId, "venue-mismatch");
+  if (shape.venue !== expected.venue)
+    return block(shape.poolId, "venue-mismatch");
   if (shape.venueFamily !== expected.venueFamily) {
     return block(shape.poolId, "venue-family-mismatch");
   }

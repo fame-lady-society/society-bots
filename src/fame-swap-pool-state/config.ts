@@ -55,16 +55,15 @@ export const FAME_POOL_STATE_CONFIRMATION_BLOCKS = optionalIntegerEnv(
   2,
 );
 
-export const FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE =
-  optionalStringEnumEnv(
-    "FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE",
-    ["checkpoint", "steady-state", "repair"] as const,
-    "checkpoint",
-  );
+export const FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE = optionalStringEnumEnv(
+  "FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE",
+  ["checkpoint", "steady-state", "repair"] as const,
+  "steady-state",
+);
 
 export const FAME_POOL_STATE_CL_REPLAY_TRUST_PROMOTION = optionalBooleanEnv(
   "FAME_POOL_STATE_CL_REPLAY_TRUST_PROMOTION",
-  false,
+  true,
 );
 
 export const FAME_POOL_STATE_CL_REPLAY_MAX_RANGE_BLOCKS = optionalIntegerEnv(

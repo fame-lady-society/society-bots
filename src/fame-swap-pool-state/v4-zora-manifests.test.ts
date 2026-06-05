@@ -6,6 +6,7 @@ import type {
   FamePoolStateV4ZoraProvenanceEvidence,
 } from "./types.ts";
 import {
+  FAME_V4_ZORA_APPROVED_PROVENANCE,
   FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
   FAME_V4_ZORA_REVIEWED_POOL_SHAPE,
   UNISWAP_V4_DYNAMIC_FEE_FLAG,
@@ -86,6 +87,24 @@ describe("FAME V4 Zora quote lane manifest", () => {
     ).toMatchObject({
       status: "target-blocked",
       reason: "missing-provenance",
+    });
+  });
+
+  test("accepts the operator-approved BASEDFLICK/ZORA protocol provenance", () => {
+    const pool = registryEntry(FAME_V4_ZORA_QUOTE_LANE_POOL_ID);
+
+    expect(
+      classifyV4ZoraQuoteLane(pool, FAME_V4_ZORA_APPROVED_PROVENANCE),
+    ).toMatchObject({
+      status: "target-eligible",
+      provenance: {
+        source: "zora-factory-event",
+        factoryAddress: "0x777777751622c0d3258f214f9df38e35bf45baf3",
+        coinAddress: FAME_V4_ZORA_REVIEWED_POOL_SHAPE.currency1,
+        poolKey: FAME_V4_ZORA_REVIEWED_POOL_SHAPE.poolKey,
+        poolId: FAME_V4_ZORA_REVIEWED_POOL_SHAPE.poolKey,
+        eventName: "OperatorApprovedZoraProtocolPool",
+      },
     });
   });
 
