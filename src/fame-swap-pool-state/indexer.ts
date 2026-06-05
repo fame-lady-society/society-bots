@@ -20,6 +20,7 @@ import {
   batchGetLatestPoolStates,
   clReplayCandidateStateRowsFromSnapshot,
   clReplayStateRowsFromSnapshot,
+  v4ClReplayStateRowsFromSnapshot,
   getPoolStateCursor,
   latestClHeadStateFromSnapshot,
   latestClReplayMaintenanceStateKey,
@@ -28,6 +29,7 @@ import {
   putLatestClReplayCandidateState,
   putLatestClReplayMaintenanceState,
   putLatestClReplayState,
+  putLatestV4ClReplayState,
   putLatestClHeadState,
   putLatestPoolState,
   setPoolStateCursor,
@@ -38,6 +40,10 @@ import {
   type FameClReplayCandidateStateCapsule,
   type FameClReplayStateCapsule,
   type FameClReplayStateRows,
+  type FameV4ClReplayRegistryEntry,
+  type FameV4ClReplayStateCapsule,
+  type FameV4ClReplayStateRows,
+  type FameV4ZoraVerifiedProvenance,
   type PoolStateDocumentClient,
 } from "./dynamodb/pool-state.ts";
 import {
@@ -47,17 +53,24 @@ import {
   type FameClReplayReducerRegistryEntry,
 } from "./cl-reducer-manifests.ts";
 import { famePoolStateRegistry } from "./registry/index.ts";
+import {
+  FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
+  classifyV4ZoraQuoteLane,
+} from "./v4-zora-manifests.ts";
 import type {
   FamePoolStateRegistryEntry,
   FamePoolStateRegistryFile,
+  FamePoolStateV4ZoraProvenanceEvidence,
 } from "./types.ts";
 
 type QuoteModelPool = FamePoolStateRegistryEntry & { poolAddress: Address };
 type ClHeadPool = FameClHeadSnapshotRegistryEntry;
 type ClReplayPool = FameClReplayReducerRegistryEntry;
+type V4ClReplayPool = FameV4ClReplayRegistryEntry;
 type ClReplaySeedCapsule =
   | FameClReplayStateCapsule
   | FameClReplayCandidateStateCapsule;
+type V4ClReplaySeedCapsule = FameV4ClReplayStateCapsule;
 type ClReplayTrustedCursorCheck =
   | { canAdvance: true; reason: null }
   | { canAdvance: false; reason: string | null };
@@ -251,6 +264,37 @@ const UniswapV4StateViewLiquidityAbi = [
   },
 ] as const;
 
+const UniswapV4StateViewTickBitmapAbi = [
+  {
+    type: "function",
+    name: "getTickBitmap",
+    stateMutability: "view",
+    inputs: [
+      { name: "poolId", type: "bytes32" },
+      { name: "wordPosition", type: "int16" },
+    ],
+    outputs: [{ name: "tickBitmap", type: "uint256" }],
+  },
+] as const;
+
+const UniswapV4StateViewTickInfoAbi = [
+  {
+    type: "function",
+    name: "getTickInfo",
+    stateMutability: "view",
+    inputs: [
+      { name: "poolId", type: "bytes32" },
+      { name: "tick", type: "int24" },
+    ],
+    outputs: [
+      { name: "liquidityGross", type: "uint128" },
+      { name: "liquidityNet", type: "int128" },
+      { name: "feeGrowthOutside0X128", type: "uint256" },
+      { name: "feeGrowthOutside1X128", type: "uint256" },
+    ],
+  },
+] as const;
+
 export interface FamePoolStateSyncLog {
   address: Address;
   blockNumber: bigint;
@@ -360,6 +404,10 @@ export interface FamePoolStateIndexerClient {
     pool: ClReplayPool;
     blockNumber: bigint;
   }): Promise<FameClReplaySnapshotRead>;
+  getV4ClReplaySnapshot(options: {
+    pool: V4ClReplayPool;
+    blockNumber: bigint;
+  }): Promise<FameV4ClReplaySnapshotRead>;
   getClReplayFee(options: {
     pool: ClReplayPool;
     blockNumber: bigint;
@@ -433,6 +481,51 @@ export interface SlipstreamReplayReadClient {
   >;
 }
 
+export interface UniswapV4ReplayReadClient {
+  getBlock(options: {
+    blockNumber: bigint;
+  }): Promise<{ hash: Hex | null; parentHash: Hex }>;
+  getSlot0(options: {
+    stateViewAddress: Address;
+    poolKey: Hex;
+    blockNumber: bigint;
+  }): Promise<readonly [bigint, number, number, number]>;
+  getLiquidity(options: {
+    stateViewAddress: Address;
+    poolKey: Hex;
+    blockNumber: bigint;
+  }): Promise<bigint>;
+  getTickBitmap(options: {
+    stateViewAddress: Address;
+    poolKey: Hex;
+    wordPosition: number;
+    blockNumber: bigint;
+  }): Promise<bigint>;
+  getTickBitmaps?(options: {
+    stateViewAddress: Address;
+    poolKey: Hex;
+    wordPositions: readonly number[];
+    blockNumber: bigint;
+  }): Promise<readonly FameClReplayBitmapWordRead[]>;
+  getTickInfo(options: {
+    stateViewAddress: Address;
+    poolKey: Hex;
+    tick: number;
+    blockNumber: bigint;
+  }): Promise<readonly [bigint, bigint, bigint, bigint]>;
+  getTickInfos?(options: {
+    stateViewAddress: Address;
+    poolKey: Hex;
+    ticks: readonly number[];
+    blockNumber: bigint;
+  }): Promise<
+    readonly {
+      tick: number;
+      state: readonly [bigint, bigint, bigint, bigint];
+    }[]
+  >;
+}
+
 export interface FameClHeadSnapshotRead {
   sqrtPriceX96: bigint;
   tick: number;
@@ -464,6 +557,20 @@ export interface FameClReplaySnapshotRead {
   durationMs: number;
 }
 
+export interface FameV4ClReplaySnapshotRead {
+  sqrtPriceX96: bigint;
+  tick: number;
+  liquidity: bigint;
+  lpFee: bigint;
+  protocolFee: bigint;
+  blockHash: Hex;
+  parentHash: Hex;
+  bitmapWords: readonly FameClReplayBitmapWordRead[];
+  initializedTicks: readonly FameClReplayInitializedTickRead[];
+  providerReadCount: number;
+  durationMs: number;
+}
+
 export interface FameClHeadSnapshotFailure {
   poolId: string;
   message: string;
@@ -483,6 +590,12 @@ export interface FameClReplaySnapshotMetric {
   providerReadCount: number;
   durationMs: number;
   stateHash: Hex;
+}
+
+export interface FameV4ClReplaySnapshotMetric
+  extends FameClReplaySnapshotMetric {
+  lpFee: string;
+  protocolFee: string;
 }
 
 export interface FameClReplayMaintenanceMetric {
@@ -522,6 +635,11 @@ export interface FamePoolStateIndexerResult {
   clReplayFailedPools: number;
   clReplayFailures: FameClReplaySnapshotFailure[];
   clReplayMetrics: FameClReplaySnapshotMetric[];
+  v4ClReplaySnapshots: number;
+  v4ClReplayWrittenPools: number;
+  v4ClReplayFailedPools: number;
+  v4ClReplayFailures: FameClReplaySnapshotFailure[];
+  v4ClReplayMetrics: FameV4ClReplaySnapshotMetric[];
   clReplayMaintenanceMetrics: FameClReplayMaintenanceMetric[];
   sourceRegistryId: string;
 }
@@ -540,11 +658,17 @@ export class FameClReplaySnapshotIndexingError extends Error {
 export function assertNoClReplaySnapshotFailures(
   result: Pick<
     FamePoolStateIndexerResult,
-    "clReplayFailedPools" | "clReplayFailures"
+    | "clReplayFailedPools"
+    | "clReplayFailures"
+    | "v4ClReplayFailedPools"
+    | "v4ClReplayFailures"
   >,
 ): void {
-  if (result.clReplayFailedPools > 0) {
-    throw new FameClReplaySnapshotIndexingError(result.clReplayFailures);
+  if (result.clReplayFailedPools > 0 || result.v4ClReplayFailedPools > 0) {
+    throw new FameClReplaySnapshotIndexingError([
+      ...result.clReplayFailures,
+      ...result.v4ClReplayFailures,
+    ]);
   }
 }
 
@@ -579,6 +703,30 @@ function clReplayPools(registry: FamePoolStateRegistryFile): ClReplayPool[] {
   });
 }
 
+function v4ClReplayPools({
+  registry,
+  provenance,
+}: {
+  registry: FamePoolStateRegistryFile;
+  provenance?: FamePoolStateV4ZoraProvenanceEvidence;
+}): V4ClReplayPool[] {
+  return registry.pools.filter((pool): pool is V4ClReplayPool => {
+    if (pool.id !== FAME_V4_ZORA_QUOTE_LANE_POOL_ID) return false;
+    if (classifyV4ZoraQuoteLane(pool, provenance).status !== "target-eligible") {
+      return false;
+    }
+    return (
+      pool.venue === "uniswap-v4" &&
+      pool.venueFamily === "UniswapV4" &&
+      pool.poolAddress === null &&
+      pool.poolKey !== null &&
+      pool.stateViewAddress !== null &&
+      pool.stateSurface === "cl-head-snapshot" &&
+      pool.tickSpacing !== null
+    );
+  });
+}
+
 function syncEventKind(pool: QuoteModelPool): FamePoolStateSyncEventKind {
   if (pool.venue === "uniswap-v2") return "uint112-reserves";
   if (pool.venue === "solidly" || pool.venue === "aerodrome-v2") {
@@ -594,6 +742,13 @@ function addressKey(address: Address): string {
 function safeNumber(value: bigint, name: string): number {
   if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
     throw new Error(`${name} exceeds Number.MAX_SAFE_INTEGER.`);
+  }
+  return Number(value);
+}
+
+function safeUint24(value: bigint, name: string): number {
+  if (value < 0n || value > 0xff_ffffn) {
+    throw new Error(`${name} must fit uint24.`);
   }
   return Number(value);
 }
@@ -733,6 +888,20 @@ function clReplaySnapshotId({
   return `cl-replay-v1:${poolId}:${observedThroughBlock.toString()}:${blockHash}:${sourceRegistryId}`;
 }
 
+function v4ClReplaySnapshotId({
+  poolId,
+  observedThroughBlock,
+  blockHash,
+  sourceRegistryId,
+}: {
+  poolId: string;
+  observedThroughBlock: number;
+  blockHash: Hex;
+  sourceRegistryId: string;
+}): string {
+  return `v4-cl-replay-v1:${poolId}:${observedThroughBlock.toString()}:${blockHash}:${sourceRegistryId}`;
+}
+
 function clReplayStateHash({
   snapshot,
   observedThroughBlock,
@@ -790,6 +959,71 @@ function clReplayStateHash({
   );
 }
 
+function v4ClReplayStateHash({
+  pool,
+  snapshot,
+  observedThroughBlock,
+}: {
+  pool: V4ClReplayPool;
+  snapshot: FameV4ClReplaySnapshotRead;
+  observedThroughBlock: number;
+}): Hex {
+  return keccak256(
+    encodeAbiParameters(
+      [
+        { name: "poolKey", type: "bytes32" },
+        { name: "stateViewAddress", type: "address" },
+        { name: "sqrtPriceX96", type: "uint160" },
+        { name: "tick", type: "int24" },
+        { name: "liquidity", type: "uint128" },
+        { name: "lpFee", type: "uint24" },
+        { name: "protocolFee", type: "uint24" },
+        { name: "observedThroughBlock", type: "uint256" },
+        { name: "blockHash", type: "bytes32" },
+        { name: "parentHash", type: "bytes32" },
+        {
+          name: "bitmapWords",
+          type: "tuple[]",
+          components: [
+            { name: "wordPosition", type: "int16" },
+            { name: "bitmap", type: "uint256" },
+          ],
+        },
+        {
+          name: "initializedTicks",
+          type: "tuple[]",
+          components: [
+            { name: "tick", type: "int24" },
+            { name: "liquidityGross", type: "uint128" },
+            { name: "liquidityNet", type: "int128" },
+          ],
+        },
+      ],
+      [
+        pool.poolKey,
+        pool.stateViewAddress,
+        snapshot.sqrtPriceX96,
+        snapshot.tick,
+        snapshot.liquidity,
+        safeUint24(snapshot.lpFee, "V4 CL replay LP fee"),
+        safeUint24(snapshot.protocolFee, "V4 CL replay protocol fee"),
+        BigInt(observedThroughBlock),
+        snapshot.blockHash,
+        snapshot.parentHash,
+        snapshot.bitmapWords.map((word) => ({
+          wordPosition: word.wordPosition,
+          bitmap: word.bitmap,
+        })),
+        snapshot.initializedTicks.map((tick) => ({
+          tick: tick.tick,
+          liquidityGross: tick.liquidityGross,
+          liquidityNet: tick.liquidityNet,
+        })),
+      ],
+    ),
+  );
+}
+
 function clReplayRowsFromSnapshot({
   pool,
   snapshot,
@@ -826,9 +1060,61 @@ function clReplayRowsFromSnapshot({
   });
 }
 
+function v4ClReplayRowsFromSnapshot({
+  pool,
+  snapshot,
+  observedThroughBlock,
+  zoraProvenance,
+  sourceRegistryId,
+  updatedAt,
+}: {
+  pool: V4ClReplayPool;
+  snapshot: FameV4ClReplaySnapshotRead;
+  observedThroughBlock: number;
+  zoraProvenance: FameV4ZoraVerifiedProvenance;
+  sourceRegistryId: string;
+  updatedAt: string;
+}): FameV4ClReplayStateRows {
+  return v4ClReplayStateRowsFromSnapshot({
+    pool,
+    sqrtPriceX96: snapshot.sqrtPriceX96,
+    tick: snapshot.tick,
+    liquidity: snapshot.liquidity,
+    lpFee: snapshot.lpFee,
+    protocolFee: snapshot.protocolFee,
+    observedThroughBlock,
+    blockHash: snapshot.blockHash,
+    parentHash: snapshot.parentHash,
+    snapshotId: v4ClReplaySnapshotId({
+      poolId: pool.id,
+      observedThroughBlock,
+      blockHash: snapshot.blockHash,
+      sourceRegistryId,
+    }),
+    stateHash: v4ClReplayStateHash({ pool, snapshot, observedThroughBlock }),
+    zoraProvenance,
+    sourceRegistryId,
+    updatedAt,
+    bitmapWords: snapshot.bitmapWords,
+    initializedTicks: snapshot.initializedTicks,
+  });
+}
+
 function clReplayCapsuleFromRows(
   rows: FameClReplayStateRows,
 ): FameClReplayStateCapsule {
+  return {
+    latest: rows.latest,
+    bitmapWords: rows.bitmapChunks.flatMap((chunk) => chunk.bitmapWords),
+    initializedTicks: rows.tickChunks.flatMap(
+      (chunk) => chunk.initializedTicks,
+    ),
+  };
+}
+
+function v4ClReplayCapsuleFromRows(
+  rows: FameV4ClReplayStateRows,
+): FameV4ClReplayStateCapsule {
   return {
     latest: rows.latest,
     bitmapWords: rows.bitmapChunks.flatMap((chunk) => chunk.bitmapWords),
@@ -1568,6 +1854,157 @@ export async function getSlipstreamClReplaySnapshot({
   };
 }
 
+export async function getUniswapV4ClReplaySnapshot({
+  client,
+  pool,
+  blockNumber,
+}: {
+  client: UniswapV4ReplayReadClient;
+  pool: V4ClReplayPool;
+  blockNumber: bigint;
+}): Promise<FameV4ClReplaySnapshotRead> {
+  const startedAtMs = Date.now();
+  const stateViewAddress = pool.stateViewAddress;
+  const poolKey = pool.poolKey;
+  const blockBefore = await client.getBlock({ blockNumber });
+  if (blockBefore.hash === null) {
+    throw new Error(`Block ${blockNumber.toString()} has no hash.`);
+  }
+
+  const [[sqrtPriceX96, tick, protocolFee, lpFee], liquidity] =
+    await Promise.all([
+      client.getSlot0({
+        stateViewAddress,
+        poolKey,
+        blockNumber,
+      }),
+      client.getLiquidity({
+        stateViewAddress,
+        poolKey,
+        blockNumber,
+      }),
+    ]);
+
+  const wordPositions = tickBitmapWordPositions(pool.tickSpacing);
+  const wordReads = client.getTickBitmaps
+    ? (
+        await mapInBatches(
+          chunkArray(wordPositions, CL_REPLAY_PROVIDER_READ_BATCH_SIZE),
+          1,
+          (batch) =>
+            client.getTickBitmaps
+              ? client.getTickBitmaps({
+                  stateViewAddress,
+                  poolKey,
+                  wordPositions: batch,
+                  blockNumber,
+                })
+              : Promise.resolve([]),
+        )
+      ).flat()
+    : await mapInBatches(
+        wordPositions,
+        CL_REPLAY_PROVIDER_READ_BATCH_SIZE,
+        async (wordPosition) => ({
+          wordPosition,
+          bitmap: await client.getTickBitmap({
+            stateViewAddress,
+            poolKey,
+            wordPosition,
+            blockNumber,
+          }),
+        }),
+      );
+  const bitmapWords = wordReads;
+  const initializedTickIndexes = bitmapWords.flatMap((word) =>
+    initializedTicksForBitmapWord({
+      wordPosition: word.wordPosition,
+      bitmap: word.bitmap,
+      tickSpacing: pool.tickSpacing,
+    }),
+  );
+  const initializedTicks = client.getTickInfos
+    ? (
+        await mapInBatches(
+          chunkArray(
+            initializedTickIndexes,
+            CL_REPLAY_PROVIDER_READ_BATCH_SIZE,
+          ),
+          1,
+          (batch) =>
+            client.getTickInfos
+              ? client.getTickInfos({
+                  stateViewAddress,
+                  poolKey,
+                  ticks: batch,
+                  blockNumber,
+                })
+              : Promise.resolve([]),
+        )
+      )
+        .flat()
+        .map(({ tick: initializedTick, state }) => {
+          const [liquidityGross, liquidityNet] = state;
+          if (liquidityGross === 0n) {
+            throw new Error(
+              `Tick bitmap marked ${initializedTick.toString()} initialized but getTickInfo returned zero liquidityGross.`,
+            );
+          }
+          return {
+            tick: initializedTick,
+            liquidityGross,
+            liquidityNet,
+          };
+        })
+    : await mapInBatches(
+        initializedTickIndexes,
+        CL_REPLAY_PROVIDER_READ_BATCH_SIZE,
+        async (initializedTick) => {
+          const [liquidityGross, liquidityNet] = await client.getTickInfo({
+            stateViewAddress,
+            poolKey,
+            tick: initializedTick,
+            blockNumber,
+          });
+          if (liquidityGross === 0n) {
+            throw new Error(
+              `Tick bitmap marked ${initializedTick.toString()} initialized but getTickInfo returned zero liquidityGross.`,
+            );
+          }
+          return {
+            tick: initializedTick,
+            liquidityGross,
+            liquidityNet,
+          };
+        },
+      );
+
+  const blockAfter = await client.getBlock({ blockNumber });
+  if (
+    blockAfter.hash !== blockBefore.hash ||
+    blockAfter.parentHash !== blockBefore.parentHash
+  ) {
+    throw new Error(
+      `Block identity changed while reading ${pool.id} V4 replay snapshot.`,
+    );
+  }
+
+  return {
+    sqrtPriceX96,
+    tick,
+    liquidity,
+    lpFee: BigInt(lpFee),
+    protocolFee: BigInt(protocolFee),
+    blockHash: blockBefore.hash,
+    parentHash: blockBefore.parentHash,
+    bitmapWords,
+    initializedTicks,
+    providerReadCount:
+      2 + 2 + wordPositions.length + initializedTickIndexes.length,
+    durationMs: Date.now() - startedAtMs,
+  };
+}
+
 export function createViemPoolStateIndexerClient(
   client: typeof baseClient,
 ): FamePoolStateIndexerClient {
@@ -1852,6 +2289,115 @@ export function createViemPoolStateIndexerClient(
         blockNumber,
       });
     },
+    async getV4ClReplaySnapshot({ pool, blockNumber }) {
+      return getUniswapV4ClReplaySnapshot({
+        client: {
+          getBlock(options) {
+            return client.getBlock(options);
+          },
+          getSlot0({ stateViewAddress, poolKey, blockNumber: readBlockNumber }) {
+            return client.readContract({
+              address: stateViewAddress,
+              abi: UniswapV4StateViewSlot0Abi,
+              functionName: "getSlot0",
+              args: [poolKey],
+              blockNumber: readBlockNumber,
+            });
+          },
+          getLiquidity({
+            stateViewAddress,
+            poolKey,
+            blockNumber: readBlockNumber,
+          }) {
+            return client.readContract({
+              address: stateViewAddress,
+              abi: UniswapV4StateViewLiquidityAbi,
+              functionName: "getLiquidity",
+              args: [poolKey],
+              blockNumber: readBlockNumber,
+            });
+          },
+          getTickBitmap({
+            stateViewAddress,
+            poolKey,
+            wordPosition,
+            blockNumber: readBlockNumber,
+          }) {
+            return client.readContract({
+              address: stateViewAddress,
+              abi: UniswapV4StateViewTickBitmapAbi,
+              functionName: "getTickBitmap",
+              args: [poolKey, wordPosition],
+              blockNumber: readBlockNumber,
+            });
+          },
+          async getTickBitmaps({
+            stateViewAddress,
+            poolKey,
+            wordPositions,
+            blockNumber: readBlockNumber,
+          }) {
+            const results = await client.multicall({
+              contracts: wordPositions.map((wordPosition) => ({
+                address: stateViewAddress,
+                abi: UniswapV4StateViewTickBitmapAbi,
+                functionName: "getTickBitmap",
+                args: [poolKey, wordPosition],
+              })),
+              blockNumber: readBlockNumber,
+              allowFailure: false,
+            });
+            return results.map((bitmap, index) => {
+              const wordPosition = wordPositions[index];
+              if (wordPosition === undefined) {
+                throw new Error("Missing V4 tick bitmap word position.");
+              }
+              return { wordPosition, bitmap };
+            });
+          },
+          getTickInfo({
+            stateViewAddress,
+            poolKey,
+            tick,
+            blockNumber: readBlockNumber,
+          }) {
+            return client.readContract({
+              address: stateViewAddress,
+              abi: UniswapV4StateViewTickInfoAbi,
+              functionName: "getTickInfo",
+              args: [poolKey, tick],
+              blockNumber: readBlockNumber,
+            });
+          },
+          async getTickInfos({
+            stateViewAddress,
+            poolKey,
+            ticks,
+            blockNumber: readBlockNumber,
+          }) {
+            const results = await client.multicall({
+              contracts: ticks.map((tick) => ({
+                address: stateViewAddress,
+                abi: UniswapV4StateViewTickInfoAbi,
+                functionName: "getTickInfo",
+                args: [poolKey, tick],
+              })),
+              blockNumber: readBlockNumber,
+              allowFailure: false,
+            });
+            return results.map((state, index) => {
+              const tick = ticks[index];
+              if (tick === undefined) {
+                throw new Error("Missing V4 initialized tick index.");
+              }
+              return { tick, state };
+            });
+          },
+        },
+        pool,
+        blockNumber,
+      });
+    },
     async getClReplayFee({ pool, blockNumber }) {
       const fee = await client.readContract({
         address: requirePoolAddress(pool),
@@ -1873,6 +2419,7 @@ export async function indexFamePoolStates({
   clReplayMaintenanceMode = "checkpoint",
   clReplayTrustPromotion = false,
   clReplayMaxRangeBlocks = 1_000,
+  v4ZoraProvenance,
   now = new Date(),
 }: {
   client: FamePoolStateIndexerClient;
@@ -1883,12 +2430,17 @@ export async function indexFamePoolStates({
   clReplayMaintenanceMode?: FameClReplayMaintenanceMode;
   clReplayTrustPromotion?: boolean;
   clReplayMaxRangeBlocks?: number;
+  v4ZoraProvenance?: FamePoolStateV4ZoraProvenanceEvidence;
   now?: Date;
 }): Promise<FamePoolStateIndexerResult> {
   const startedAtMs = Date.now();
   const pools = quoteModelPools(registry);
   const clPools = clHeadPools(registry);
   const replayPools = clReplayPools(registry);
+  const v4ReplayPools = v4ClReplayPools({
+    registry,
+    provenance: v4ZoraProvenance,
+  });
   const sourceRegistryId = sourceRegistryIdFor(registry.source);
   const latestBlock = await client.getBlockNumber();
   const safeBlock = safeHeadBlock(latestBlock, confirmationBlocks);
@@ -2280,6 +2832,70 @@ export async function indexFamePoolStates({
     });
   }
 
+  const v4ClReplayReads = await Promise.allSettled(
+    v4ReplayPools.map(async (pool) => {
+      const snapshot = await client.getV4ClReplaySnapshot({
+        pool,
+        blockNumber: safeBlock,
+      });
+      return {
+        pool,
+        snapshot,
+      };
+    }),
+  );
+  const v4ClReplaySnapshots: {
+    pool: V4ClReplayPool;
+    snapshot: FameV4ClReplaySnapshotRead;
+  }[] = [];
+  const v4ClReplayFailures: FameClReplaySnapshotFailure[] = [];
+  v4ClReplayReads.forEach((result, index) => {
+    if (result.status === "fulfilled") {
+      v4ClReplaySnapshots.push(result.value);
+      return;
+    }
+    const pool = v4ReplayPools[index];
+    if (!pool) throw new Error("V4 CL replay read result missing pool.");
+    v4ClReplayFailures.push({
+      poolId: pool.id,
+      message: safeDependencyErrorMessage(result.reason),
+    });
+  });
+
+  let v4ClReplayWrittenPools = 0;
+  const v4ClReplayMetrics: FameV4ClReplaySnapshotMetric[] = [];
+  for (const { pool, snapshot } of v4ClReplaySnapshots) {
+    if (!v4ZoraProvenance || v4ZoraProvenance.status !== "verified") {
+      throw new Error(`${pool.id} V4 replay rows require verified provenance.`);
+    }
+    const rows = v4ClReplayRowsFromSnapshot({
+      pool,
+      snapshot,
+      observedThroughBlock,
+      zoraProvenance: v4ZoraProvenance,
+      sourceRegistryId,
+      updatedAt,
+    });
+    const result = await putLatestV4ClReplayState({
+      db,
+      tableName,
+      rows,
+    });
+    if (result === "written") v4ClReplayWrittenPools += 1;
+    v4ClReplayMetrics.push({
+      poolId: pool.id,
+      bitmapWordCount: rows.latest.bitmapWordCount,
+      initializedTickCount: rows.latest.initializedTickCount,
+      bitmapChunkCount: rows.latest.bitmapChunkCount,
+      tickChunkCount: rows.latest.tickChunkCount,
+      providerReadCount: snapshot.providerReadCount,
+      durationMs: snapshot.durationMs,
+      stateHash: rows.latest.stateHash,
+      lpFee: rows.latest.lpFee,
+      protocolFee: rows.latest.protocolFee,
+    });
+  }
+
   const clReplayMaintenanceMetrics: FameClReplayMaintenanceMetric[] = [];
   for (const pool of replayPools) {
     const snapshotRows = clReplayRowsByPoolId.get(pool.id);
@@ -2513,6 +3129,11 @@ export async function indexFamePoolStates({
     clReplayFailedPools: clReplayFailures.length,
     clReplayFailures,
     clReplayMetrics,
+    v4ClReplaySnapshots: v4ClReplaySnapshots.length,
+    v4ClReplayWrittenPools,
+    v4ClReplayFailedPools: v4ClReplayFailures.length,
+    v4ClReplayFailures,
+    v4ClReplayMetrics,
     clReplayMaintenanceMetrics,
     sourceRegistryId,
   };

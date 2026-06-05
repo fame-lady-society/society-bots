@@ -3,6 +3,7 @@ import { BatchGetCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
 import type { Address, Hex } from "viem";
 import {
   batchGetLatestClReplayStates,
+  batchGetLatestV4ClReplayStates,
   batchGetLatestClReplayCandidateStates,
   batchGetLatestClReplayMaintenanceStates,
   CL_REPLAY_CHUNK_TTL_SECONDS,
@@ -10,14 +11,17 @@ import {
   batchGetLatestPoolStates,
   clReplayCandidateStateRowsFromSnapshot,
   clReplayStateRowsFromSnapshot,
+  v4ClReplayStateRowsFromSnapshot,
   comparePoolStateEventVersions,
   getLatestClHeadState,
   getLatestPoolState,
   latestClHeadStateFromSnapshot,
   latestClHeadStateKey,
   latestClReplayStateKey,
+  latestV4ClReplayStateKey,
   latestPoolStateKey,
   putLatestClReplayState,
+  putLatestV4ClReplayState,
   putLatestClReplayCandidateState,
   putLatestClReplayMaintenanceState,
   latestStateFromReserves,
@@ -27,6 +31,8 @@ import {
   type FameClReplayRegistryEntry,
   type FameClReplayMaintenanceState,
   type FameClHeadSnapshotRegistryEntry,
+  type FameV4ClReplayRegistryEntry,
+  type FameV4ZoraVerifiedProvenance,
   type PoolStateDocumentClient,
   type PoolStateDynamoResponse,
 } from "./pool-state.ts";
@@ -354,6 +360,51 @@ function clReplayCandidatePool(): FameClReplayRegistryEntry {
   };
 }
 
+function v4ClReplayPool(): FameV4ClReplayRegistryEntry {
+  const pool = famePoolStateRegistry.pools.find(
+    (entry) => entry.id === "uniswap-v4-basedflick-zora",
+  );
+  if (
+    !pool ||
+    pool.stateSurface !== "cl-head-snapshot" ||
+    pool.poolAddress !== null ||
+    pool.poolKey === null ||
+    pool.stateViewAddress === null ||
+    pool.tickSpacing === null ||
+    pool.venue !== "uniswap-v4" ||
+    pool.venueFamily !== "UniswapV4"
+  ) {
+    throw new Error("Missing V4 replay-capable target pool.");
+  }
+  return {
+    ...pool,
+    stateSurface: pool.stateSurface,
+    poolAddress: pool.poolAddress,
+    poolKey: pool.poolKey,
+    stateViewAddress: pool.stateViewAddress,
+    tickSpacing: pool.tickSpacing,
+    venue: pool.venue,
+    venueFamily: pool.venueFamily,
+  };
+}
+
+function verifiedV4ZoraProvenance(
+  pool: FameV4ClReplayRegistryEntry,
+): FameV4ZoraVerifiedProvenance {
+  return {
+    status: "verified",
+    source: "zora-factory-event",
+    chainId: 8453,
+    factoryAddress: "0x0000000000000000000000000000000000000003",
+    coinAddress: pool.token1,
+    poolKey: pool.poolKey,
+    poolId: pool.poolKey,
+    transactionHash:
+      "0x7777777777777777777777777777777777777777777777777777777777777777",
+    eventName: "CoinCreatedV4",
+  };
+}
+
 describe("FAME pool-state DynamoDB mapping", () => {
   test("includes the helper registry contract version in source registry ids", () => {
     expect(sourceRegistryIdFor(famePoolStateRegistry.source)).toMatch(
@@ -536,6 +587,104 @@ describe("FAME pool-state DynamoDB mapping", () => {
         CL_REPLAY_CHUNK_TTL_SECONDS,
     );
     expect(rows.tickChunks[0]?.expiresAt).toBe(rows.bitmapChunks[0]?.expiresAt);
+  });
+
+  test("round-trips V4 replay capsules by pool key", async () => {
+    const pool = v4ClReplayPool();
+    const rows = v4ClReplayStateRowsFromSnapshot({
+      pool,
+      sqrtPriceX96: 2n ** 96n,
+      tick: -17_400,
+      liquidity: 987_654_321n,
+      lpFee: 30_000n,
+      protocolFee: 0n,
+      observedThroughBlock: 654,
+      blockHash:
+        "0x4444444444444444444444444444444444444444444444444444444444444444",
+      parentHash:
+        "0x5555555555555555555555555555555555555555555555555555555555555555",
+      snapshotId: "unit-v4-snapshot-654",
+      stateHash:
+        "0x6666666666666666666666666666666666666666666666666666666666666666",
+      zoraProvenance: verifiedV4ZoraProvenance(pool),
+      sourceRegistryId: "unit-registry",
+      updatedAt: "2026-05-21T00:00:00.000Z",
+      bitmapWords: [
+        { wordPosition: -1, bitmap: 2n },
+        { wordPosition: 0, bitmap: 1n << 3n },
+      ],
+      initializedTicks: [
+        { tick: -17_600, liquidityGross: 20n, liquidityNet: -20n },
+        { tick: -17_400, liquidityGross: 30n, liquidityNet: 10n },
+        { tick: -17_200, liquidityGross: 40n, liquidityNet: -5n },
+      ],
+      bitmapChunkSize: 1,
+      tickChunkSize: 2,
+    });
+    const db = new ReplayStateDb();
+
+    await expect(
+      putLatestV4ClReplayState({
+        db,
+        tableName: "PoolState",
+        rows,
+      }),
+    ).resolves.toBe("written");
+    await expect(
+      batchGetLatestV4ClReplayStates({
+        db,
+        tableName: "PoolState",
+        pools: [pool],
+      }),
+    ).resolves.toEqual([
+      {
+        latest: rows.latest,
+        bitmapWords: rows.bitmapChunks.flatMap((chunk) => chunk.bitmapWords),
+        initializedTicks: rows.tickChunks.flatMap(
+          (chunk) => chunk.initializedTicks,
+        ),
+      },
+    ]);
+    expect(db.commands.map((command) => command.constructor.name)).toEqual([
+      "PutCommand",
+      "PutCommand",
+      "PutCommand",
+      "PutCommand",
+      "PutCommand",
+      "BatchGetCommand",
+      "BatchGetCommand",
+    ]);
+    expect(rows.latest).toMatchObject({
+      ...latestV4ClReplayStateKey(pool),
+      stateKind: "v4-cl-replay-v1",
+      poolId: "uniswap-v4-basedflick-zora",
+      poolKey: pool.poolKey,
+      stateViewAddress: pool.stateViewAddress,
+      venueFamily: "UniswapV4",
+      lpFee: "30000",
+      protocolFee: "0",
+      feeSource: "v4-slot0",
+      source: "uniswap-v4-state-view",
+      zoraProvenance: verifiedV4ZoraProvenance(pool),
+      bitmapWordCount: 2,
+      initializedTickCount: 3,
+      bitmapChunkCount: 2,
+      tickChunkCount: 2,
+      minWordPosition: -1,
+      maxWordPosition: 0,
+      minTick: -17_600,
+      maxTick: -17_200,
+    });
+    expect(rows.latest.pk).toBe(
+      `pool:${pool.chainId.toString()}:pool-key:${pool.poolKey.toLowerCase()}`,
+    );
+    expect(rows.latest).not.toHaveProperty("poolAddress");
+    expect(rows.bitmapChunks[0]).not.toHaveProperty("poolAddress");
+    expect(rows.tickChunks[0]).not.toHaveProperty("poolAddress");
+    expect(rows.bitmapChunks[0]?.expiresAt).toBe(
+      Math.floor(Date.parse("2026-05-21T00:00:00.000Z") / 1_000) +
+        CL_REPLAY_CHUNK_TTL_SECONDS,
+    );
   });
 
   test("round-trips replay maintenance rows independently from published replay state", async () => {
@@ -1066,6 +1215,83 @@ describe("FAME pool-state DynamoDB mapping", () => {
         pools: [pool],
       }),
     ).rejects.toThrow(/Invalid CL replay tick chunk DynamoDB item/);
+  });
+
+  test("rejects malformed V4 replay identity and source values", async () => {
+    const pool = v4ClReplayPool();
+    const rows = v4ClReplayStateRowsFromSnapshot({
+      pool,
+      sqrtPriceX96: 2n ** 96n,
+      tick: -17_400,
+      liquidity: 987_654_321n,
+      lpFee: 30_000n,
+      protocolFee: 0n,
+      observedThroughBlock: 654,
+      blockHash:
+        "0x4444444444444444444444444444444444444444444444444444444444444444",
+      parentHash:
+        "0x5555555555555555555555555555555555555555555555555555555555555555",
+      snapshotId: "unit-v4-snapshot-654",
+      stateHash:
+        "0x6666666666666666666666666666666666666666666666666666666666666666",
+      zoraProvenance: verifiedV4ZoraProvenance(pool),
+      sourceRegistryId: "unit-registry",
+      updatedAt: "2026-05-21T00:00:00.000Z",
+      bitmapWords: [{ wordPosition: 0, bitmap: 1n << 3n }],
+      initializedTicks: [
+        { tick: -17_400, liquidityGross: 30n, liquidityNet: 10n },
+      ],
+      bitmapChunkSize: 1,
+      tickChunkSize: 1,
+    });
+    const { poolKey: _poolKey, ...latestWithoutPoolKey } = rows.latest;
+    const { zoraProvenance: _zoraProvenance, ...latestWithoutProvenance } =
+      rows.latest;
+
+    await expect(
+      batchGetLatestV4ClReplayStates({
+        db: new ReplayStateDb([
+          { ...rows.latest, source: "slipstream-pool-state" },
+          ...rows.bitmapChunks,
+          ...rows.tickChunks,
+        ]),
+        tableName: "PoolState",
+        pools: [pool],
+      }),
+    ).rejects.toThrow(/Invalid latest V4 CL replay-state DynamoDB item/);
+    await expect(
+      batchGetLatestV4ClReplayStates({
+        db: new ReplayStateDb([
+          latestWithoutPoolKey,
+          ...rows.bitmapChunks,
+          ...rows.tickChunks,
+        ]),
+        tableName: "PoolState",
+        pools: [pool],
+      }),
+    ).rejects.toThrow(/Invalid latest V4 CL replay-state DynamoDB item/);
+    await expect(
+      batchGetLatestV4ClReplayStates({
+        db: new ReplayStateDb([
+          latestWithoutProvenance,
+          ...rows.bitmapChunks,
+          ...rows.tickChunks,
+        ]),
+        tableName: "PoolState",
+        pools: [pool],
+      }),
+    ).rejects.toThrow(/Invalid latest V4 CL replay-state DynamoDB item/);
+    await expect(
+      batchGetLatestV4ClReplayStates({
+        db: new ReplayStateDb([
+          rows.latest,
+          { ...rows.bitmapChunks[0], stateViewAddress: pool.token0 },
+          ...rows.tickChunks,
+        ]),
+        tableName: "PoolState",
+        pools: [pool],
+      }),
+    ).resolves.toEqual([]);
   });
 
   test("orders event versions by block, transaction index, then log index", () => {

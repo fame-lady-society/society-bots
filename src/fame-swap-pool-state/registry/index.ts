@@ -606,3 +606,10 @@ export function getFamePoolStateRegistryEntry(
     registryAddressKey(input.chainId, input.poolAddress),
   );
 }
+
+export {
+  FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
+  FAME_V4_ZORA_QUOTE_LANE_MANIFEST,
+  FAME_V4_ZORA_REVIEWED_POOL_SHAPE,
+  classifyV4ZoraQuoteLane,
+} from "../v4-zora-manifests.ts";

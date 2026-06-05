@@ -47,6 +47,33 @@ export type FamePoolStateUnsupportedReason =
   | "stable-pool"
   | "unsupported-venue";
 
+export type FamePoolStateV4ZoraQuoteLaneStatus =
+  | "target-eligible"
+  | "target-blocked"
+  | "non-target-v4-unsupported"
+  | "not-uniswap-v4";
+
+export type FamePoolStateV4ZoraProvenanceSource =
+  | "zora-factory-event"
+  | "zora-factory-transaction-trace";
+
+export type FamePoolStateV4ZoraProvenanceEvidence =
+  | {
+      status: "verified";
+      source: FamePoolStateV4ZoraProvenanceSource;
+      chainId: 8453;
+      factoryAddress: Address;
+      coinAddress: Address;
+      poolKey: Hex;
+      poolId: Hex;
+      transactionHash: Hex;
+      eventName: string | null;
+    }
+  | {
+      status: "missing";
+      reason: string;
+    };
+
 export type FamePoolStateFeeDescriptor =
   | {
       status: "available";

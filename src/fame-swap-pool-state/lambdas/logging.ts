@@ -3,6 +3,7 @@ import type {
   FamePoolStateResponseEntry,
 } from "../api.ts";
 import { FAME_SELECTED_CL_REPLAY_CANDIDATE_POOL_ID } from "../cl-reducer-manifests.ts";
+import { FAME_V4_ZORA_QUOTE_LANE_POOL_ID } from "../v4-zora-manifests.ts";
 import type {
   FamePoolQuoteBatchResponse,
   FamePoolQuoteResponseEntry,
@@ -59,9 +60,25 @@ interface SelectedClReplayCandidateQuoteLogSummary extends PoolStateLogFields {
   reasonCounts: Record<string, number>;
 }
 
+interface SelectedV4ZoraReplayLogSummary extends PoolStateLogFields {
+  poolId: string;
+  providerReadCount: number | null;
+  bitmapWordCount: number | null;
+  initializedTickCount: number | null;
+  bitmapChunkCount: number | null;
+  tickChunkCount: number | null;
+  lpFee: string | null;
+  protocolFee: string | null;
+  stateHash: string | null;
+}
+
 type ClReplayResponseEntry = Extract<
   FamePoolStateResponseEntry,
   { stateKind: "cl-replay-v1" }
+>;
+type V4ClReplayResponseEntry = Extract<
+  FamePoolStateResponseEntry,
+  { stateKind: "v4-cl-replay-v1" }
 >;
 
 function statusCounts(response: Pick<FamePoolStateBatchResponse, "pools">) {
@@ -107,10 +124,33 @@ function selectedClReplayCandidateQuoteLogSummary(
   };
 }
 
+function selectedV4ZoraQuoteLogSummary(
+  response: Pick<FamePoolQuoteBatchResponse, "quotes">,
+): SelectedClReplayCandidateQuoteLogSummary | null {
+  const selectedQuotes = response.quotes.filter(
+    (quote) => poolQuotePoolId(quote) === FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
+  );
+  if (selectedQuotes.length === 0) return null;
+
+  const counts = poolQuoteStatusCounts(selectedQuotes);
+  return {
+    poolId: FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
+    returned: selectedQuotes.length,
+    statusCounts: counts.statusCounts,
+    reasonCounts: counts.reasonCounts,
+  };
+}
+
 function isClReplayResponse(
   pool: FamePoolStateResponseEntry,
 ): pool is ClReplayResponseEntry {
   return "stateKind" in pool && pool.stateKind === "cl-replay-v1";
+}
+
+function isV4ClReplayResponse(
+  pool: FamePoolStateResponseEntry,
+): pool is V4ClReplayResponseEntry {
+  return "stateKind" in pool && pool.stateKind === "v4-cl-replay-v1";
 }
 
 function clReplaySummary(
@@ -140,11 +180,41 @@ function clReplaySummary(
   return summary.returned > 0 ? summary : null;
 }
 
+function v4ClReplaySummary(
+  response: Pick<FamePoolStateBatchResponse, "pools">,
+): ClReplayLogSummary | null {
+  const summary: ClReplayLogSummary = {
+    returned: 0,
+    fresh: 0,
+    stale: 0,
+    bitmapWordCount: 0,
+    initializedTickCount: 0,
+    bitmapChunkCount: 0,
+    tickChunkCount: 0,
+  };
+
+  for (const pool of response.pools) {
+    if (!isV4ClReplayResponse(pool)) continue;
+    summary.returned += 1;
+    if (pool.status === "fresh") summary.fresh += 1;
+    if (pool.status === "stale") summary.stale += 1;
+    summary.bitmapWordCount += pool.bitmapWordCount;
+    summary.initializedTickCount += pool.initializedTickCount;
+    summary.bitmapChunkCount += pool.bitmapChunkCount;
+    summary.tickChunkCount += pool.tickChunkCount;
+  }
+
+  return summary.returned > 0 ? summary : null;
+}
+
 export function shouldLogPoolStateApiBatch(
   response: FamePoolStateBatchResponse,
 ): boolean {
   return response.pools.some(
-    (pool) => pool.status !== "fresh" || isClReplayResponse(pool),
+    (pool) =>
+      pool.status !== "fresh" ||
+      isClReplayResponse(pool) ||
+      isV4ClReplayResponse(pool),
   );
 }
 
@@ -161,6 +231,8 @@ export function poolStateApiBatchLogFields(
   };
   const replay = clReplaySummary(response);
   if (replay) fields.clReplay = replay;
+  const v4Replay = v4ClReplaySummary(response);
+  if (v4Replay) fields.v4ClReplay = v4Replay;
   return fields;
 }
 
@@ -180,6 +252,10 @@ export function poolQuoteApiBatchLogFields(
   const selectedCandidate = selectedClReplayCandidateQuoteLogSummary(response);
   if (selectedCandidate) {
     fields.selectedClReplayCandidateQuote = selectedCandidate;
+  }
+  const selectedV4Zora = selectedV4ZoraQuoteLogSummary(response);
+  if (selectedV4Zora) {
+    fields.selectedV4ZoraQuote = selectedV4Zora;
   }
   return fields;
 }
@@ -260,10 +336,31 @@ function indexerResultLogFields(
         stateHash: metric.stateHash,
       }),
     ),
+    v4ClReplaySnapshots: result.v4ClReplaySnapshots,
+    v4ClReplayWrittenPools: result.v4ClReplayWrittenPools,
+    v4ClReplayFailedPools: result.v4ClReplayFailedPools,
+    v4ClReplayFailures: result.v4ClReplayFailures.map((failure) => ({
+      poolId: failure.poolId,
+      message: failure.message,
+    })),
+    v4ClReplayMetrics: result.v4ClReplayMetrics.map((metric) => ({
+      poolId: metric.poolId,
+      bitmapWordCount: metric.bitmapWordCount,
+      initializedTickCount: metric.initializedTickCount,
+      bitmapChunkCount: metric.bitmapChunkCount,
+      tickChunkCount: metric.tickChunkCount,
+      providerReadCount: metric.providerReadCount,
+      durationMs: metric.durationMs,
+      stateHash: metric.stateHash,
+      lpFee: metric.lpFee,
+      protocolFee: metric.protocolFee,
+    })),
     sourceRegistryId: result.sourceRegistryId,
   };
   const selectedCandidate = selectedClReplayCandidateLogSummary(result);
   if (selectedCandidate) fields.selectedClReplayCandidate = selectedCandidate;
+  const selectedV4Zora = selectedV4ZoraReplayLogSummary(result);
+  if (selectedV4Zora) fields.selectedV4ZoraReplay = selectedV4Zora;
   return fields;
 }
 
@@ -294,6 +391,27 @@ function selectedClReplayCandidateLogSummary(
   };
 }
 
+function selectedV4ZoraReplayLogSummary(
+  result: FamePoolStateIndexerResult,
+): SelectedV4ZoraReplayLogSummary | null {
+  const snapshot = result.v4ClReplayMetrics.find(
+    (metric) => metric.poolId === FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
+  );
+  if (!snapshot) return null;
+
+  return {
+    poolId: FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
+    providerReadCount: snapshot.providerReadCount,
+    bitmapWordCount: snapshot.bitmapWordCount,
+    initializedTickCount: snapshot.initializedTickCount,
+    bitmapChunkCount: snapshot.bitmapChunkCount,
+    tickChunkCount: snapshot.tickChunkCount,
+    lpFee: snapshot.lpFee,
+    protocolFee: snapshot.protocolFee,
+    stateHash: snapshot.stateHash,
+  };
+}
+
 export function logPoolStateApiBatch(
   response: FamePoolStateBatchResponse,
 ): void {
@@ -319,7 +437,9 @@ export function logPoolStateIndexerResult(
   result: FamePoolStateIndexerResult,
 ): void {
   writePoolStateLog(
-    result.clReplayFailedPools > 0 ? "error" : "info",
+    result.clReplayFailedPools > 0 || result.v4ClReplayFailedPools > 0
+      ? "error"
+      : "info",
     "fame-pool-state-indexed",
     indexerResultLogFields(result),
   );

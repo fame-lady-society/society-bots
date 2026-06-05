@@ -144,6 +144,55 @@ function mutableRouteLabRows(input: FameDeltaReplaySmokeInput) {
   return input.routeLab;
 }
 
+function quoteApiRouteLabRows(): NonNullable<
+  FameDeltaReplaySmokeInput["routeLab"]
+> {
+  return [
+    {
+      id: "quote-api-basedflick-zora-smoke",
+      mode: "quote-api",
+      status: "ready",
+      requestedRouteId: "solver-fame-basedflick-zora-weth",
+      routeArtifactId: "solver-fame-basedflick-zora-weth",
+      selectedCandidateId: "generated:basedflick-zora-weth",
+      materializedRouteHash:
+        "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      selectedPools: [SELECTED_POOL_ID, LIVE_DEPENDENCY_POOL_ID],
+      quoteContext: "live:8453:123",
+      indexedPoolState: null,
+      quoteApi: {
+        sourceRegistryId: "pool-state-registry-v4:unit",
+        currentBlock: 123,
+        maxFreshnessBlocks: 120,
+        diagnostics: {
+          details: [
+            {
+              poolId: SELECTED_POOL_ID,
+              tokenIn: "0x15e012abf9d32cd67fc6cf480ea0e318e9ed5926",
+              tokenOut: "0xf307e242bfe1ec1ff01a4cef2fdaa81b10a52418",
+              amountIn: "1000",
+              outcome: "used",
+            },
+            {
+              poolId: LIVE_DEPENDENCY_POOL_ID,
+              tokenIn: "0x15e012abf9d32cd67fc6cf480ea0e318e9ed5926",
+              tokenOut: "0x1111111111166b7fe7bd91427724b487980afc69",
+              amountIn: "1000",
+              outcome: "fallback",
+            },
+          ],
+        },
+      },
+      simulation: {
+        status: "passed",
+        account: "0x0000...0abc",
+        output: "990",
+        protectedMinimum: "980",
+      },
+    },
+  ];
+}
+
 function trustedActivationInput(
   overrides: Partial<FameDeltaReplaySmokeInput> = {},
 ): FameDeltaReplaySmokeInput {
@@ -388,10 +437,20 @@ describe("FAME delta replay smoke report", () => {
       providerReadCount: 75,
       compactQuoteUsedCount: 1,
     });
+    expect(report.activationEvidence.v4ZoraActivation).toMatchObject({
+      poolId: LIVE_DEPENDENCY_POOL_ID,
+      status: "pending",
+      provenanceStatus: "missing",
+      parityStatus: "missing",
+      routeSimulationStatus: "missing",
+    });
     expect(report.activationEvidence.routeDependency).toMatchObject({
       routeLabRowId: "basedflick-zora-smoke",
       requestedRouteId: "solver-fame-basedflick-zora-weth",
       routeArtifactId: "solver-fame-basedflick-zora-weth",
+      selectedCandidateId: null,
+      materializedRouteHash: null,
+      routeSimulationStatus: null,
       selectedPoolSource: "raw-replay-indexed",
       liveDependencySource: "live",
       selectedPoolQuote: {
@@ -401,6 +460,9 @@ describe("FAME delta replay smoke report", () => {
       },
       outcome: "raw_replay_with_live_dependency",
       selectedRoutePresent: true,
+      evidenceSourceRegistryId: "pool-state-registry-v4:unit",
+      indexedSourceRegistryId: "pool-state-registry-v4:unit",
+      quoteApiSourceRegistryId: null,
     });
     expect(report.activationEvidence.baseline).toEqual({
       baselineCompactClPoolIds: ["slipstream-usdc-weth-100"],
@@ -430,6 +492,178 @@ describe("FAME delta replay smoke report", () => {
     expect(
       report.activationEvidence.operatorGates.every((gate) => gate.passed),
     ).toBe(true);
+  });
+
+  test("reports active V4 Zora activation only when every V4 gate passes", () => {
+    const report = buildFameDeltaReplaySmokeReport(
+      trustedActivationInput({
+        routeLab: quoteApiRouteLabRows(),
+        v4ZoraActivation: {
+          poolId: LIVE_DEPENDENCY_POOL_ID,
+          status: "active",
+          provenanceStatus: "verified",
+          shapeStatus: "matched",
+          stateStatus: "fresh",
+          quoteStatus: "quoted",
+          parityStatus: "passed",
+          routeSimulationStatus: "passed",
+          directionCoverage: ["BASEDFLICK->ZORA", "ZORA->BASEDFLICK"],
+          sourceRegistryId: "pool-state-registry-v4:unit",
+          evidenceId: "unit-v4-zora-activation",
+          providerReadCount: 82,
+          fallbackCount: 0,
+          unavailableReasons: {},
+          deferredHardening: ["hook-source-verification"],
+        },
+      }),
+    );
+
+    expect(report.activationEvidence.status).toBe("ready");
+    expect(report.activationEvidence.v4ZoraActivation).toMatchObject({
+      poolId: LIVE_DEPENDENCY_POOL_ID,
+      status: "active",
+      provenanceStatus: "verified",
+      shapeStatus: "matched",
+      stateStatus: "fresh",
+      quoteStatus: "quoted",
+      parityStatus: "passed",
+      routeSimulationStatus: "passed",
+      sourceRegistryId: "pool-state-registry-v4:unit",
+      evidenceId: "unit-v4-zora-activation",
+      providerReadCount: 82,
+      fallbackCount: 0,
+      deferredHardening: ["hook-source-verification"],
+    });
+    expect(
+      report.activationEvidence.v4ZoraActivation.gates.every(
+        (gate) => gate.passed,
+      ),
+    ).toBe(true);
+  });
+
+  test("blocks active V4 Zora activation when parity or simulation evidence is missing", () => {
+    const report = buildFameDeltaReplaySmokeReport(
+      trustedActivationInput({
+        v4ZoraActivation: {
+          poolId: LIVE_DEPENDENCY_POOL_ID,
+          status: "active",
+          provenanceStatus: "verified",
+          shapeStatus: "matched",
+          stateStatus: "fresh",
+          quoteStatus: "quoted",
+          parityStatus: "missing",
+          routeSimulationStatus: "missing",
+          directionCoverage: ["BASEDFLICK->ZORA"],
+          sourceRegistryId: "pool-state-registry-v4:unit",
+          evidenceId: "unit-v4-zora-activation",
+          providerReadCount: 82,
+        },
+      }),
+    );
+
+    expect(report.activationEvidence.status).toBe("blocked");
+    expect(report.activationEvidence.validationErrors).toContain(
+      "V4 Zora activation is active but one or more V4 gates failed.",
+    );
+    expect(
+      report.activationEvidence.v4ZoraActivation.gates.filter(
+        (gate) => !gate.passed,
+      ),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "v4_zora_parity_passed" }),
+        expect.objectContaining({ name: "v4_zora_route_simulation_passed" }),
+        expect.objectContaining({ name: "v4_zora_direction_coverage" }),
+      ]),
+    );
+  });
+
+  test("accepts actual quote-api route-lab rows as activation route evidence", () => {
+    const report = buildFameDeltaReplaySmokeReport(
+      trustedActivationInput({
+        routeLab: quoteApiRouteLabRows(),
+      }),
+    );
+
+    expect(report.activationEvidence.status).toBe("ready");
+    expect(report.activationEvidence.routeDependency).toMatchObject({
+      routeLabRowId: "quote-api-basedflick-zora-smoke",
+      selectedCandidateId: "generated:basedflick-zora-weth",
+      materializedRouteHash:
+        "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      routeSimulationStatus: "passed",
+      selectedPoolSource: "compact-indexed",
+      liveDependencySource: "live",
+      outcome: "compact_quote_with_live_dependency",
+      selectedRoutePresent: true,
+      evidenceSourceRegistryId: "pool-state-registry-v4:unit",
+      indexedSourceRegistryId: null,
+      quoteApiSourceRegistryId: "pool-state-registry-v4:unit",
+    });
+  });
+
+  test("blocks active V4 Zora activation when one quote direction is missing", () => {
+    const report = buildFameDeltaReplaySmokeReport(
+      trustedActivationInput({
+        routeLab: quoteApiRouteLabRows(),
+        v4ZoraActivation: {
+          poolId: LIVE_DEPENDENCY_POOL_ID,
+          status: "active",
+          provenanceStatus: "verified",
+          shapeStatus: "matched",
+          stateStatus: "fresh",
+          quoteStatus: "quoted",
+          parityStatus: "passed",
+          routeSimulationStatus: "passed",
+          directionCoverage: ["BASEDFLICK->ZORA"],
+          sourceRegistryId: "pool-state-registry-v4:unit",
+          evidenceId: "unit-v4-zora-activation",
+          providerReadCount: 82,
+        },
+      }),
+    );
+
+    expect(report.activationEvidence.status).toBe("blocked");
+    expect(
+      report.activationEvidence.v4ZoraActivation.gates.find(
+        (gate) => gate.name === "v4_zora_direction_coverage",
+      ),
+    ).toMatchObject({
+      passed: false,
+      detail: "missing ZORA->BASEDFLICK",
+    });
+    expect(report.activationEvidence.validationErrors).toContain(
+      "V4 Zora activation is active but one or more V4 gates failed.",
+    );
+  });
+
+  test("blocks active V4 Zora activation when route-lab simulation is not bound", () => {
+    const report = buildFameDeltaReplaySmokeReport(
+      trustedActivationInput({
+        v4ZoraActivation: {
+          poolId: LIVE_DEPENDENCY_POOL_ID,
+          status: "active",
+          provenanceStatus: "verified",
+          shapeStatus: "matched",
+          stateStatus: "fresh",
+          quoteStatus: "quoted",
+          parityStatus: "passed",
+          routeSimulationStatus: "passed",
+          directionCoverage: ["BASEDFLICK->ZORA", "ZORA->BASEDFLICK"],
+          sourceRegistryId: "pool-state-registry-v4:unit",
+          evidenceId: "unit-v4-zora-activation",
+          providerReadCount: 82,
+        },
+      }),
+    );
+
+    expect(report.activationEvidence.status).toBe("blocked");
+    expect(report.activationEvidence.validationErrors).toEqual(
+      expect.arrayContaining([
+        "Active V4 Zora activation requires passed route-lab simulation evidence.",
+        "Active V4 Zora activation requires bound route-lab route evidence.",
+      ]),
+    );
   });
 
   test("derives non-promotion groups from the activation report without named pool gates", () => {

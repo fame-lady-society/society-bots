@@ -12,8 +12,13 @@ import type { FamePoolActivationStatus } from "../src/fame-swap-pool-state/types
 
 const SELECTED_CL_ACTIVATION_CANDIDATE = "slipstream-basedflick-fame";
 const LIVE_ROUTE_DEPENDENCY = "uniswap-v4-basedflick-zora";
+const TARGET_V4_ZORA_POOL_ID = "uniswap-v4-basedflick-zora";
 const BASELINE_CL_COMPACT_POOL_ID = "slipstream-usdc-weth-100";
 const DEFAULT_PROVIDER_READ_THRESHOLD = 1_000;
+const REQUIRED_V4_ZORA_DIRECTION_COVERAGE = [
+  "BASEDFLICK->ZORA",
+  "ZORA->BASEDFLICK",
+] as const;
 const FAME_UPSTREAM_POOL_UNIVERSE_POOL_IDS = [
   "aerodrome-v2-usdc-weth",
   "scale-equalizer-frxusd-fame",
@@ -67,6 +72,7 @@ export interface FameDeltaReplaySmokeInput {
   quoteResponse?: FamePoolQuoteBatchResponse;
   routeLab?: FameRouteLabEvidenceInput;
   activationReport?: FamePoolActivationReportEvidenceInput;
+  v4ZoraActivation?: FameV4ZoraActivationEvidenceInput;
   providerReadThreshold?: number;
 }
 
@@ -92,19 +98,45 @@ export interface FameRouteLabEvidenceRow {
   status: string;
   requestedRouteId?: string | null;
   routeArtifactId?: string | null;
+  selectedCandidateId?: string | null;
+  materializedRouteHash?: string | null;
   selectedPools: string[];
   selectedQuoteSources: FameRouteLabSelectedQuoteSourceEvidence[];
   selectedActivation: FameRouteLabSelectedActivationEvidence | null;
+  quoteContext?: string | null;
   indexedPoolState?: {
     sourceRegistryId?: string;
     currentBlock?: number;
     effectiveMaxFreshnessBlocks?: number;
   } | null;
+  quoteApi?: FameRouteLabQuoteApiEvidence | null;
+  simulation?: FameRouteLabSimulationEvidence | null;
 }
 
 export type FameRouteLabEvidenceInput =
-  | FameRouteLabEvidenceRow[]
-  | { rows: FameRouteLabEvidenceRow[] };
+  | readonly unknown[]
+  | { rows: readonly unknown[] };
+
+export interface FameRouteLabQuoteApiEvidence {
+  sourceRegistryId: string;
+  currentBlock: number;
+  maxFreshnessBlocks?: number | null;
+  diagnostics?: {
+    details?: readonly FameRouteLabQuoteApiDetailEvidence[];
+  };
+}
+
+export interface FameRouteLabQuoteApiDetailEvidence {
+  poolId: string;
+  tokenIn: string;
+  tokenOut: string;
+  amountIn: string;
+  outcome: string;
+}
+
+export interface FameRouteLabSimulationEvidence {
+  status: string;
+}
 
 export interface FameActivationReportPoolEvidence {
   poolId: string;
@@ -129,6 +161,28 @@ export interface FamePoolActivationReportEvidenceInput {
   statusCounts?: Partial<Record<FamePoolActivationStatus, number>>;
 }
 
+export interface FameV4ZoraActivationEvidenceInput {
+  poolId: string;
+  status: "active" | "blocked" | "pending";
+  provenanceStatus:
+    | "verified"
+    | "missing"
+    | "mismatch"
+    | "not-applicable";
+  shapeStatus: "matched" | "mismatch" | "unknown";
+  stateStatus: "fresh" | "stale" | "missing" | "incomplete";
+  quoteStatus: "quoted" | "unavailable" | "missing";
+  parityStatus: "passed" | "failed" | "missing";
+  routeSimulationStatus: "passed" | "failed" | "missing";
+  directionCoverage: readonly string[];
+  sourceRegistryId?: string;
+  evidenceId?: string;
+  providerReadCount?: number;
+  fallbackCount?: number;
+  unavailableReasons?: Partial<Record<FamePoolQuoteUnavailableReason, number>>;
+  deferredHardening?: readonly string[];
+}
+
 interface FameEvidenceGate {
   name: string;
   passed: boolean;
@@ -139,8 +193,11 @@ interface FameRouteDependencyEvidence {
   routeLabRowId: string | null;
   requestedRouteId: string | null;
   routeArtifactId: string | null;
+  selectedCandidateId: string | null;
+  materializedRouteHash: string | null;
   routeLabMode: string | null;
   routeLabStatus: string | null;
+  routeSimulationStatus: string | null;
   selectedPools: string[];
   selectedPoolSource: string | null;
   liveDependencySource: string | null;
@@ -151,7 +208,9 @@ interface FameRouteDependencyEvidence {
   } | null;
   outcome: string | null;
   selectedRoutePresent: boolean;
+  evidenceSourceRegistryId: string | null;
   indexedSourceRegistryId: string | null;
+  quoteApiSourceRegistryId: string | null;
   indexedCurrentBlock: number | null;
 }
 
@@ -191,10 +250,30 @@ export interface FameDeltaReplayActivationEvidence {
   validationErrors: string[];
   providerReadThreshold: number;
   selectedCandidate: FameSelectedCandidateEvidence;
+  v4ZoraActivation: FameV4ZoraActivationEvidence;
   routeDependency: FameRouteDependencyEvidence;
   baseline: FameActivationBaselineEvidence;
   nonPromotion: FameActivationNonPromotionEvidence;
   operatorGates: FameEvidenceGate[];
+}
+
+export interface FameV4ZoraActivationEvidence {
+  poolId: string;
+  status: "active" | "blocked" | "pending";
+  provenanceStatus: FameV4ZoraActivationEvidenceInput["provenanceStatus"];
+  shapeStatus: FameV4ZoraActivationEvidenceInput["shapeStatus"];
+  stateStatus: FameV4ZoraActivationEvidenceInput["stateStatus"];
+  quoteStatus: FameV4ZoraActivationEvidenceInput["quoteStatus"];
+  parityStatus: FameV4ZoraActivationEvidenceInput["parityStatus"];
+  routeSimulationStatus: FameV4ZoraActivationEvidenceInput["routeSimulationStatus"];
+  directionCoverage: string[];
+  sourceRegistryId: string | null;
+  evidenceId: string | null;
+  providerReadCount: number | null;
+  fallbackCount: number | null;
+  unavailableReasons: Partial<Record<FamePoolQuoteUnavailableReason, number>>;
+  deferredHardening: string[];
+  gates: FameEvidenceGate[];
 }
 
 export interface FameDeltaReplaySmokeReport {
@@ -349,6 +428,34 @@ function optionalStringValue(value: unknown, name: string): string | undefined {
   return stringValue(value, name);
 }
 
+function stringEnumValue<T extends readonly string[]>(
+  value: unknown,
+  name: string,
+  allowed: T,
+): T[number] {
+  const parsed = stringValue(value, name);
+  if (!allowed.includes(parsed)) {
+    throw new Error(`${name} must be one of ${allowed.join(", ")}.`);
+  }
+  return parsed;
+}
+
+function unavailableReasonCountsValue(
+  value: unknown,
+  name: string,
+): Partial<Record<FamePoolQuoteUnavailableReason, number>> | undefined {
+  if (value === undefined) return undefined;
+  const record = objectValue(value, name);
+  const counts: Partial<Record<FamePoolQuoteUnavailableReason, number>> = {};
+  for (const [reason, count] of Object.entries(record)) {
+    counts[reason as FamePoolQuoteUnavailableReason] = numberValue(
+      count,
+      `${name}.${reason}`,
+    );
+  }
+  return counts;
+}
+
 function activationStatusCountsValue(
   value: unknown,
   name: string,
@@ -369,6 +476,119 @@ function activationStatusCountsValue(
   return counts;
 }
 
+function routeLabFallbackSource(quoteContext: string | null): string {
+  if (!quoteContext) return "fallback";
+  if (quoteContext.startsWith("live:")) return "live";
+  if (quoteContext.startsWith("recorded:")) return "recorded";
+  if (quoteContext.startsWith("indexed:")) return "indexed";
+  if (quoteContext.startsWith("deterministic-test:")) return "deterministic";
+  return "fallback";
+}
+
+function routeLabQuoteApiSource(
+  outcome: string,
+  quoteContext: string | null,
+): string | null {
+  if (outcome === "used") return "compact-indexed";
+  if (outcome === "fallback") return routeLabFallbackSource(quoteContext);
+  return null;
+}
+
+function routeLabQuoteApiValue(
+  value: unknown,
+  path: string,
+): FameRouteLabQuoteApiEvidence | null {
+  if (value === null || value === undefined) return null;
+  const quoteApi = objectValue(value, path);
+  const diagnostics =
+    quoteApi.diagnostics === undefined || quoteApi.diagnostics === null
+      ? undefined
+      : (() => {
+          const diagnosticRecord = objectValue(
+            quoteApi.diagnostics,
+            `${path}.diagnostics`,
+          );
+          const details =
+            diagnosticRecord.details === undefined
+              ? []
+              : arrayValue(
+                  diagnosticRecord.details,
+                  `${path}.diagnostics.details`,
+                ).map((detailValue, detailIndex) => {
+                  const detailPath = `${path}.diagnostics.details[${detailIndex.toString()}]`;
+                  const detail = objectValue(detailValue, detailPath);
+                  return {
+                    poolId: stringValue(detail.poolId, `${detailPath}.poolId`),
+                    tokenIn: stringValue(
+                      detail.tokenIn,
+                      `${detailPath}.tokenIn`,
+                    ),
+                    tokenOut: stringValue(
+                      detail.tokenOut,
+                      `${detailPath}.tokenOut`,
+                    ),
+                    amountIn: stringValue(
+                      detail.amountIn,
+                      `${detailPath}.amountIn`,
+                    ),
+                    outcome: stringValue(
+                      detail.outcome,
+                      `${detailPath}.outcome`,
+                    ),
+                  };
+                });
+          return { details };
+        })();
+  return {
+    sourceRegistryId: stringValue(
+      quoteApi.sourceRegistryId,
+      `${path}.sourceRegistryId`,
+    ),
+    currentBlock: numberValue(quoteApi.currentBlock, `${path}.currentBlock`),
+    maxFreshnessBlocks:
+      quoteApi.maxFreshnessBlocks === null
+        ? null
+        : optionalNumberValue(
+            quoteApi.maxFreshnessBlocks,
+            `${path}.maxFreshnessBlocks`,
+          ),
+    ...(diagnostics === undefined ? {} : { diagnostics }),
+  };
+}
+
+function routeLabSimulationValue(
+  value: unknown,
+  path: string,
+): FameRouteLabSimulationEvidence | null {
+  if (value === null || value === undefined) return null;
+  const simulation = objectValue(value, path);
+  return {
+    status: stringValue(simulation.status, `${path}.status`),
+  };
+}
+
+function selectedQuoteSourcesFromQuoteApi(
+  quoteApi: FameRouteLabQuoteApiEvidence | null,
+  quoteContext: string | null,
+): FameRouteLabSelectedQuoteSourceEvidence[] {
+  return (
+    quoteApi?.diagnostics?.details
+      ?.flatMap((detail): FameRouteLabSelectedQuoteSourceEvidence[] => {
+        const source = routeLabQuoteApiSource(detail.outcome, quoteContext);
+        if (!source) return [];
+        return [
+          {
+            poolId: detail.poolId,
+            source,
+            tokenIn: detail.tokenIn,
+            tokenOut: detail.tokenOut,
+            amountIn: detail.amountIn,
+          },
+        ];
+      }) ?? []
+  );
+}
+
 function routeLabRowsValue(
   value: unknown,
   name: string,
@@ -380,26 +600,38 @@ function routeLabRowsValue(
   return rowsValue.map((rowValue, index) => {
     const path = `${name}.rows[${index.toString()}]`;
     const row = objectValue(rowValue, path);
-    const selectedQuoteSources = arrayValue(
-      row.selectedQuoteSources,
-      `${path}.selectedQuoteSources`,
-    ).map((sourceValue, sourceIndex) => {
-      const sourcePath = `${path}.selectedQuoteSources[${sourceIndex.toString()}]`;
-      const source = objectValue(sourceValue, sourcePath);
-      return {
-        poolId: stringValue(source.poolId, `${sourcePath}.poolId`),
-        source: stringValue(source.source, `${sourcePath}.source`),
-        tokenIn:
-          optionalStringValue(source.tokenIn, `${sourcePath}.tokenIn`) ??
-          undefined,
-        tokenOut:
-          optionalStringValue(source.tokenOut, `${sourcePath}.tokenOut`) ??
-          undefined,
-        amountIn:
-          optionalStringValue(source.amountIn, `${sourcePath}.amountIn`) ??
-          undefined,
-      };
-    });
+    const quoteContext =
+      row.quoteContext === null || row.quoteContext === undefined
+        ? null
+        : stringValue(row.quoteContext, `${path}.quoteContext`);
+    const quoteApi = routeLabQuoteApiValue(row.quoteApi, `${path}.quoteApi`);
+    const selectedQuoteSources =
+      row.selectedQuoteSources === undefined
+        ? selectedQuoteSourcesFromQuoteApi(quoteApi, quoteContext)
+        : arrayValue(
+            row.selectedQuoteSources,
+            `${path}.selectedQuoteSources`,
+          ).map((sourceValue, sourceIndex) => {
+            const sourcePath = `${path}.selectedQuoteSources[${sourceIndex.toString()}]`;
+            const source = objectValue(sourceValue, sourcePath);
+            return {
+              poolId: stringValue(source.poolId, `${sourcePath}.poolId`),
+              source: stringValue(source.source, `${sourcePath}.source`),
+              tokenIn:
+                optionalStringValue(source.tokenIn, `${sourcePath}.tokenIn`) ??
+                undefined,
+              tokenOut:
+                optionalStringValue(
+                  source.tokenOut,
+                  `${sourcePath}.tokenOut`,
+                ) ?? undefined,
+              amountIn:
+                optionalStringValue(
+                  source.amountIn,
+                  `${sourcePath}.amountIn`,
+                ) ?? undefined,
+            };
+          });
     const selectedActivation =
       row.selectedActivation === null || row.selectedActivation === undefined
         ? null
@@ -470,13 +702,28 @@ function routeLabRowsValue(
         row.routeArtifactId === null || row.routeArtifactId === undefined
           ? null
           : stringValue(row.routeArtifactId, `${path}.routeArtifactId`),
+      selectedCandidateId:
+        row.selectedCandidateId === null || row.selectedCandidateId === undefined
+          ? null
+          : stringValue(row.selectedCandidateId, `${path}.selectedCandidateId`),
+      materializedRouteHash:
+        row.materializedRouteHash === null ||
+        row.materializedRouteHash === undefined
+          ? null
+          : stringValue(
+              row.materializedRouteHash,
+              `${path}.materializedRouteHash`,
+            ),
       selectedPools: arrayValue(row.selectedPools, `${path}.selectedPools`).map(
         (poolId, poolIndex) =>
           stringValue(poolId, `${path}.selectedPools[${poolIndex.toString()}]`),
       ),
       selectedQuoteSources,
       selectedActivation,
+      quoteContext,
       indexedPoolState,
+      quoteApi,
+      simulation: routeLabSimulationValue(row.simulation, `${path}.simulation`),
     };
   });
 }
@@ -576,6 +823,91 @@ function activationReportValue(
   };
 }
 
+function v4ZoraActivationValue(
+  value: unknown,
+): FameV4ZoraActivationEvidenceInput | undefined {
+  if (value === undefined) return undefined;
+  const input = objectValue(value, "v4ZoraActivation");
+  return {
+    poolId: stringValue(input.poolId, "v4ZoraActivation.poolId"),
+    status: stringEnumValue(input.status, "v4ZoraActivation.status", [
+      "active",
+      "blocked",
+      "pending",
+    ] as const),
+    provenanceStatus: stringEnumValue(
+      input.provenanceStatus,
+      "v4ZoraActivation.provenanceStatus",
+      ["verified", "missing", "mismatch", "not-applicable"] as const,
+    ),
+    shapeStatus: stringEnumValue(
+      input.shapeStatus,
+      "v4ZoraActivation.shapeStatus",
+      ["matched", "mismatch", "unknown"] as const,
+    ),
+    stateStatus: stringEnumValue(
+      input.stateStatus,
+      "v4ZoraActivation.stateStatus",
+      ["fresh", "stale", "missing", "incomplete"] as const,
+    ),
+    quoteStatus: stringEnumValue(
+      input.quoteStatus,
+      "v4ZoraActivation.quoteStatus",
+      ["quoted", "unavailable", "missing"] as const,
+    ),
+    parityStatus: stringEnumValue(
+      input.parityStatus,
+      "v4ZoraActivation.parityStatus",
+      ["passed", "failed", "missing"] as const,
+    ),
+    routeSimulationStatus: stringEnumValue(
+      input.routeSimulationStatus,
+      "v4ZoraActivation.routeSimulationStatus",
+      ["passed", "failed", "missing"] as const,
+    ),
+    directionCoverage: arrayValue(
+      input.directionCoverage,
+      "v4ZoraActivation.directionCoverage",
+    ).map((direction, index) =>
+      stringValue(
+        direction,
+        `v4ZoraActivation.directionCoverage[${index.toString()}]`,
+      ),
+    ),
+    sourceRegistryId:
+      optionalStringValue(
+        input.sourceRegistryId,
+        "v4ZoraActivation.sourceRegistryId",
+      ) ?? undefined,
+    evidenceId:
+      optionalStringValue(input.evidenceId, "v4ZoraActivation.evidenceId") ??
+      undefined,
+    providerReadCount:
+      optionalNonNegativeNumberValue(
+        input.providerReadCount,
+        "v4ZoraActivation.providerReadCount",
+      ) ?? undefined,
+    fallbackCount:
+      optionalNonNegativeNumberValue(
+        input.fallbackCount,
+        "v4ZoraActivation.fallbackCount",
+      ) ?? undefined,
+    unavailableReasons:
+      unavailableReasonCountsValue(
+        input.unavailableReasons,
+        "v4ZoraActivation.unavailableReasons",
+      ) ?? undefined,
+    deferredHardening: Array.isArray(input.deferredHardening)
+      ? input.deferredHardening.map((item, index) =>
+          stringValue(
+            item,
+            `v4ZoraActivation.deferredHardening[${index.toString()}]`,
+          ),
+        )
+      : undefined,
+  };
+}
+
 function validateSmokeInput(value: unknown): FameDeltaReplaySmokeInput {
   const input = objectValue(value, "Delta replay smoke input");
   const indexer = objectValue(input.indexer, "indexer");
@@ -618,6 +950,7 @@ function validateSmokeInput(value: unknown): FameDeltaReplaySmokeInput {
       | undefined,
     routeLab: routeLabRowsValue(input.routeLab, "routeLab"),
     activationReport: activationReportValue(input.activationReport),
+    v4ZoraActivation: v4ZoraActivationValue(input.v4ZoraActivation),
     ...(providerReadThreshold === undefined ? {} : { providerReadThreshold }),
   };
 }
@@ -626,7 +959,7 @@ function routeLabRows(
   input: FameRouteLabEvidenceInput | undefined,
 ): FameRouteLabEvidenceRow[] {
   if (!input) return [];
-  return Array.isArray(input) ? input : input.rows;
+  return routeLabRowsValue(input, "routeLab") ?? [];
 }
 
 function selectedRouteDependency(
@@ -652,19 +985,31 @@ function selectedRouteDependency(
   const selectedSource = row?.selectedQuoteSources.find(
     (source) => source.poolId === selectedPoolId,
   );
+  const selectedPoolSource =
+    row?.selectedActivation?.selectedPoolSource ?? sourceFor(selectedPoolId);
+  const liveDependencySource =
+    row?.selectedActivation?.liveDependencySource ??
+    sourceFor(liveDependencyPoolId);
+  const inferredOutcome =
+    selectedPoolSource === "compact-indexed" && liveDependencySource === "live"
+      ? "compact_quote_with_live_dependency"
+      : selectedPoolSource === "raw-replay-indexed" &&
+          liveDependencySource === "live"
+        ? "raw_replay_with_live_dependency"
+        : null;
 
   return {
     routeLabRowId: row?.id ?? null,
     requestedRouteId: row?.requestedRouteId ?? null,
     routeArtifactId: row?.routeArtifactId ?? null,
+    selectedCandidateId: row?.selectedCandidateId ?? null,
+    materializedRouteHash: row?.materializedRouteHash ?? null,
     routeLabMode: row?.mode ?? null,
     routeLabStatus: row?.status ?? null,
+    routeSimulationStatus: row?.simulation?.status ?? null,
     selectedPools: row?.selectedPools ?? [],
-    selectedPoolSource:
-      row?.selectedActivation?.selectedPoolSource ?? sourceFor(selectedPoolId),
-    liveDependencySource:
-      row?.selectedActivation?.liveDependencySource ??
-      sourceFor(liveDependencyPoolId),
+    selectedPoolSource,
+    liveDependencySource,
     selectedPoolQuote:
       selectedSource?.tokenIn &&
       selectedSource.tokenOut &&
@@ -675,12 +1020,17 @@ function selectedRouteDependency(
             amountIn: selectedSource.amountIn,
           }
         : null,
-    outcome: row?.selectedActivation?.outcome ?? null,
+    outcome: row?.selectedActivation?.outcome ?? inferredOutcome,
     selectedRoutePresent:
       row?.status === "ready" &&
       row.selectedPools.includes(selectedPoolId) &&
       row.selectedPools.includes(liveDependencyPoolId),
+    evidenceSourceRegistryId:
+      row?.indexedPoolState?.sourceRegistryId ??
+      row?.quoteApi?.sourceRegistryId ??
+      null,
     indexedSourceRegistryId: row?.indexedPoolState?.sourceRegistryId ?? null,
+    quoteApiSourceRegistryId: row?.quoteApi?.sourceRegistryId ?? null,
     indexedCurrentBlock: row?.indexedPoolState?.currentBlock ?? null,
   };
 }
@@ -766,6 +1116,147 @@ function selectedCompactClQuoteUsedCount(
         quote.amountIn === selectedQuote.amountIn,
     ).length ?? 0
   );
+}
+
+function defaultV4ZoraActivationEvidence(): FameV4ZoraActivationEvidence {
+  return {
+    poolId: TARGET_V4_ZORA_POOL_ID,
+    status: "pending",
+    provenanceStatus: "missing",
+    shapeStatus: "unknown",
+    stateStatus: "missing",
+    quoteStatus: "missing",
+    parityStatus: "missing",
+    routeSimulationStatus: "missing",
+    directionCoverage: [],
+    sourceRegistryId: null,
+    evidenceId: null,
+    providerReadCount: null,
+    fallbackCount: null,
+    unavailableReasons: {},
+    deferredHardening: [],
+    gates: [],
+  };
+}
+
+function v4ZoraActivationEvidence(
+  input: FameV4ZoraActivationEvidenceInput | undefined,
+  expectedSourceRegistryId: string,
+  providerReadThreshold: number,
+): FameV4ZoraActivationEvidence {
+  const base = input
+    ? {
+        poolId: input.poolId,
+        status: input.status,
+        provenanceStatus: input.provenanceStatus,
+        shapeStatus: input.shapeStatus,
+        stateStatus: input.stateStatus,
+        quoteStatus: input.quoteStatus,
+        parityStatus: input.parityStatus,
+        routeSimulationStatus: input.routeSimulationStatus,
+        directionCoverage: sortedStrings(input.directionCoverage),
+        sourceRegistryId: input.sourceRegistryId ?? null,
+        evidenceId: input.evidenceId ?? null,
+        providerReadCount: input.providerReadCount ?? null,
+        fallbackCount: input.fallbackCount ?? null,
+        unavailableReasons: input.unavailableReasons ?? {},
+        deferredHardening: sortedStrings(input.deferredHardening ?? []),
+      }
+    : defaultV4ZoraActivationEvidence();
+  const providerReadsWithinThreshold =
+    base.providerReadCount !== null &&
+    base.providerReadCount <= providerReadThreshold;
+  const missingDirections = REQUIRED_V4_ZORA_DIRECTION_COVERAGE.filter(
+    (direction) => !base.directionCoverage.includes(direction),
+  );
+  const unexpectedDirections = base.directionCoverage.filter(
+    (direction) =>
+      !REQUIRED_V4_ZORA_DIRECTION_COVERAGE.includes(
+        direction as (typeof REQUIRED_V4_ZORA_DIRECTION_COVERAGE)[number],
+      ),
+  );
+  const directionCoveragePassed =
+    missingDirections.length === 0 && unexpectedDirections.length === 0;
+  const gates: FameEvidenceGate[] = [
+    {
+      name: "v4_zora_target_pool",
+      passed: base.poolId === TARGET_V4_ZORA_POOL_ID,
+      detail: base.poolId,
+    },
+    {
+      name: "v4_zora_provenance_verified",
+      passed: base.provenanceStatus === "verified",
+      detail: base.provenanceStatus,
+    },
+    {
+      name: "v4_zora_shape_matched",
+      passed: base.shapeStatus === "matched",
+      detail: base.shapeStatus,
+    },
+    {
+      name: "v4_zora_state_fresh",
+      passed: base.stateStatus === "fresh",
+      detail: base.stateStatus,
+    },
+    {
+      name: "v4_zora_quote_available",
+      passed: base.quoteStatus === "quoted",
+      detail: base.quoteStatus,
+    },
+    {
+      name: "v4_zora_parity_passed",
+      passed: base.parityStatus === "passed",
+      detail: base.parityStatus,
+    },
+    {
+      name: "v4_zora_route_simulation_passed",
+      passed: base.routeSimulationStatus === "passed",
+      detail: base.routeSimulationStatus,
+    },
+    {
+      name: "v4_zora_source_registry_matches",
+      passed: base.sourceRegistryId === expectedSourceRegistryId,
+      detail: base.sourceRegistryId ?? "missing",
+    },
+    {
+      name: "v4_zora_provider_reads_within_threshold",
+      passed: providerReadsWithinThreshold,
+      detail:
+        base.providerReadCount === null
+          ? "missing"
+          : `${base.providerReadCount.toString()} <= ${providerReadThreshold.toString()}`,
+    },
+    {
+      name: "v4_zora_direction_coverage",
+      passed: directionCoveragePassed,
+      detail:
+        directionCoveragePassed
+          ? base.directionCoverage.join(", ")
+          : [
+              missingDirections.length > 0
+                ? `missing ${missingDirections.join(", ")}`
+                : null,
+              unexpectedDirections.length > 0
+                ? `unexpected ${unexpectedDirections.join(", ")}`
+                : null,
+            ]
+              .filter((part): part is string => part !== null)
+              .join("; ") || "missing",
+    },
+    {
+      name: "v4_zora_evidence_id_present",
+      passed: base.evidenceId !== null && base.evidenceId.length > 0,
+      detail: base.evidenceId ?? "missing",
+    },
+  ];
+  return {
+    ...base,
+    status:
+      base.status === "active" && gates.every((gate) => gate.passed)
+        ? "active"
+        : base.status,
+    gates,
+  };
 }
 
 function sortedStrings(values: readonly string[]): string[] {
@@ -895,9 +1386,14 @@ function buildActivationEvidence({
     routeDependency,
     selectedPoolId,
   );
+  const v4ZoraActivation = v4ZoraActivationEvidence(
+    input.v4ZoraActivation,
+    input.indexer.sourceRegistryId,
+    providerReadThreshold,
+  );
   const sourceRegistryCompatible =
     input.quoteResponse?.sourceRegistryId === input.indexer.sourceRegistryId &&
-    routeDependency.indexedSourceRegistryId === input.indexer.sourceRegistryId;
+    routeDependency.evidenceSourceRegistryId === input.indexer.sourceRegistryId;
 
   const selectedCandidate: FameSelectedCandidateEvidence = {
     poolId: selectedPoolId,
@@ -984,6 +1480,30 @@ function buildActivationEvidence({
   ];
 
   const validationErrors: string[] = [...activationReportErrors];
+  if (
+    input.v4ZoraActivation?.status === "active" &&
+    !v4ZoraActivation.gates.every((gate) => gate.passed)
+  ) {
+    validationErrors.push(
+      "V4 Zora activation is active but one or more V4 gates failed.",
+    );
+  }
+  if (input.v4ZoraActivation?.status === "active") {
+    if (routeDependency.routeSimulationStatus !== "passed") {
+      validationErrors.push(
+        "Active V4 Zora activation requires passed route-lab simulation evidence.",
+      );
+    }
+    if (
+      !routeDependency.selectedPools.includes(liveDependencyPoolId) ||
+      !routeDependency.selectedCandidateId ||
+      !routeDependency.materializedRouteHash
+    ) {
+      validationErrors.push(
+        "Active V4 Zora activation requires bound route-lab route evidence.",
+      );
+    }
+  }
   if (!selectedActivation?.activationStatus) {
     validationErrors.push(`Missing activation status for ${selectedPoolId}.`);
   } else if (
@@ -1057,6 +1577,7 @@ function buildActivationEvidence({
     validationErrors,
     providerReadThreshold,
     selectedCandidate,
+    v4ZoraActivation,
     routeDependency,
     baseline,
     nonPromotion,

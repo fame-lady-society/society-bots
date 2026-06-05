@@ -1,9 +1,27 @@
 import { describe, expect, test } from "@jest/globals";
 import {
+  FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
+  classifyV4ZoraQuoteLane,
   famePoolStateRegistry,
   getFamePoolStateRegistryEntry,
   parseFamePoolStateRegistry,
 } from "./index.ts";
+import type { FamePoolStateV4ZoraProvenanceEvidence } from "../types.ts";
+
+const VERIFIED_V4_ZORA_PROVENANCE = {
+  status: "verified",
+  source: "zora-factory-event",
+  chainId: 8453,
+  factoryAddress: "0x0000000000000000000000000000000000000001",
+  coinAddress: "0x15e012abf9d32cd67fc6cf480ea0e318e9ed5926",
+  poolKey:
+    "0x0fe6333346fcd0ffa4be3fda91f271bda52c6755f604b06483b709666d363628",
+  poolId:
+    "0x0fe6333346fcd0ffa4be3fda91f271bda52c6755f604b06483b709666d363628",
+  transactionHash:
+    "0x2222222222222222222222222222222222222222222222222222222222222222",
+  eventName: "CoinCreatedV4",
+} as const satisfies FamePoolStateV4ZoraProvenanceEvidence;
 
 function registryWithFirstPool(overrides: Record<string, unknown>): unknown {
   const [firstPool, ...remainingPools] = famePoolStateRegistry.pools;
@@ -117,6 +135,34 @@ describe("FAME swap pool-state registry", () => {
     expect(v4Dependency?.capability).toBe("market-state");
     expect(v4Dependency?.activationStatus).toBe("unsupported");
     expect(v4Dependency?.replaySurface).toBeNull();
+  });
+
+  test("classifies only BASEDFLICK/ZORA as the reviewed V4 Zora quote lane", () => {
+    const target = getFamePoolStateRegistryEntry({
+      poolId: FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
+    });
+    const otherV4 = getFamePoolStateRegistryEntry({
+      poolId: "uniswap-v4-usdc-eth",
+    });
+    if (!target || !otherV4) {
+      throw new Error("Generated registry missing V4 fixtures.");
+    }
+
+    expect(classifyV4ZoraQuoteLane(target)).toMatchObject({
+      status: "target-blocked",
+      reason: "missing-provenance",
+    });
+    expect(
+      classifyV4ZoraQuoteLane(target, VERIFIED_V4_ZORA_PROVENANCE),
+    ).toMatchObject({
+      status: "target-eligible",
+    });
+    expect(
+      classifyV4ZoraQuoteLane(otherV4, VERIFIED_V4_ZORA_PROVENANCE),
+    ).toMatchObject({
+      status: "non-target-v4-unsupported",
+      reason: "non-target-v4-pool",
+    });
   });
 
   test("marks only activation-approved Slipstream v1 rows as replay-capable", () => {

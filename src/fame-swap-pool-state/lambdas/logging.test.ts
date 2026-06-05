@@ -6,6 +6,7 @@ import type {
 } from "../api.ts";
 import type { FamePoolQuoteBatchResponse } from "../cl-quote.ts";
 import type { FamePoolStateIndexerResult } from "../indexer.ts";
+import { FAME_V4_ZORA_QUOTE_LANE_POOL_ID } from "../v4-zora-manifests.ts";
 import {
   logPoolStateApiBatch,
   logPoolStateIndexerResult,
@@ -96,6 +97,67 @@ function freshReplayPool(): FamePoolStateResponseEntry {
   };
 }
 
+function freshV4ReplayPool(): FamePoolStateResponseEntry {
+  return {
+    status: "fresh",
+    stateKind: "v4-cl-replay-v1",
+    poolId: FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
+    chainId: 8453,
+    poolKey: HEX_32,
+    stateViewAddress: ADDRESS_A,
+    token0: ADDRESS_A,
+    token1: ADDRESS_B,
+    venueFamily: "UniswapV4",
+    tickSpacing: 200,
+    sqrtPriceX96: "100",
+    tick: 1,
+    liquidity: "1000",
+    lpFee: "30000",
+    protocolFee: "0",
+    feeSource: "v4-slot0",
+    observedThroughBlock: 120,
+    blockHash: HEX_32,
+    parentHash: HEX_32,
+    snapshotId: "v4-cl-replay-v1:uniswap-v4-basedflick-zora:120",
+    stateHash: HEX_32,
+    source: "uniswap-v4-state-view",
+    zoraProvenance: {
+      status: "verified",
+      source: "zora-factory-event",
+      chainId: 8453,
+      factoryAddress: ADDRESS_A,
+      coinAddress: ADDRESS_B,
+      poolKey: HEX_32,
+      poolId: HEX_32,
+      transactionHash: HEX_32,
+      eventName: "CoinCreatedV4",
+    },
+    sourceRegistryId: "registry",
+    maxFreshnessBlocks: 120,
+    bitmapWordCount: 4,
+    initializedTickCount: 5,
+    bitmapChunkCount: 2,
+    tickChunkCount: 3,
+    minWordPosition: -1,
+    maxWordPosition: 1,
+    minTick: -200,
+    maxTick: 200,
+    bitmapWords: [
+      {
+        wordPosition: 0,
+        bitmap: HEX_32,
+      },
+    ],
+    initializedTicks: [
+      {
+        tick: -200,
+        liquidityGross: "1",
+        liquidityNet: "1",
+      },
+    ],
+  };
+}
+
 function batchResponse(
   pools: FamePoolStateResponseEntry[],
 ): FamePoolStateBatchResponse {
@@ -131,6 +193,11 @@ function indexerResult(
     clReplayFailedPools: 0,
     clReplayFailures: [],
     clReplayMetrics: [],
+    v4ClReplaySnapshots: 0,
+    v4ClReplayWrittenPools: 0,
+    v4ClReplayFailedPools: 0,
+    v4ClReplayFailures: [],
+    v4ClReplayMetrics: [],
     clReplayMaintenanceMetrics: [],
     sourceRegistryId: "registry",
     ...overrides,
@@ -267,6 +334,45 @@ describe("FAME pool-state Lambda logging", () => {
     }
   });
 
+  test("summarizes fresh V4 replay API responses without raw tick payloads", () => {
+    const response = batchResponse([freshV4ReplayPool()]);
+    const infoLog = jest.spyOn(console, "log").mockImplementation(() => {
+      return undefined;
+    });
+
+    try {
+      expect(shouldLogPoolStateApiBatch(response)).toBe(true);
+      expect(poolStateApiBatchLogFields(response)).toMatchObject({
+        v4ClReplay: {
+          returned: 1,
+          fresh: 1,
+          stale: 0,
+          bitmapWordCount: 4,
+          initializedTickCount: 5,
+        },
+      });
+
+      logPoolStateApiBatch(response);
+
+      expect(infoLog).toHaveBeenCalledTimes(1);
+      const line = infoLog.mock.calls[0]?.[0];
+      expect(line).not.toContain("bitmapWords");
+      expect(line).not.toContain("initializedTicks");
+      expect(parseLogLine(line)).toMatchObject({
+        level: "info",
+        event: "fame-pool-state-api-batch",
+        v4ClReplay: {
+          returned: 1,
+          fresh: 1,
+          bitmapChunkCount: 2,
+          tickChunkCount: 3,
+        },
+      });
+    } finally {
+      infoLog.mockRestore();
+    }
+  });
+
   test("keeps stale, unknown, and unsupported API responses visible", () => {
     const response = batchResponse([
       {
@@ -378,6 +484,97 @@ describe("FAME pool-state Lambda logging", () => {
     }
   });
 
+  test("logs V4 replay failures once at error level", () => {
+    const errorLog = jest.spyOn(console, "error").mockImplementation(() => {
+      return undefined;
+    });
+    const infoLog = jest.spyOn(console, "log").mockImplementation(() => {
+      return undefined;
+    });
+
+    try {
+      logPoolStateIndexerResult(
+        indexerResult({
+          v4ClReplayFailedPools: 1,
+          v4ClReplayFailures: [
+            {
+              poolId: FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
+              message: "v4 snapshot failed",
+            },
+          ],
+        }),
+      );
+
+      expect(errorLog).toHaveBeenCalledTimes(1);
+      expect(infoLog).not.toHaveBeenCalled();
+      expect(parseLogLine(errorLog.mock.calls[0]?.[0])).toMatchObject({
+        level: "error",
+        event: "fame-pool-state-indexed",
+        v4ClReplayFailedPools: 1,
+        v4ClReplayFailures: [
+          {
+            poolId: FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
+            message: "v4 snapshot failed",
+          },
+        ],
+      });
+    } finally {
+      errorLog.mockRestore();
+      infoLog.mockRestore();
+    }
+  });
+
+  test("summarizes selected V4 Zora replay metrics in indexer logs", () => {
+    const infoLog = jest.spyOn(console, "log").mockImplementation(() => {
+      return undefined;
+    });
+
+    try {
+      logPoolStateIndexerResult(
+        indexerResult({
+          v4ClReplaySnapshots: 1,
+          v4ClReplayWrittenPools: 1,
+          v4ClReplayMetrics: [
+            {
+              poolId: FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
+              bitmapWordCount: 4,
+              initializedTickCount: 5,
+              bitmapChunkCount: 2,
+              tickChunkCount: 3,
+              providerReadCount: 47,
+              durationMs: 101,
+              stateHash: HEX_32,
+              lpFee: "30000",
+              protocolFee: "0",
+            },
+          ],
+        }),
+      );
+
+      expect(infoLog).toHaveBeenCalledTimes(1);
+      const line = infoLog.mock.calls[0]?.[0];
+      expect(line).not.toContain("bitmapWords");
+      expect(line).not.toContain("initializedTicks");
+      expect(parseLogLine(line)).toMatchObject({
+        v4ClReplaySnapshots: 1,
+        v4ClReplayWrittenPools: 1,
+        selectedV4ZoraReplay: {
+          poolId: FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
+          providerReadCount: 47,
+          bitmapWordCount: 4,
+          initializedTickCount: 5,
+          bitmapChunkCount: 2,
+          tickChunkCount: 3,
+          lpFee: "30000",
+          protocolFee: "0",
+          stateHash: HEX_32,
+        },
+      });
+    } finally {
+      infoLog.mockRestore();
+    }
+  });
+
   test("summarizes pool quote unavailable reasons without raw replay state", () => {
     expect(poolQuoteApiBatchLogFields(quoteBatchResponse())).toMatchObject({
       routeKind: "pool-quotes",
@@ -429,6 +626,16 @@ describe("FAME pool-state Lambda logging", () => {
         },
         reasonCounts: {
           "producer-untrusted": 1,
+        },
+      },
+      selectedV4ZoraQuote: {
+        poolId: "uniswap-v4-basedflick-zora",
+        returned: 1,
+        statusCounts: {
+          unavailable: 1,
+        },
+        reasonCounts: {
+          "unsupported-pool": 1,
         },
       },
     });

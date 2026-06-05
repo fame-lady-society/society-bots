@@ -16,15 +16,18 @@ import {
   FameClReplayLogNormalizationError,
   FameClReplaySnapshotIndexingError,
   getSlipstreamClReplaySnapshot,
+  getUniswapV4ClReplaySnapshot,
   indexFamePoolStates,
   normalizeClReplayLogs,
   SlipstreamTicksAbi,
   type FameClReplayRawLog,
   type FameClHeadSnapshotRead,
   type FameClReplaySnapshotRead,
+  type FameV4ClReplaySnapshotRead,
   type FamePoolStateIndexerClient,
   type FamePoolStateSyncLog,
   type SlipstreamReplayReadClient,
+  type UniswapV4ReplayReadClient,
 } from "./indexer.ts";
 import {
   clReplayStateRowsFromSnapshot,
@@ -33,12 +36,14 @@ import {
   latestClReplayCandidateStateKey,
   latestClReplayMaintenanceStateKey,
   latestClReplayStateKey,
+  latestV4ClReplayStateKey,
   latestPoolStateKey,
   putLatestClReplayMaintenanceState,
   putLatestClReplayState,
   sourceRegistryIdFor,
   type FameClHeadSnapshotRegistryEntry,
   type FameClReplayRegistryEntry,
+  type FameV4ClReplayRegistryEntry,
   type PoolStateDocumentClient,
   type PoolStateDynamoResponse,
 } from "./dynamodb/pool-state.ts";
@@ -50,6 +55,7 @@ import { famePoolStateRegistry } from "./registry/index.ts";
 import type {
   FamePoolStateRegistryEntry,
   FamePoolStateRegistryFile,
+  FamePoolStateV4ZoraProvenanceEvidence,
 } from "./types.ts";
 
 type SentCommand = Parameters<PoolStateDocumentClient["send"]>[0];
@@ -176,6 +182,10 @@ class InMemoryPoolStateDb implements PoolStateDocumentClient {
     return this.items.get(keyFromValue(latestClReplayStateKey(pool)));
   }
 
+  getLatestV4ClReplay(pool: FameV4ClReplayRegistryEntry) {
+    return this.items.get(keyFromValue(latestV4ClReplayStateKey(pool)));
+  }
+
   getLatestClReplayCandidate(pool: FameClReplayRegistryEntry) {
     return this.items.get(keyFromValue(latestClReplayCandidateStateKey(pool)));
   }
@@ -202,6 +212,10 @@ class FakePoolStateClient implements FamePoolStateIndexerClient {
     string,
     FameClReplaySnapshotRead
   >();
+  public v4ClReplaySnapshotsByPoolId = new Map<
+    string,
+    FameV4ClReplaySnapshotRead
+  >();
   public clReplayFeesByPoolId = new Map<string, bigint>();
   public clReplayLogs: readonly FameClReplayRawLog[] = [];
   public blockIdentitiesByNumber = new Map<
@@ -211,8 +225,12 @@ class FakePoolStateClient implements FamePoolStateIndexerClient {
   public failingReserveAddress: Address | null = null;
   public failingClHeadPoolId: string | null = null;
   public failingClReplayPoolId: string | null = null;
+  public failingV4ClReplayPoolId: string | null = null;
   public failingClHeadError: unknown = new Error("CL head read failed");
   public failingClReplayError: unknown = new Error("CL replay read failed");
+  public failingV4ClReplayError: unknown = new Error(
+    "V4 CL replay read failed",
+  );
 
   constructor(
     private readonly logs: readonly FamePoolStateSyncLog[],
@@ -312,6 +330,33 @@ class FakePoolStateClient implements FamePoolStateIndexerClient {
         ],
         providerReadCount: 5,
         durationMs: 12,
+      }
+    );
+  }
+
+  async getV4ClReplaySnapshot(options: {
+    pool: FameV4ClReplayRegistryEntry;
+  }): Promise<FameV4ClReplaySnapshotRead> {
+    if (options.pool.id === this.failingV4ClReplayPoolId) {
+      throw this.failingV4ClReplayError;
+    }
+    return (
+      this.v4ClReplaySnapshotsByPoolId.get(options.pool.id) ?? {
+        sqrtPriceX96: 2n ** 96n,
+        tick: -17_400,
+        liquidity: 1_000n,
+        lpFee: 30_000n,
+        protocolFee: 0n,
+        blockHash:
+          "0x1111111111111111111111111111111111111111111111111111111111111111",
+        parentHash:
+          "0x2222222222222222222222222222222222222222222222222222222222222222",
+        bitmapWords: [{ wordPosition: 0, bitmap: 1n << 3n }],
+        initializedTicks: [
+          { tick: -17_400, liquidityGross: 30n, liquidityNet: 10n },
+        ],
+        providerReadCount: 6,
+        durationMs: 13,
       }
     );
   }
@@ -417,6 +462,90 @@ class FakeSlipstreamReplayReadClient implements SlipstreamReplayReadClient {
       0,
       state.initialized,
     ] as const;
+  }
+}
+
+class FakeUniswapV4ReplayReadClient implements UniswapV4ReplayReadClient {
+  public readonly blockNumbers: bigint[] = [];
+  public readonly stateViewAddresses: Address[] = [];
+  public readonly poolKeys: Hex[] = [];
+  public readonly tickBitmapWordPositions: number[] = [];
+  public readonly tickIndexes: number[] = [];
+  public blockHash: Hex =
+    "0x3333333333333333333333333333333333333333333333333333333333333333";
+  public parentHash: Hex =
+    "0x4444444444444444444444444444444444444444444444444444444444444444";
+  public readonly bitmaps = new Map<number, bigint>([
+    [-1, (1n << 168n) | (1n << 169n)],
+  ]);
+  public readonly tickStates = new Map<
+    number,
+    { liquidityGross: bigint; liquidityNet: bigint }
+  >([
+    [-17_600, { liquidityGross: 20n, liquidityNet: -20n }],
+    [-17_400, { liquidityGross: 30n, liquidityNet: 10n }],
+  ]);
+
+  async getBlock(options: {
+    blockNumber: bigint;
+  }): Promise<{ hash: Hex | null; parentHash: Hex }> {
+    this.blockNumbers.push(options.blockNumber);
+    return {
+      hash: this.blockHash,
+      parentHash: this.parentHash,
+    };
+  }
+
+  async getSlot0(options: {
+    stateViewAddress: Address;
+    poolKey: Hex;
+    blockNumber: bigint;
+  }): Promise<readonly [bigint, number, number, number]> {
+    this.stateViewAddresses.push(options.stateViewAddress);
+    this.poolKeys.push(options.poolKey);
+    this.blockNumbers.push(options.blockNumber);
+    return [2n ** 96n, -17_400, 0, 30_000] as const;
+  }
+
+  async getLiquidity(options: {
+    stateViewAddress: Address;
+    poolKey: Hex;
+    blockNumber: bigint;
+  }): Promise<bigint> {
+    this.stateViewAddresses.push(options.stateViewAddress);
+    this.poolKeys.push(options.poolKey);
+    this.blockNumbers.push(options.blockNumber);
+    return 1_000n;
+  }
+
+  async getTickBitmap(options: {
+    stateViewAddress: Address;
+    poolKey: Hex;
+    wordPosition: number;
+    blockNumber: bigint;
+  }): Promise<bigint> {
+    this.stateViewAddresses.push(options.stateViewAddress);
+    this.poolKeys.push(options.poolKey);
+    this.blockNumbers.push(options.blockNumber);
+    this.tickBitmapWordPositions.push(options.wordPosition);
+    return this.bitmaps.get(options.wordPosition) ?? 0n;
+  }
+
+  async getTickInfo(options: {
+    stateViewAddress: Address;
+    poolKey: Hex;
+    tick: number;
+    blockNumber: bigint;
+  }): Promise<readonly [bigint, bigint, bigint, bigint]> {
+    this.stateViewAddresses.push(options.stateViewAddress);
+    this.poolKeys.push(options.poolKey);
+    this.blockNumbers.push(options.blockNumber);
+    this.tickIndexes.push(options.tick);
+    const state = this.tickStates.get(options.tick);
+    if (!state) {
+      throw new Error(`Missing fake V4 tick ${options.tick.toString()}.`);
+    }
+    return [state.liquidityGross, state.liquidityNet, 0n, 0n] as const;
   }
 }
 
@@ -562,6 +691,48 @@ function clReplayPromotedCandidatePool(): FameClReplayReducerRegistryEntry {
     ...candidate,
     activationStatus: "cl-compact-quote-active",
     replaySurface: "cl-replay-v1",
+  };
+}
+
+function v4ClReplayPool(): FameV4ClReplayRegistryEntry {
+  const entry = registryEntry("uniswap-v4-basedflick-zora");
+  if (
+    entry.venue !== "uniswap-v4" ||
+    entry.venueFamily !== "UniswapV4" ||
+    entry.stateSurface !== "cl-head-snapshot" ||
+    entry.poolAddress !== null ||
+    entry.poolKey === null ||
+    entry.stateViewAddress === null ||
+    entry.tickSpacing === null
+  ) {
+    throw new Error("uniswap-v4-basedflick-zora is not V4 replay eligible.");
+  }
+  return {
+    ...entry,
+    venue: entry.venue,
+    venueFamily: entry.venueFamily,
+    stateSurface: entry.stateSurface,
+    poolAddress: entry.poolAddress,
+    poolKey: entry.poolKey,
+    stateViewAddress: entry.stateViewAddress,
+    tickSpacing: entry.tickSpacing,
+  };
+}
+
+function verifiedV4ZoraProvenance(
+  pool: FameV4ClReplayRegistryEntry,
+): FamePoolStateV4ZoraProvenanceEvidence {
+  return {
+    status: "verified",
+    source: "zora-factory-event",
+    chainId: 8453,
+    factoryAddress: "0x0000000000000000000000000000000000000003",
+    coinAddress: pool.token1,
+    poolKey: pool.poolKey,
+    poolId: pool.poolKey,
+    transactionHash:
+      "0x7777777777777777777777777777777777777777777777777777777777777777",
+    eventName: "CoinCreatedV4",
   };
 }
 
@@ -857,6 +1028,68 @@ describe("FAME pool-state indexer", () => {
     expect(
       client.blockNumbers.every((blockNumber) => blockNumber === 118n),
     ).toBe(true);
+  });
+
+  test("builds V4 replay snapshots from StateView bitmap and tick reads at one block", async () => {
+    const pool = v4ClReplayPool();
+    const client = new FakeUniswapV4ReplayReadClient();
+
+    const snapshot = await getUniswapV4ClReplaySnapshot({
+      client,
+      pool,
+      blockNumber: 118n,
+    });
+
+    expect(snapshot).toMatchObject({
+      sqrtPriceX96: 2n ** 96n,
+      tick: -17_400,
+      liquidity: 1_000n,
+      lpFee: 30_000n,
+      protocolFee: 0n,
+      blockHash: client.blockHash,
+      parentHash: client.parentHash,
+      initializedTicks: [
+        { tick: -17_600, liquidityGross: 20n, liquidityNet: -20n },
+        { tick: -17_400, liquidityGross: 30n, liquidityNet: 10n },
+      ],
+      providerReadCount: 42,
+    });
+    expect(snapshot.bitmapWords).toHaveLength(36);
+    expect(
+      snapshot.bitmapWords.filter((word) => word.bitmap !== 0n),
+    ).toEqual([{ wordPosition: -1, bitmap: (1n << 168n) | (1n << 169n) }]);
+    expect(client.tickBitmapWordPositions).toHaveLength(36);
+    expect(client.tickBitmapWordPositions[0]).toBe(-18);
+    expect(client.tickBitmapWordPositions.at(-1)).toBe(17);
+    expect(client.tickIndexes).toEqual([-17_600, -17_400]);
+    expect(client.stateViewAddresses.every((address) => address === pool.stateViewAddress)).toBe(
+      true,
+    );
+    expect(client.poolKeys.every((poolKey) => poolKey === pool.poolKey)).toBe(
+      true,
+    );
+    expect(
+      client.blockNumbers.every((blockNumber) => blockNumber === 118n),
+    ).toBe(true);
+  });
+
+  test("preserves V4 zero-bitmap coverage for empty initialized tick snapshots", async () => {
+    const pool = v4ClReplayPool();
+    const client = new FakeUniswapV4ReplayReadClient();
+    client.bitmaps.clear();
+
+    const snapshot = await getUniswapV4ClReplaySnapshot({
+      client,
+      pool,
+      blockNumber: 118n,
+    });
+
+    expect(snapshot.initializedTicks).toHaveLength(0);
+    expect(snapshot.bitmapWords).toHaveLength(36);
+    expect(snapshot.bitmapWords.every((word) => word.bitmap === 0n)).toBe(
+      true,
+    );
+    expect(client.tickIndexes).toHaveLength(0);
   });
 
   test("normalizes CL replay Swap, Mint, Burn, and no-op Collect logs in chain order", () => {
@@ -1308,6 +1541,97 @@ describe("FAME pool-state indexer", () => {
       reason: "shadow-not-promoted",
       candidateId: expect.stringContaining(replayPool.id),
     });
+  });
+
+  test("writes V4 replay snapshots only with verified Zora provenance", async () => {
+    const v4Pool = v4ClReplayPool();
+    const db = new InMemoryPoolStateDb();
+    const client = new FakePoolStateClient([], 120n);
+    client.v4ClReplaySnapshotsByPoolId.set(v4Pool.id, {
+      sqrtPriceX96: 2n ** 96n,
+      tick: -17_400,
+      liquidity: 8_888n,
+      lpFee: 30_000n,
+      protocolFee: 0n,
+      blockHash:
+        "0x3333333333333333333333333333333333333333333333333333333333333333",
+      parentHash:
+        "0x4444444444444444444444444444444444444444444444444444444444444444",
+      bitmapWords: [{ wordPosition: -1, bitmap: 1n << 169n }],
+      initializedTicks: [
+        { tick: -17_400, liquidityGross: 30n, liquidityNet: 10n },
+      ],
+      providerReadCount: 42,
+      durationMs: 24,
+    });
+
+    const missingProofResult = await indexFamePoolStates({
+      client,
+      db,
+      tableName: "PoolState",
+      registry: registryWithPools([v4Pool]),
+      now: new Date("2026-05-21T00:00:00.000Z"),
+    });
+
+    expect(missingProofResult).toMatchObject({
+      v4ClReplaySnapshots: 0,
+      v4ClReplayWrittenPools: 0,
+      v4ClReplayFailedPools: 0,
+      v4ClReplayMetrics: [],
+    });
+    expect(db.getLatestV4ClReplay(v4Pool)).toBeUndefined();
+
+    const result = await indexFamePoolStates({
+      client,
+      db,
+      tableName: "PoolState",
+      registry: registryWithPools([v4Pool]),
+      v4ZoraProvenance: verifiedV4ZoraProvenance(v4Pool),
+      now: new Date("2026-05-21T00:01:00.000Z"),
+    });
+
+    expect(result).toMatchObject({
+      v4ClReplaySnapshots: 1,
+      v4ClReplayWrittenPools: 1,
+      v4ClReplayFailedPools: 0,
+      v4ClReplayMetrics: [
+        {
+          poolId: v4Pool.id,
+          bitmapWordCount: 1,
+          initializedTickCount: 1,
+          bitmapChunkCount: 1,
+          tickChunkCount: 1,
+          providerReadCount: 42,
+          durationMs: 24,
+          stateHash: expect.stringMatching(/^0x[0-9a-f]{64}$/),
+          lpFee: "30000",
+          protocolFee: "0",
+        },
+      ],
+    });
+    expect(db.getLatestV4ClReplay(v4Pool)).toMatchObject({
+      stateKind: "v4-cl-replay-v1",
+      poolId: v4Pool.id,
+      poolKey: v4Pool.poolKey,
+      stateViewAddress: v4Pool.stateViewAddress,
+      tick: -17_400,
+      liquidity: "8888",
+      lpFee: "30000",
+      protocolFee: "0",
+      feeSource: "v4-slot0",
+      source: "uniswap-v4-state-view",
+      observedThroughBlock: 118,
+      blockHash:
+        "0x3333333333333333333333333333333333333333333333333333333333333333",
+      bitmapWordCount: 1,
+      initializedTickCount: 1,
+      minTick: -17_400,
+      maxTick: -17_400,
+    });
+    expect(db.getLatestV4ClReplay(v4Pool)).not.toHaveProperty("poolAddress");
+    expect(
+      stringField(parseItem(db.getLatestV4ClReplay(v4Pool)), "snapshotId"),
+    ).toContain(result.sourceRegistryId);
   });
 
   test("maintains the selected Slipstream candidate without publishing quoteable replay state", async () => {
@@ -2119,6 +2443,24 @@ describe("FAME pool-state indexer", () => {
           {
             poolId: "slipstream-usdc-weth-100",
             message: "CL replay read failed",
+          },
+        ],
+        v4ClReplayFailedPools: 0,
+        v4ClReplayFailures: [],
+      }),
+    ).toThrow(FameClReplaySnapshotIndexingError);
+  });
+
+  test("throws an operational error when required V4 replay snapshots fail", () => {
+    expect(() =>
+      assertNoClReplaySnapshotFailures({
+        clReplayFailedPools: 0,
+        clReplayFailures: [],
+        v4ClReplayFailedPools: 1,
+        v4ClReplayFailures: [
+          {
+            poolId: "uniswap-v4-basedflick-zora",
+            message: "V4 replay read failed",
           },
         ],
       }),
