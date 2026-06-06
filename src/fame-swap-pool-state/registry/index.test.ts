@@ -1,6 +1,7 @@
 import { describe, expect, test } from "@jest/globals";
 import {
   FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
+  FAME_V4_ZORA_ETH_QUOTE_LANE_POOL_ID,
   classifyV4ZoraQuoteLane,
   famePoolStateRegistry,
   getFamePoolStateRegistryEntry,
@@ -137,14 +138,17 @@ describe("FAME swap pool-state registry", () => {
     expect(v4Dependency?.replaySurface).toBeNull();
   });
 
-  test("classifies only BASEDFLICK/ZORA as the reviewed V4 Zora quote lane", () => {
+  test("classifies only reviewed named V4 Zora quote lanes as eligible", () => {
     const target = getFamePoolStateRegistryEntry({
       poolId: FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
+    });
+    const zoraEth = getFamePoolStateRegistryEntry({
+      poolId: FAME_V4_ZORA_ETH_QUOTE_LANE_POOL_ID,
     });
     const otherV4 = getFamePoolStateRegistryEntry({
       poolId: "uniswap-v4-usdc-eth",
     });
-    if (!target || !otherV4) {
+    if (!target || !zoraEth || !otherV4) {
       throw new Error("Generated registry missing V4 fixtures.");
     }
 
@@ -156,6 +160,12 @@ describe("FAME swap pool-state registry", () => {
       classifyV4ZoraQuoteLane(target, VERIFIED_V4_ZORA_PROVENANCE),
     ).toMatchObject({
       status: "target-eligible",
+    });
+    expect(classifyV4ZoraQuoteLane(zoraEth)).toMatchObject({
+      status: "target-eligible",
+      manifest: {
+        provenanceRequired: false,
+      },
     });
     expect(
       classifyV4ZoraQuoteLane(otherV4, VERIFIED_V4_ZORA_PROVENANCE),
