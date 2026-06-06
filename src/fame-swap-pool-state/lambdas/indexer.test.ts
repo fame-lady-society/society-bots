@@ -44,6 +44,7 @@ function indexerResult(
     v4ClReplayFailedPools: 0,
     v4ClReplayFailures: [],
     v4ClReplayMetrics: [],
+    v4ClReplayMaintenanceMetrics: [],
     clReplayMaintenanceMetrics: [],
     sourceRegistryId: "registry",
     ...overrides,

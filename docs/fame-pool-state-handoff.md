@@ -112,6 +112,11 @@ Review reminders:
 - Do not broaden this into historical backfill, chunked scanners, WAF/private networking, stable-pool math, or notifier coverage. Those are intentionally out of scope for this pass.
 - The pool-state dev stack is allowed to be pragmatic and shared; the goal is fast proof of the helper and quoter integration, not a polished environment matrix.
 
+Durable maintainability TODOs from the V4 delta-maintenance review:
+
+- Consolidate the V4 live/candidate replay row builders in `src/fame-swap-pool-state/dynamodb/pool-state.ts`. The current `v4ClReplayStateRowsFromSnapshot` and `v4ClReplayCandidateStateRowsFromSnapshot` functions intentionally shipped as parallel wrappers, but they duplicate canonical bitmap/tick processing, chunk metadata, and row field assembly.
+- Consolidate the CL/V4 maintenance state-machine branches in `src/fame-swap-pool-state/indexer.ts`. The current V4 lane mirrors CL semantics for cursor validation, bootstrap/repair seed selection, trust promotion, maintenance row writes, and metrics; future work should extract shared helpers before another replay surface copies the same flow.
+
 Final todos before enabling `www` production helper env:
 
 - Set or generate `FAME_POOL_STATE_DEV_SERVICE_TOKEN`.

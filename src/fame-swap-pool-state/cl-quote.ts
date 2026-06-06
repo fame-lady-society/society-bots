@@ -5,6 +5,7 @@ import {
   batchGetLatestClReplayMaintenanceStates,
   batchGetLatestClReplayPointers,
   batchGetLatestPoolStates,
+  batchGetLatestV4ClReplayMaintenanceStates,
   batchGetLatestV4ClReplayPointers,
   batchGetV4ClReplayStateCapsules,
   sourceRegistryIdFor,
@@ -15,6 +16,7 @@ import {
   type FameClReplayStateCapsule,
   type FamePoolLatestState,
   type FameV4ClReplayLatestState,
+  type FameV4ClReplayMaintenanceState,
   type FameV4ClReplayRegistryEntry,
   type FameV4ClReplayStateCapsule,
   type FameV4ZoraVerifiedProvenance,
@@ -590,6 +592,32 @@ function clReplayMaintenanceCompatible({
     maintenance.poolId === latest.poolId &&
     maintenance.chainId === latest.chainId &&
     sameAddress(maintenance.poolAddress, latest.poolAddress) &&
+    maintenance.cursorBlock === latest.observedThroughBlock &&
+    maintenance.cursorBlockHash === latest.blockHash &&
+    maintenance.targetBlock === latest.observedThroughBlock &&
+    maintenance.targetBlockHash === latest.blockHash &&
+    maintenance.stateHash === latest.stateHash
+  );
+}
+
+function v4ClReplayMaintenanceCompatible({
+  maintenance,
+  latest,
+  sourceRegistryId,
+}: {
+  maintenance: FameV4ClReplayMaintenanceState | undefined;
+  latest: V4ClReplayQuoteLatestState;
+  sourceRegistryId: string;
+}): boolean {
+  return (
+    maintenance !== undefined &&
+    maintenance.status === "trusted" &&
+    maintenance.sourceRegistryId === sourceRegistryId &&
+    maintenance.poolId === latest.poolId &&
+    maintenance.chainId === latest.chainId &&
+    maintenance.poolKey.toLowerCase() === latest.poolKey.toLowerCase() &&
+    maintenance.stateViewAddress.toLowerCase() ===
+      latest.stateViewAddress.toLowerCase() &&
     maintenance.cursorBlock === latest.observedThroughBlock &&
     maintenance.cursorBlockHash === latest.blockHash &&
     maintenance.targetBlock === latest.observedThroughBlock &&
@@ -1483,6 +1511,15 @@ export async function handleFamePoolQuoteBatchRequest({
   const maintenanceStatesByPoolId = new Map(
     maintenanceStates.map((state) => [state.poolId, state]),
   );
+  const v4MaintenanceStates =
+    await batchGetLatestV4ClReplayMaintenanceStates({
+      db,
+      tableName,
+      pools: v4ClReplayPools,
+    });
+  const v4MaintenanceStatesByPoolId = new Map(
+    v4MaintenanceStates.map((state) => [state.poolId, state]),
+  );
   const freshLatestStates = latestStates.filter((latest) => {
     const entry = clReplayPoolsById.get(latest.poolId);
     const maintenance = maintenanceStatesByPoolId.get(latest.poolId);
@@ -1503,6 +1540,7 @@ export async function handleFamePoolQuoteBatchRequest({
   });
   const freshV4LatestStates = v4LatestStates.filter((latest) => {
     const entry = v4ClReplayPoolsById.get(latest.poolId);
+    const maintenance = v4MaintenanceStatesByPoolId.get(latest.poolId);
     return (
       entry !== undefined &&
       v4ClReplayLatestStateMatchesRegistry({
@@ -1511,6 +1549,11 @@ export async function handleFamePoolQuoteBatchRequest({
         sourceRegistryId,
       }) &&
       v4AdmissionUnavailableReason({ entry, latest }) === null &&
+      v4ClReplayMaintenanceCompatible({
+        maintenance,
+        latest,
+        sourceRegistryId,
+      }) &&
       freshnessStatus({
         state: latest,
         currentBlock: parsed.currentBlock,
@@ -1664,6 +1707,24 @@ export async function handleFamePoolQuoteBatchRequest({
             requested,
             admissionReason,
             v4QuoteMetadata(latest, effectiveMaxFreshnessBlocks),
+          );
+        }
+        const maintenance = v4MaintenanceStatesByPoolId.get(entry.id);
+        if (
+          !v4ClReplayMaintenanceCompatible({
+            maintenance,
+            latest,
+            sourceRegistryId,
+          })
+        ) {
+          return unavailable(
+            requested,
+            "producer-untrusted",
+            {
+              ...v4QuoteMetadata(latest, effectiveMaxFreshnessBlocks),
+              producerStatus: maintenance?.status,
+              producerReason: safeProducerReason(maintenance?.reason),
+            },
           );
         }
 

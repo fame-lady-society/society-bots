@@ -12,13 +12,17 @@ import {
   ClReplayCollectEventAbi,
   ClReplayMintEventAbi,
   ClReplaySwapEventAbi,
+  V4ClReplayModifyLiquidityEventAbi,
+  V4ClReplaySwapEventAbi,
   applyClReplayDeltas,
+  applyV4ClReplayDeltas,
   FameClReplayLogNormalizationError,
   FameClReplaySnapshotIndexingError,
   getSlipstreamClReplaySnapshot,
   getUniswapV4ClReplaySnapshot,
   indexFamePoolStates,
   normalizeClReplayLogs,
+  normalizeV4ClReplayLogs,
   SlipstreamTicksAbi,
   type FameClReplayRawLog,
   type FameClHeadSnapshotRead,
@@ -26,6 +30,7 @@ import {
   type FameV4ClReplaySnapshotRead,
   type FamePoolStateIndexerClient,
   type FamePoolStateSyncLog,
+  type FameV4ClReplayRawLog,
   type SlipstreamReplayReadClient,
   type UniswapV4ReplayReadClient,
 } from "./indexer.ts";
@@ -36,14 +41,18 @@ import {
   latestClReplayCandidateStateKey,
   latestClReplayMaintenanceStateKey,
   latestClReplayStateKey,
+  latestV4ClReplayCandidateStateKey,
+  latestV4ClReplayMaintenanceStateKey,
   latestV4ClReplayStateKey,
   latestPoolStateKey,
   putLatestClReplayMaintenanceState,
   putLatestClReplayState,
   sourceRegistryIdFor,
+  v4ClReplayStateRowsFromSnapshot,
   type FameClHeadSnapshotRegistryEntry,
   type FameClReplayRegistryEntry,
   type FameV4ClReplayRegistryEntry,
+  type FameV4ZoraVerifiedProvenance,
   type PoolStateDocumentClient,
   type PoolStateDynamoResponse,
 } from "./dynamodb/pool-state.ts";
@@ -51,11 +60,11 @@ import {
   FAME_SELECTED_CL_REPLAY_CANDIDATE_POOL_ID,
   type FameClReplayReducerRegistryEntry,
 } from "./cl-reducer-manifests.ts";
+import { FAME_V4_ZORA_REVIEWED_POOL_SHAPE } from "./v4-zora-manifests.ts";
 import { famePoolStateRegistry } from "./registry/index.ts";
 import type {
   FamePoolStateRegistryEntry,
   FamePoolStateRegistryFile,
-  FamePoolStateV4ZoraProvenanceEvidence,
 } from "./types.ts";
 
 type SentCommand = Parameters<PoolStateDocumentClient["send"]>[0];
@@ -186,6 +195,18 @@ class InMemoryPoolStateDb implements PoolStateDocumentClient {
     return this.items.get(keyFromValue(latestV4ClReplayStateKey(pool)));
   }
 
+  getLatestV4ClReplayCandidate(pool: FameV4ClReplayRegistryEntry) {
+    return this.items.get(
+      keyFromValue(latestV4ClReplayCandidateStateKey(pool)),
+    );
+  }
+
+  getLatestV4ClReplayMaintenance(pool: FameV4ClReplayRegistryEntry) {
+    return this.items.get(
+      keyFromValue(latestV4ClReplayMaintenanceStateKey(pool)),
+    );
+  }
+
   getLatestClReplayCandidate(pool: FameClReplayRegistryEntry) {
     return this.items.get(keyFromValue(latestClReplayCandidateStateKey(pool)));
   }
@@ -216,6 +237,8 @@ class FakePoolStateClient implements FamePoolStateIndexerClient {
     string,
     FameV4ClReplaySnapshotRead
   >();
+  public v4ClReplayLogs: readonly FameV4ClReplayRawLog[] = [];
+  public v4ClReplaySnapshotReadCount = 0;
   public clReplayFeesByPoolId = new Map<string, bigint>();
   public clReplayLogs: readonly FameClReplayRawLog[] = [];
   public blockIdentitiesByNumber = new Map<
@@ -268,6 +291,10 @@ class FakePoolStateClient implements FamePoolStateIndexerClient {
 
   async getClReplayLogs(): Promise<readonly FameClReplayRawLog[]> {
     return this.clReplayLogs;
+  }
+
+  async getV4ClReplayLogs(): Promise<readonly FameV4ClReplayRawLog[]> {
+    return this.v4ClReplayLogs;
   }
 
   async getReserves(options: {
@@ -337,6 +364,7 @@ class FakePoolStateClient implements FamePoolStateIndexerClient {
   async getV4ClReplaySnapshot(options: {
     pool: FameV4ClReplayRegistryEntry;
   }): Promise<FameV4ClReplaySnapshotRead> {
+    this.v4ClReplaySnapshotReadCount += 1;
     if (options.pool.id === this.failingV4ClReplayPoolId) {
       throw this.failingV4ClReplayError;
     }
@@ -721,7 +749,7 @@ function v4ClReplayPool(): FameV4ClReplayRegistryEntry {
 
 function verifiedV4ZoraProvenance(
   pool: FameV4ClReplayRegistryEntry,
-): FamePoolStateV4ZoraProvenanceEvidence {
+): FameV4ZoraVerifiedProvenance {
   return {
     status: "verified",
     source: "zora-factory-event",
@@ -920,6 +948,116 @@ function collectReplayLog(
   });
 }
 
+function v4ReplayLogFixture(
+  pool: FameV4ClReplayRegistryEntry,
+  options: {
+    blockNumber: bigint;
+    transactionIndex: number;
+    logIndex: number;
+    topics: readonly Hex[];
+    data: Hex;
+    address?: Address;
+    blockHash?: Hex | null;
+    removed?: boolean;
+  },
+): FameV4ClReplayRawLog {
+  return {
+    address: options.address ?? FAME_V4_ZORA_REVIEWED_POOL_SHAPE.poolManager,
+    blockNumber: options.blockNumber,
+    blockHash:
+      options.blockHash ??
+      "0x1111111111111111111111111111111111111111111111111111111111111111",
+    transactionHash:
+      "0x2222222222222222222222222222222222222222222222222222222222222222",
+    transactionIndex: options.transactionIndex,
+    logIndex: options.logIndex,
+    removed: options.removed ?? false,
+    topics: options.topics,
+    data: options.data,
+  };
+}
+
+function swapV4ReplayLog(
+  pool: FameV4ClReplayRegistryEntry,
+  order: { blockNumber: bigint; transactionIndex: number; logIndex: number },
+  overrides: {
+    sqrtPriceX96?: bigint;
+    tick?: number;
+    liquidity?: bigint;
+    lpFee?: bigint;
+  } = {},
+): FameV4ClReplayRawLog {
+  return v4ReplayLogFixture(pool, {
+    ...order,
+    topics: strictTopics(
+      encodeEventTopics({
+        abi: [V4ClReplaySwapEventAbi],
+        eventName: "Swap",
+        args: {
+          id: pool.poolKey,
+          sender: UNIT_ADDRESS_1,
+        },
+      }),
+    ),
+    data: encodeAbiParameters(
+      [
+        { name: "amount0", type: "int128" },
+        { name: "amount1", type: "int128" },
+        { name: "sqrtPriceX96", type: "uint160" },
+        { name: "liquidity", type: "uint128" },
+        { name: "tick", type: "int24" },
+        { name: "fee", type: "uint24" },
+      ],
+      [
+        -10n,
+        20n,
+        overrides.sqrtPriceX96 ?? 2n ** 96n,
+        overrides.liquidity ?? 2_345n,
+        overrides.tick ?? -17_200,
+        Number(overrides.lpFee ?? 30_000n),
+      ],
+    ),
+  });
+}
+
+function modifyLiquidityV4ReplayLog(
+  pool: FameV4ClReplayRegistryEntry,
+  order: { blockNumber: bigint; transactionIndex: number; logIndex: number },
+  options: {
+    tickLower?: number;
+    tickUpper?: number;
+    liquidityDelta?: bigint;
+  } = {},
+): FameV4ClReplayRawLog {
+  return v4ReplayLogFixture(pool, {
+    ...order,
+    topics: strictTopics(
+      encodeEventTopics({
+        abi: [V4ClReplayModifyLiquidityEventAbi],
+        eventName: "ModifyLiquidity",
+        args: {
+          id: pool.poolKey,
+          sender: UNIT_ADDRESS_1,
+        },
+      }),
+    ),
+    data: encodeAbiParameters(
+      [
+        { name: "tickLower", type: "int24" },
+        { name: "tickUpper", type: "int24" },
+        { name: "liquidityDelta", type: "int256" },
+        { name: "salt", type: "bytes32" },
+      ],
+      [
+        options.tickLower ?? -17_600,
+        options.tickUpper ?? -17_200,
+        options.liquidityDelta ?? 50n,
+        "0x0000000000000000000000000000000000000000000000000000000000000000",
+      ],
+    ),
+  });
+}
+
 function clReplaySeedCapsule(pool: FameClReplayRegistryEntry) {
   const rows = clReplayStateRowsFromSnapshot({
     pool,
@@ -955,11 +1093,61 @@ function clReplaySeedCapsule(pool: FameClReplayRegistryEntry) {
   };
 }
 
+function v4ClReplaySeedCapsule(pool: FameV4ClReplayRegistryEntry) {
+  const rows = v4ClReplayStateRowsFromSnapshot({
+    pool,
+    sqrtPriceX96: 2n ** 96n,
+    tick: -17_400,
+    liquidity: 1_000n,
+    lpFee: 30_000n,
+    protocolFee: 0n,
+    observedThroughBlock: 120,
+    blockHash:
+      "0x1111111111111111111111111111111111111111111111111111111111111111",
+    parentHash:
+      "0x2222222222222222222222222222222222222222222222222222222222222222",
+    snapshotId: "v4-seed-120",
+    stateHash:
+      "0x3333333333333333333333333333333333333333333333333333333333333333",
+    zoraProvenance: verifiedV4ZoraProvenance(pool),
+    sourceRegistryId: "unit-registry",
+    updatedAt: "2026-05-20T00:00:00.000Z",
+    bitmapWords: [{ wordPosition: -1, bitmap: (1n << 168n) | (1n << 170n) }],
+    initializedTicks: [
+      { tick: -17_600, liquidityGross: 500n, liquidityNet: 500n },
+      { tick: -17_200, liquidityGross: 500n, liquidityNet: -500n },
+    ],
+  });
+  return {
+    latest: rows.latest,
+    bitmapWords: rows.bitmapChunks.flatMap((chunk) => chunk.bitmapWords),
+    initializedTicks: rows.tickChunks.flatMap(
+      (chunk) => chunk.initializedTicks,
+    ),
+  };
+}
+
 function normalizedEventBase(pool: FameClReplayRegistryEntry) {
   return {
     poolId: pool.id,
     venue: pool.venue,
     poolAddress: pool.poolAddress,
+    blockNumber: 121,
+    blockHash:
+      "0x4444444444444444444444444444444444444444444444444444444444444444",
+    transactionHash:
+      "0x5555555555555555555555555555555555555555555555555555555555555555",
+    transactionIndex: 1,
+    logIndex: 1,
+  } as const;
+}
+
+function normalizedV4EventBase(pool: FameV4ClReplayRegistryEntry) {
+  return {
+    poolId: pool.id,
+    venue: pool.venue,
+    poolKey: pool.poolKey,
+    poolManager: FAME_V4_ZORA_REVIEWED_POOL_SHAPE.poolManager,
     blockNumber: 121,
     blockHash:
       "0x4444444444444444444444444444444444444444444444444444444444444444",
@@ -1147,6 +1335,177 @@ describe("FAME pool-state indexer", () => {
       tickUpper: 300,
       amount: 25n,
     });
+  });
+
+  test("normalizes and applies V4 PoolManager replay logs for the approved pool", () => {
+    const pool = v4ClReplayPool();
+    const events = normalizeV4ClReplayLogs({
+      pool,
+      logs: [
+        swapV4ReplayLog(pool, {
+          blockNumber: 122n,
+          transactionIndex: 2,
+          logIndex: 2,
+        }),
+        modifyLiquidityV4ReplayLog(pool, {
+          blockNumber: 122n,
+          transactionIndex: 2,
+          logIndex: 1,
+        }),
+      ],
+    });
+
+    expect(events.map((event) => event.kind)).toEqual([
+      "modify-liquidity",
+      "swap",
+    ]);
+
+    const result = applyV4ClReplayDeltas({
+      pool,
+      seed: v4ClReplaySeedCapsule(pool),
+      events,
+      observedThroughBlock: 122,
+      blockHash:
+        "0x4444444444444444444444444444444444444444444444444444444444444444",
+      parentHash:
+        "0x5555555555555555555555555555555555555555555555555555555555555555",
+      candidateId: "unit-v4-candidate",
+      zoraProvenance: verifiedV4ZoraProvenance(pool),
+      sourceRegistryId: "unit-registry",
+      updatedAt: "2026-05-20T00:01:00.000Z",
+    });
+
+    expect(result).toMatchObject({
+      status: "candidate",
+      appliedEventCount: 2,
+      rows: {
+        latest: {
+          poolId: pool.id,
+          stateKind: "v4-cl-replay-candidate-v1",
+          tick: -17_200,
+          liquidity: "2345",
+          lpFee: "30000",
+          protocolFee: "0",
+          candidateId: "unit-v4-candidate",
+        },
+      },
+    });
+  });
+
+  test("fails closed for invalid V4 replay delta inputs", () => {
+    const pool = v4ClReplayPool();
+    const base = normalizedV4EventBase(pool);
+    const seed = v4ClReplaySeedCapsule(pool);
+    const highGrossSeed = {
+      ...seed,
+      latest: {
+        ...seed.latest,
+        liquidity: "100",
+      },
+      initializedTicks: seed.initializedTicks.map((tick) => ({
+        ...tick,
+        liquidityGross: "2000",
+      })),
+    };
+    const swap = {
+      ...base,
+      kind: "swap",
+      sqrtPriceX96: 2n ** 96n,
+      tick: -17_200,
+      liquidity: 2_345n,
+      lpFee: 30_000n,
+    } as const;
+    const modify = {
+      ...base,
+      kind: "modify-liquidity",
+      tickLower: -17_600,
+      tickUpper: -17_200,
+      liquidityDelta: 50n,
+    } as const;
+
+    const cases = [
+      {
+        reason: "seed-required",
+        seed: null,
+        events: [],
+      },
+      {
+        reason: "source-registry-mismatch",
+        seed,
+        sourceRegistryId: "other-registry",
+        events: [],
+      },
+      {
+        reason: "pool-mismatch",
+        seed,
+        events: [{ ...swap, poolId: "other-pool" }],
+      },
+      {
+        reason: "lp-fee-mismatch",
+        seed,
+        events: [{ ...swap, lpFee: 10_000n }],
+      },
+      {
+        reason: "pool-shape-mismatch",
+        seed,
+        events: [
+          {
+            ...base,
+            kind: "initialize",
+            sqrtPriceX96: 2n ** 96n,
+            tick: -17_400,
+            lpFee: 30_000n,
+            tickSpacing: 1,
+          } as const,
+        ],
+      },
+      {
+        reason: "invalid-tick-range",
+        seed,
+        events: [{ ...modify, tickLower: -17_200, tickUpper: -17_600 }],
+      },
+      {
+        reason: "invalid-tick-spacing",
+        seed,
+        events: [{ ...modify, tickLower: -17_601 }],
+      },
+      {
+        reason: "liquidity-underflow",
+        seed,
+        events: [{ ...modify, liquidityDelta: -1_000n }],
+      },
+      {
+        reason: "active-liquidity-underflow",
+        seed: highGrossSeed,
+        events: [{ ...modify, liquidityDelta: -500n }],
+      },
+    ] as const;
+
+    for (const testCase of cases) {
+      const sourceRegistryId =
+        "sourceRegistryId" in testCase
+          ? testCase.sourceRegistryId
+          : "unit-registry";
+      const result = applyV4ClReplayDeltas({
+        pool,
+        seed: testCase.seed,
+        events: testCase.events,
+        observedThroughBlock: 122,
+        blockHash:
+          "0x4444444444444444444444444444444444444444444444444444444444444444",
+        parentHash:
+          "0x5555555555555555555555555555555555555555555555555555555555555555",
+        candidateId: "unit-v4-candidate",
+        zoraProvenance: verifiedV4ZoraProvenance(pool),
+        sourceRegistryId,
+        updatedAt: "2026-05-20T00:01:00.000Z",
+      });
+
+      expect(result).toMatchObject({
+        reason: testCase.reason,
+      });
+      expect(result.status).not.toBe("candidate");
+    }
   });
 
   test("rejects unsupported, removed, and ambiguous CL replay logs", () => {
@@ -1632,6 +1991,195 @@ describe("FAME pool-state indexer", () => {
     expect(
       stringField(parseItem(db.getLatestV4ClReplay(v4Pool)), "snapshotId"),
     ).toContain(result.sourceRegistryId);
+  });
+
+  test("seeds approved V4 maintenance once then advances from PoolManager deltas", async () => {
+    const v4Pool = v4ClReplayPool();
+    const db = new InMemoryPoolStateDb();
+    const seedClient = new FakePoolStateClient([], 120n);
+    seedClient.v4ClReplaySnapshotsByPoolId.set(v4Pool.id, {
+      sqrtPriceX96: 2n ** 96n,
+      tick: -17_400,
+      liquidity: 1_000n,
+      lpFee: 30_000n,
+      protocolFee: 0n,
+      blockHash:
+        "0x1111111111111111111111111111111111111111111111111111111111111111",
+      parentHash:
+        "0x2222222222222222222222222222222222222222222222222222222222222222",
+      bitmapWords: [
+        { wordPosition: -2, bitmap: 0n },
+        { wordPosition: -1, bitmap: (1n << 168n) | (1n << 170n) },
+        { wordPosition: 0, bitmap: 0n },
+      ],
+      initializedTicks: [
+        { tick: -17_600, liquidityGross: 500n, liquidityNet: 500n },
+        { tick: -17_200, liquidityGross: 500n, liquidityNet: -500n },
+      ],
+      providerReadCount: 42,
+      durationMs: 24,
+    });
+
+    const seedResult = await indexFamePoolStates({
+      client: seedClient,
+      db,
+      tableName: "PoolState",
+      registry: registryWithPools([v4Pool]),
+      clReplayMaintenanceMode: "steady-state",
+      clReplayTrustPromotion: true,
+      v4ZoraProvenance: verifiedV4ZoraProvenance(v4Pool),
+      now: new Date("2026-05-21T00:00:00.000Z"),
+    });
+
+    expect(seedResult).toMatchObject({
+      v4ClReplaySnapshots: 1,
+      v4ClReplayMaintenanceMetrics: [
+        {
+          poolId: v4Pool.id,
+          status: "trusted",
+          reason: null,
+          fromBlock: 118,
+          toBlock: 118,
+          scannedLogCount: 0,
+          appliedEventCount: 0,
+          candidateWritten: true,
+        },
+      ],
+    });
+    expect(db.getLatestV4ClReplayMaintenance(v4Pool)).toMatchObject({
+      status: "trusted",
+      cursorBlock: 118,
+      reason: null,
+    });
+    expect(db.getLatestV4ClReplay(v4Pool)).toMatchObject({
+      bitmapWordCount: 1,
+      initializedTickCount: 2,
+    });
+
+    const deltaClient = new FakePoolStateClient([], 123n);
+    const unrelatedV4Log = swapV4ReplayLog(v4Pool, {
+      blockNumber: 120n,
+      transactionIndex: 1,
+      logIndex: 1,
+    });
+    const unrelatedTopic0 = unrelatedV4Log.topics[0];
+    if (!unrelatedTopic0) throw new Error("Missing V4 replay topic0.");
+    deltaClient.v4ClReplayLogs = [
+      {
+        ...unrelatedV4Log,
+        topics: [
+          unrelatedTopic0,
+          "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ],
+      },
+      swapV4ReplayLog(v4Pool, {
+        blockNumber: 120n,
+        transactionIndex: 2,
+        logIndex: 3,
+      }),
+    ];
+
+    const deltaResult = await indexFamePoolStates({
+      client: deltaClient,
+      db,
+      tableName: "PoolState",
+      registry: registryWithPools([v4Pool]),
+      clReplayMaintenanceMode: "steady-state",
+      clReplayTrustPromotion: true,
+      v4ZoraProvenance: verifiedV4ZoraProvenance(v4Pool),
+      now: new Date("2026-05-21T00:01:00.000Z"),
+    });
+
+    expect(deltaClient.v4ClReplaySnapshotReadCount).toBe(0);
+    expect(deltaResult).toMatchObject({
+      v4ClReplaySnapshots: 0,
+      v4ClReplayMaintenanceMetrics: [
+        {
+          poolId: v4Pool.id,
+          status: "trusted",
+          reason: null,
+          fromBlock: 119,
+          toBlock: 121,
+          scannedLogCount: 1,
+          appliedEventCount: 1,
+          candidateWritten: true,
+        },
+      ],
+    });
+    expect(db.getLatestV4ClReplay(v4Pool)).toMatchObject({
+      tick: -17_200,
+      liquidity: "2345",
+      observedThroughBlock: 121,
+      lpFee: "30000",
+      protocolFee: "0",
+    });
+    expect(db.getLatestV4ClReplayCandidate(v4Pool)).toMatchObject({
+      stateKind: "v4-cl-replay-candidate-v1",
+      observedThroughBlock: 121,
+    });
+  });
+
+  test("repairs approved V4 maintenance from a full snapshot without a trusted cursor", async () => {
+    const v4Pool = v4ClReplayPool();
+    const db = new InMemoryPoolStateDb();
+    const repairClient = new FakePoolStateClient([], 120n);
+    repairClient.v4ClReplaySnapshotsByPoolId.set(v4Pool.id, {
+      sqrtPriceX96: 2n ** 96n,
+      tick: -17_400,
+      liquidity: 2_000n,
+      lpFee: 30_000n,
+      protocolFee: 0n,
+      blockHash:
+        "0x1111111111111111111111111111111111111111111111111111111111111111",
+      parentHash:
+        "0x2222222222222222222222222222222222222222222222222222222222222222",
+      bitmapWords: [
+        { wordPosition: -2, bitmap: 0n },
+        { wordPosition: -1, bitmap: 1n << 168n },
+      ],
+      initializedTicks: [
+        { tick: -17_600, liquidityGross: 500n, liquidityNet: 500n },
+      ],
+      providerReadCount: 42,
+      durationMs: 24,
+    });
+
+    const repairResult = await indexFamePoolStates({
+      client: repairClient,
+      db,
+      tableName: "PoolState",
+      registry: registryWithPools([v4Pool]),
+      clReplayMaintenanceMode: "repair",
+      clReplayTrustPromotion: true,
+      v4ZoraProvenance: verifiedV4ZoraProvenance(v4Pool),
+      now: new Date("2026-05-21T00:00:00.000Z"),
+    });
+
+    expect(repairResult).toMatchObject({
+      v4ClReplaySnapshots: 1,
+      v4ClReplayMaintenanceMetrics: [
+        {
+          poolId: v4Pool.id,
+          status: "trusted",
+          reason: null,
+          fromBlock: 118,
+          toBlock: 118,
+          scannedLogCount: 0,
+          appliedEventCount: 0,
+          candidateWritten: true,
+        },
+      ],
+    });
+    expect(db.getLatestV4ClReplay(v4Pool)).toMatchObject({
+      liquidity: "2000",
+      observedThroughBlock: 118,
+      bitmapWordCount: 1,
+    });
+    expect(db.getLatestV4ClReplayMaintenance(v4Pool)).toMatchObject({
+      status: "trusted",
+      reason: null,
+      cursorBlock: 118,
+    });
   });
 
   test("maintains the selected Slipstream candidate without publishing quoteable replay state", async () => {

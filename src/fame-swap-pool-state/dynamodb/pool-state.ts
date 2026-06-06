@@ -254,6 +254,69 @@ export interface FameV4ClReplayLatestState extends Record<string, unknown> {
   maxTick: number | null;
 }
 
+export interface FameV4ClReplayMaintenanceState
+  extends Record<string, unknown> {
+  pk: string;
+  sk: "v4-cl-replay-maintenance-v1";
+  stateKind: "v4-cl-replay-maintenance-v1";
+  poolId: string;
+  chainId: number;
+  poolKey: Hex;
+  stateViewAddress: Address;
+  status: FameClReplayMaintenanceStatus;
+  cursorBlock: number;
+  cursorBlockHash: Hex;
+  cursorTransactionIndex: number;
+  cursorLogIndex: number;
+  targetBlock: number;
+  targetBlockHash: Hex;
+  stateHash: Hex;
+  sourceRegistryId: string;
+  updatedAt: string;
+  lastCheckpointBlock: number | null;
+  lastCheckpointBlockHash: Hex | null;
+  reason: string | null;
+  candidateId: string | null;
+}
+
+export interface FameV4ClReplayCandidateLatestState
+  extends Record<string, unknown> {
+  pk: string;
+  sk: "v4-cl-replay-candidate-v1";
+  stateKind: "v4-cl-replay-candidate-v1";
+  poolId: string;
+  chainId: number;
+  poolKey: Hex;
+  stateViewAddress: Address;
+  token0: Address;
+  token1: Address;
+  venueFamily: "UniswapV4";
+  tickSpacing: number;
+  sqrtPriceX96: string;
+  tick: number;
+  liquidity: string;
+  lpFee: string;
+  protocolFee: string;
+  feeSource: "v4-slot0";
+  observedThroughBlock: number;
+  blockHash: Hex;
+  parentHash: Hex;
+  candidateId: string;
+  stateHash: Hex;
+  source: FameV4ClReplaySource;
+  zoraProvenance: FameV4ZoraVerifiedProvenance;
+  sourceRegistryId: string;
+  updatedAt: string;
+  bitmapWordCount: number;
+  initializedTickCount: number;
+  bitmapChunkCount: number;
+  tickChunkCount: number;
+  minWordPosition: number | null;
+  maxWordPosition: number | null;
+  minTick: number | null;
+  maxTick: number | null;
+}
+
 export type FameClReplayBitmapChunkSortKey =
   `cl-replay-v1:${string}:bitmap:${number}`;
 
@@ -271,6 +334,12 @@ export type FameV4ClReplayBitmapChunkSortKey =
 
 export type FameV4ClReplayTickChunkSortKey =
   `v4-cl-replay-v1:${string}:tick:${number}`;
+
+export type FameV4ClReplayCandidateBitmapChunkSortKey =
+  `v4-cl-replay-candidate-v1:${string}:bitmap:${number}`;
+
+export type FameV4ClReplayCandidateTickChunkSortKey =
+  `v4-cl-replay-candidate-v1:${string}:tick:${number}`;
 
 export interface FameClReplayBitmapChunkState extends Record<string, unknown> {
   pk: string;
@@ -376,8 +445,7 @@ export interface FameV4ClReplayBitmapChunkState
   bitmapWords: FameClReplayBitmapWord[];
 }
 
-export interface FameV4ClReplayTickChunkState
-  extends Record<string, unknown> {
+export interface FameV4ClReplayTickChunkState extends Record<string, unknown> {
   pk: string;
   sk: FameV4ClReplayTickChunkSortKey;
   stateKind: "v4-cl-replay-tick-chunk-v1";
@@ -389,6 +457,50 @@ export interface FameV4ClReplayTickChunkState
   blockHash: Hex;
   parentHash: Hex;
   snapshotId: string;
+  stateHash: Hex;
+  source: FameV4ClReplaySource;
+  sourceRegistryId: string;
+  updatedAt: string;
+  expiresAt: number;
+  chunkIndex: number;
+  initializedTicks: FameClReplayInitializedTick[];
+}
+
+export interface FameV4ClReplayCandidateBitmapChunkState
+  extends Record<string, unknown> {
+  pk: string;
+  sk: FameV4ClReplayCandidateBitmapChunkSortKey;
+  stateKind: "v4-cl-replay-candidate-bitmap-chunk-v1";
+  poolId: string;
+  chainId: number;
+  poolKey: Hex;
+  stateViewAddress: Address;
+  observedThroughBlock: number;
+  blockHash: Hex;
+  parentHash: Hex;
+  candidateId: string;
+  stateHash: Hex;
+  source: FameV4ClReplaySource;
+  sourceRegistryId: string;
+  updatedAt: string;
+  expiresAt: number;
+  chunkIndex: number;
+  bitmapWords: FameClReplayBitmapWord[];
+}
+
+export interface FameV4ClReplayCandidateTickChunkState
+  extends Record<string, unknown> {
+  pk: string;
+  sk: FameV4ClReplayCandidateTickChunkSortKey;
+  stateKind: "v4-cl-replay-candidate-tick-chunk-v1";
+  poolId: string;
+  chainId: number;
+  poolKey: Hex;
+  stateViewAddress: Address;
+  observedThroughBlock: number;
+  blockHash: Hex;
+  parentHash: Hex;
+  candidateId: string;
   stateHash: Hex;
   source: FameV4ClReplaySource;
   sourceRegistryId: string;
@@ -422,8 +534,20 @@ export interface FameV4ClReplayStateRows {
   tickChunks: FameV4ClReplayTickChunkState[];
 }
 
+export interface FameV4ClReplayCandidateStateRows {
+  latest: FameV4ClReplayCandidateLatestState;
+  bitmapChunks: FameV4ClReplayCandidateBitmapChunkState[];
+  tickChunks: FameV4ClReplayCandidateTickChunkState[];
+}
+
 export interface FameClReplayCandidateStateCapsule {
   latest: FameClReplayCandidateLatestState;
+  bitmapWords: FameClReplayBitmapWord[];
+  initializedTicks: FameClReplayInitializedTick[];
+}
+
+export interface FameV4ClReplayCandidateStateCapsule {
+  latest: FameV4ClReplayCandidateLatestState;
   bitmapWords: FameClReplayBitmapWord[];
   initializedTicks: FameClReplayInitializedTick[];
 }
@@ -511,9 +635,7 @@ function clReplayPoolIdentity(pool: FameClReplayRegistryEntry): string {
   return `address:${pool.poolAddress.toLowerCase()}`;
 }
 
-function v4ClReplayPoolIdentity(pool: {
-  poolKey: Hex;
-}): string {
+function v4ClReplayPoolIdentity(pool: { poolKey: Hex }): string {
   return `pool-key:${pool.poolKey.toLowerCase()}`;
 }
 
@@ -561,6 +683,32 @@ export function latestV4ClReplayStateKey(pool: {
   return {
     pk: `pool:${pool.chainId.toString()}:${v4ClReplayPoolIdentity(pool)}`,
     sk: "v4-cl-replay-v1",
+  };
+}
+
+export function latestV4ClReplayMaintenanceStateKey(pool: {
+  chainId: number;
+  poolKey: Hex;
+}): {
+  pk: string;
+  sk: "v4-cl-replay-maintenance-v1";
+} {
+  return {
+    pk: `pool:${pool.chainId.toString()}:${v4ClReplayPoolIdentity(pool)}`,
+    sk: "v4-cl-replay-maintenance-v1",
+  };
+}
+
+export function latestV4ClReplayCandidateStateKey(pool: {
+  chainId: number;
+  poolKey: Hex;
+}): {
+  pk: string;
+  sk: "v4-cl-replay-candidate-v1";
+} {
+  return {
+    pk: `pool:${pool.chainId.toString()}:${v4ClReplayPoolIdentity(pool)}`,
+    sk: "v4-cl-replay-candidate-v1",
   };
 }
 
@@ -631,6 +779,28 @@ function v4ClReplayTickChunkKey(
   return {
     pk: `pool:${pool.chainId.toString()}:${v4ClReplayPoolIdentity(pool)}`,
     sk: `v4-cl-replay-v1:${snapshotId}:tick:${chunkIndex}`,
+  };
+}
+
+function v4ClReplayCandidateBitmapChunkKey(
+  pool: { chainId: number; poolKey: Hex },
+  candidateId: string,
+  chunkIndex: number,
+): { pk: string; sk: FameV4ClReplayCandidateBitmapChunkSortKey } {
+  return {
+    pk: `pool:${pool.chainId.toString()}:${v4ClReplayPoolIdentity(pool)}`,
+    sk: `v4-cl-replay-candidate-v1:${candidateId}:bitmap:${chunkIndex}`,
+  };
+}
+
+function v4ClReplayCandidateTickChunkKey(
+  pool: { chainId: number; poolKey: Hex },
+  candidateId: string,
+  chunkIndex: number,
+): { pk: string; sk: FameV4ClReplayCandidateTickChunkSortKey } {
+  return {
+    pk: `pool:${pool.chainId.toString()}:${v4ClReplayPoolIdentity(pool)}`,
+    sk: `v4-cl-replay-candidate-v1:${candidateId}:tick:${chunkIndex}`,
   };
 }
 
@@ -709,6 +879,18 @@ function itemToLatestV4ClReplayState(
   item?: Record<string, unknown> | null,
 ): FameV4ClReplayLatestState | null {
   return item ? parseLatestV4ClReplayStateItem(item) : null;
+}
+
+function itemToLatestV4ClReplayMaintenanceState(
+  item?: Record<string, unknown> | null,
+): FameV4ClReplayMaintenanceState | null {
+  return item ? parseLatestV4ClReplayMaintenanceStateItem(item) : null;
+}
+
+function itemToLatestV4ClReplayCandidateState(
+  item?: Record<string, unknown> | null,
+): FameV4ClReplayCandidateLatestState | null {
+  return item ? parseLatestV4ClReplayCandidateStateItem(item) : null;
 }
 
 function invalidItem(
@@ -924,11 +1106,7 @@ function v4ClReplayBitmapChunkSortKeyField(
 ): FameV4ClReplayBitmapChunkSortKey {
   const value = stringField(item, recordType, field);
   if (!/^v4-cl-replay-v1:.+:bitmap:[0-9]+$/.test(value)) {
-    invalidItem(
-      recordType,
-      field,
-      "expected a V4 CL replay bitmap chunk key",
-    );
+    invalidItem(recordType, field, "expected a V4 CL replay bitmap chunk key");
   }
   return value as FameV4ClReplayBitmapChunkSortKey;
 }
@@ -943,6 +1121,38 @@ function v4ClReplayTickChunkSortKeyField(
     invalidItem(recordType, field, "expected a V4 CL replay tick chunk key");
   }
   return value as FameV4ClReplayTickChunkSortKey;
+}
+
+function v4ClReplayCandidateBitmapChunkSortKeyField(
+  item: Record<string, unknown>,
+  recordType: string,
+  field: string,
+): FameV4ClReplayCandidateBitmapChunkSortKey {
+  const value = stringField(item, recordType, field);
+  if (!/^v4-cl-replay-candidate-v1:.+:bitmap:[0-9]+$/.test(value)) {
+    invalidItem(
+      recordType,
+      field,
+      "expected a V4 CL replay candidate bitmap chunk key",
+    );
+  }
+  return value as FameV4ClReplayCandidateBitmapChunkSortKey;
+}
+
+function v4ClReplayCandidateTickChunkSortKeyField(
+  item: Record<string, unknown>,
+  recordType: string,
+  field: string,
+): FameV4ClReplayCandidateTickChunkSortKey {
+  const value = stringField(item, recordType, field);
+  if (!/^v4-cl-replay-candidate-v1:.+:tick:[0-9]+$/.test(value)) {
+    invalidItem(
+      recordType,
+      field,
+      "expected a V4 CL replay candidate tick chunk key",
+    );
+  }
+  return value as FameV4ClReplayCandidateTickChunkSortKey;
 }
 
 function arrayField(
@@ -1040,20 +1250,12 @@ function v4ZoraVerifiedProvenanceField(
   return {
     status: literalField(provenance, recordType, "status", "verified"),
     source: v4ZoraProvenanceSourceField(provenance, recordType, "source"),
-    chainId: v4ZoraProvenanceChainIdField(
-      provenance,
-      recordType,
-      "chainId",
-    ),
+    chainId: v4ZoraProvenanceChainIdField(provenance, recordType, "chainId"),
     factoryAddress: addressField(provenance, recordType, "factoryAddress"),
     coinAddress: addressField(provenance, recordType, "coinAddress"),
     poolKey: bytes32HexField(provenance, recordType, "poolKey"),
     poolId: bytes32HexField(provenance, recordType, "poolId"),
-    transactionHash: bytes32HexField(
-      provenance,
-      recordType,
-      "transactionHash",
-    ),
+    transactionHash: bytes32HexField(provenance, recordType, "transactionHash"),
     eventName: nullableStringField(provenance, recordType, "eventName"),
   };
 }
@@ -1474,6 +1676,103 @@ function parseLatestV4ClReplayStateItem(
   };
 }
 
+function parseLatestV4ClReplayMaintenanceStateItem(
+  item: Record<string, unknown>,
+): FameV4ClReplayMaintenanceState {
+  const recordType = "V4 CL replay maintenance";
+  return {
+    pk: stringField(item, recordType, "pk"),
+    sk: literalField(item, recordType, "sk", "v4-cl-replay-maintenance-v1"),
+    stateKind: literalField(
+      item,
+      recordType,
+      "stateKind",
+      "v4-cl-replay-maintenance-v1",
+    ),
+    poolId: stringField(item, recordType, "poolId"),
+    chainId: numberField(item, recordType, "chainId"),
+    poolKey: bytes32HexField(item, recordType, "poolKey"),
+    stateViewAddress: addressField(item, recordType, "stateViewAddress"),
+    status: clReplayMaintenanceStatusField(item, recordType, "status"),
+    cursorBlock: numberField(item, recordType, "cursorBlock"),
+    cursorBlockHash: bytes32HexField(item, recordType, "cursorBlockHash"),
+    cursorTransactionIndex: numberField(
+      item,
+      recordType,
+      "cursorTransactionIndex",
+    ),
+    cursorLogIndex: numberField(item, recordType, "cursorLogIndex"),
+    targetBlock: numberField(item, recordType, "targetBlock"),
+    targetBlockHash: bytes32HexField(item, recordType, "targetBlockHash"),
+    stateHash: bytes32HexField(item, recordType, "stateHash"),
+    sourceRegistryId: stringField(item, recordType, "sourceRegistryId"),
+    updatedAt: stringField(item, recordType, "updatedAt"),
+    lastCheckpointBlock: nullableIntegerField(
+      item,
+      recordType,
+      "lastCheckpointBlock",
+    ),
+    lastCheckpointBlockHash: nullableBytes32HexField(
+      item,
+      recordType,
+      "lastCheckpointBlockHash",
+    ),
+    reason: nullableStringField(item, recordType, "reason"),
+    candidateId: nullableStringField(item, recordType, "candidateId"),
+  };
+}
+
+function parseLatestV4ClReplayCandidateStateItem(
+  item: Record<string, unknown>,
+): FameV4ClReplayCandidateLatestState {
+  const recordType = "latest V4 CL replay candidate";
+  return {
+    pk: stringField(item, recordType, "pk"),
+    sk: literalField(item, recordType, "sk", "v4-cl-replay-candidate-v1"),
+    stateKind: literalField(
+      item,
+      recordType,
+      "stateKind",
+      "v4-cl-replay-candidate-v1",
+    ),
+    poolId: stringField(item, recordType, "poolId"),
+    chainId: numberField(item, recordType, "chainId"),
+    poolKey: bytes32HexField(item, recordType, "poolKey"),
+    stateViewAddress: addressField(item, recordType, "stateViewAddress"),
+    token0: addressField(item, recordType, "token0"),
+    token1: addressField(item, recordType, "token1"),
+    venueFamily: literalField(item, recordType, "venueFamily", "UniswapV4"),
+    tickSpacing: numberField(item, recordType, "tickSpacing"),
+    sqrtPriceX96: decimalStringField(item, recordType, "sqrtPriceX96"),
+    tick: integerField(item, recordType, "tick"),
+    liquidity: decimalStringField(item, recordType, "liquidity"),
+    lpFee: decimalStringField(item, recordType, "lpFee"),
+    protocolFee: decimalStringField(item, recordType, "protocolFee"),
+    feeSource: literalField(item, recordType, "feeSource", "v4-slot0"),
+    observedThroughBlock: numberField(item, recordType, "observedThroughBlock"),
+    blockHash: bytes32HexField(item, recordType, "blockHash"),
+    parentHash: bytes32HexField(item, recordType, "parentHash"),
+    candidateId: stringField(item, recordType, "candidateId"),
+    stateHash: bytes32HexField(item, recordType, "stateHash"),
+    source: v4ClReplaySourceField(item, recordType, "source"),
+    zoraProvenance: v4ZoraVerifiedProvenanceField(
+      item,
+      recordType,
+      "zoraProvenance",
+    ),
+    sourceRegistryId: stringField(item, recordType, "sourceRegistryId"),
+    updatedAt: stringField(item, recordType, "updatedAt"),
+    bitmapWordCount: numberField(item, recordType, "bitmapWordCount"),
+    initializedTickCount: numberField(item, recordType, "initializedTickCount"),
+    bitmapChunkCount: numberField(item, recordType, "bitmapChunkCount"),
+    tickChunkCount: numberField(item, recordType, "tickChunkCount"),
+    minWordPosition: nullableIntegerField(item, recordType, "minWordPosition"),
+    maxWordPosition: nullableIntegerField(item, recordType, "maxWordPosition"),
+    minTick: nullableIntegerField(item, recordType, "minTick"),
+    maxTick: nullableIntegerField(item, recordType, "maxTick"),
+  };
+}
+
 function parseClReplayBitmapChunkItem(
   item: Record<string, unknown>,
 ): FameClReplayBitmapChunkState {
@@ -1698,6 +1997,82 @@ function parseV4ClReplayTickChunkItem(
   };
 }
 
+function parseV4ClReplayCandidateBitmapChunkItem(
+  item: Record<string, unknown>,
+): FameV4ClReplayCandidateBitmapChunkState {
+  const recordType = "V4 CL replay candidate bitmap chunk";
+  return {
+    pk: stringField(item, recordType, "pk"),
+    sk: v4ClReplayCandidateBitmapChunkSortKeyField(item, recordType, "sk"),
+    stateKind: literalField(
+      item,
+      recordType,
+      "stateKind",
+      "v4-cl-replay-candidate-bitmap-chunk-v1",
+    ),
+    poolId: stringField(item, recordType, "poolId"),
+    chainId: numberField(item, recordType, "chainId"),
+    poolKey: bytes32HexField(item, recordType, "poolKey"),
+    stateViewAddress: addressField(item, recordType, "stateViewAddress"),
+    observedThroughBlock: numberField(item, recordType, "observedThroughBlock"),
+    blockHash: bytes32HexField(item, recordType, "blockHash"),
+    parentHash: bytes32HexField(item, recordType, "parentHash"),
+    candidateId: stringField(item, recordType, "candidateId"),
+    stateHash: bytes32HexField(item, recordType, "stateHash"),
+    source: v4ClReplaySourceField(item, recordType, "source"),
+    sourceRegistryId: stringField(item, recordType, "sourceRegistryId"),
+    updatedAt: stringField(item, recordType, "updatedAt"),
+    expiresAt: numberField(item, recordType, "expiresAt"),
+    chunkIndex: numberField(item, recordType, "chunkIndex"),
+    bitmapWords: arrayField(item, recordType, "bitmapWords").map(
+      (entry, index) =>
+        parseReplayBitmapWord(
+          entry,
+          recordType,
+          `bitmapWords[${index.toString()}]`,
+        ),
+    ),
+  };
+}
+
+function parseV4ClReplayCandidateTickChunkItem(
+  item: Record<string, unknown>,
+): FameV4ClReplayCandidateTickChunkState {
+  const recordType = "V4 CL replay candidate tick chunk";
+  return {
+    pk: stringField(item, recordType, "pk"),
+    sk: v4ClReplayCandidateTickChunkSortKeyField(item, recordType, "sk"),
+    stateKind: literalField(
+      item,
+      recordType,
+      "stateKind",
+      "v4-cl-replay-candidate-tick-chunk-v1",
+    ),
+    poolId: stringField(item, recordType, "poolId"),
+    chainId: numberField(item, recordType, "chainId"),
+    poolKey: bytes32HexField(item, recordType, "poolKey"),
+    stateViewAddress: addressField(item, recordType, "stateViewAddress"),
+    observedThroughBlock: numberField(item, recordType, "observedThroughBlock"),
+    blockHash: bytes32HexField(item, recordType, "blockHash"),
+    parentHash: bytes32HexField(item, recordType, "parentHash"),
+    candidateId: stringField(item, recordType, "candidateId"),
+    stateHash: bytes32HexField(item, recordType, "stateHash"),
+    source: v4ClReplaySourceField(item, recordType, "source"),
+    sourceRegistryId: stringField(item, recordType, "sourceRegistryId"),
+    updatedAt: stringField(item, recordType, "updatedAt"),
+    expiresAt: numberField(item, recordType, "expiresAt"),
+    chunkIndex: numberField(item, recordType, "chunkIndex"),
+    initializedTicks: arrayField(item, recordType, "initializedTicks").map(
+      (entry, index) =>
+        parseReplayInitializedTick(
+          entry,
+          recordType,
+          `initializedTicks[${index.toString()}]`,
+        ),
+    ),
+  };
+}
+
 function parseCursorItem(item: Record<string, unknown>): FamePoolStateCursor {
   const recordType = "pool-state cursor";
   return {
@@ -1872,6 +2247,48 @@ function v4ReplayChunkMatchesLatest(
 
 function v4ReplayCapsuleMatchesPointer(
   latest: FameV4ClReplayLatestState,
+  bitmapWords: readonly FameClReplayBitmapWord[],
+  initializedTicks: readonly FameClReplayInitializedTick[],
+): boolean {
+  const wordPositions = bitmapWords.map((word) => word.wordPosition);
+  const tickIndexes = initializedTicks.map((tick) => tick.tick);
+  return (
+    bitmapWords.length === latest.bitmapWordCount &&
+    initializedTicks.length === latest.initializedTickCount &&
+    minOrNull(wordPositions) === latest.minWordPosition &&
+    maxOrNull(wordPositions) === latest.maxWordPosition &&
+    minOrNull(tickIndexes) === latest.minTick &&
+    maxOrNull(tickIndexes) === latest.maxTick &&
+    strictlyIncreasingNumbers(wordPositions) &&
+    strictlyIncreasingNumbers(tickIndexes)
+  );
+}
+
+function v4ReplayCandidateChunkMatchesLatest(
+  latest: FameV4ClReplayCandidateLatestState,
+  chunk:
+    | FameV4ClReplayCandidateBitmapChunkState
+    | FameV4ClReplayCandidateTickChunkState,
+): boolean {
+  return (
+    chunk.pk === latest.pk &&
+    chunk.poolId === latest.poolId &&
+    chunk.chainId === latest.chainId &&
+    chunk.poolKey.toLowerCase() === latest.poolKey.toLowerCase() &&
+    chunk.stateViewAddress.toLowerCase() ===
+      latest.stateViewAddress.toLowerCase() &&
+    chunk.observedThroughBlock === latest.observedThroughBlock &&
+    chunk.blockHash === latest.blockHash &&
+    chunk.parentHash === latest.parentHash &&
+    chunk.candidateId === latest.candidateId &&
+    chunk.stateHash === latest.stateHash &&
+    chunk.source === latest.source &&
+    chunk.sourceRegistryId === latest.sourceRegistryId
+  );
+}
+
+function v4ReplayCandidateCapsuleMatchesPointer(
+  latest: FameV4ClReplayCandidateLatestState,
   bitmapWords: readonly FameClReplayBitmapWord[],
   initializedTicks: readonly FameClReplayInitializedTick[],
 ): boolean {
@@ -2075,6 +2492,82 @@ function completeV4ReplayCapsuleFromItems({
     (chunk) => chunk.initializedTicks,
   );
   if (!v4ReplayCapsuleMatchesPointer(latest, bitmapWords, initializedTicks)) {
+    return null;
+  }
+
+  return {
+    latest,
+    bitmapWords,
+    initializedTicks,
+  };
+}
+
+function completeV4ReplayCandidateCapsuleFromItems({
+  latest,
+  itemsByKey,
+}: {
+  latest: FameV4ClReplayCandidateLatestState;
+  itemsByKey: ReadonlyMap<string, Record<string, unknown>>;
+}): FameV4ClReplayCandidateStateCapsule | null {
+  const bitmapChunks: FameV4ClReplayCandidateBitmapChunkState[] = [];
+  for (
+    let chunkIndex = 0;
+    chunkIndex < latest.bitmapChunkCount;
+    chunkIndex += 1
+  ) {
+    const key = v4ClReplayCandidateBitmapChunkKey(
+      latest,
+      latest.candidateId,
+      chunkIndex,
+    );
+    const item = itemsByKey.get(dynamoKeyString(key));
+    if (!item) return null;
+    const chunk = parseV4ClReplayCandidateBitmapChunkItem(item);
+    if (
+      chunk.chunkIndex !== chunkIndex ||
+      chunk.sk !== key.sk ||
+      !v4ReplayCandidateChunkMatchesLatest(latest, chunk)
+    ) {
+      return null;
+    }
+    bitmapChunks.push(chunk);
+  }
+
+  const tickChunks: FameV4ClReplayCandidateTickChunkState[] = [];
+  for (
+    let chunkIndex = 0;
+    chunkIndex < latest.tickChunkCount;
+    chunkIndex += 1
+  ) {
+    const key = v4ClReplayCandidateTickChunkKey(
+      latest,
+      latest.candidateId,
+      chunkIndex,
+    );
+    const item = itemsByKey.get(dynamoKeyString(key));
+    if (!item) return null;
+    const chunk = parseV4ClReplayCandidateTickChunkItem(item);
+    if (
+      chunk.chunkIndex !== chunkIndex ||
+      chunk.sk !== key.sk ||
+      !v4ReplayCandidateChunkMatchesLatest(latest, chunk)
+    ) {
+      return null;
+    }
+    tickChunks.push(chunk);
+  }
+
+  const bitmapWords = bitmapChunks.flatMap((chunk) => chunk.bitmapWords);
+  const initializedTicks = tickChunks.flatMap(
+    (chunk) => chunk.initializedTicks,
+  );
+  if (
+    !v4ReplayCandidateCapsuleMatchesPointer(
+      latest,
+      bitmapWords,
+      initializedTicks,
+    )
+  ) {
     return null;
   }
 
@@ -2417,6 +2910,7 @@ export function v4ClReplayStateRowsFromSnapshot(options: {
   assertPositiveChunkSize(tickChunkSize, "tickChunkSize");
 
   const bitmapWords = [...options.bitmapWords]
+    .filter((word) => word.bitmap !== 0n)
     .sort((left, right) => left.wordPosition - right.wordPosition)
     .map((word) => ({
       wordPosition: word.wordPosition,
@@ -2513,11 +3007,7 @@ export function v4ClReplayStateRowsFromSnapshot(options: {
   const tickChunks = chunkArray(initializedTicks, tickChunkSize).map(
     (chunk, chunkIndex) =>
       ({
-        ...v4ClReplayTickChunkKey(
-          options.pool,
-          options.snapshotId,
-          chunkIndex,
-        ),
+        ...v4ClReplayTickChunkKey(options.pool, options.snapshotId, chunkIndex),
         stateKind: "v4-cl-replay-tick-chunk-v1",
         poolId: options.pool.id,
         chainId: options.pool.chainId,
@@ -2535,6 +3025,174 @@ export function v4ClReplayStateRowsFromSnapshot(options: {
         chunkIndex,
         initializedTicks: chunk,
       }) satisfies FameV4ClReplayTickChunkState,
+  );
+
+  return {
+    latest,
+    bitmapChunks,
+    tickChunks,
+  };
+}
+
+export function v4ClReplayCandidateStateRowsFromSnapshot(options: {
+  pool: FameV4ClReplayRegistryEntry;
+  sqrtPriceX96: bigint;
+  tick: number;
+  liquidity: bigint;
+  lpFee: bigint;
+  protocolFee: bigint;
+  observedThroughBlock: number;
+  blockHash: Hex;
+  parentHash: Hex;
+  candidateId: string;
+  stateHash: Hex;
+  zoraProvenance: FameV4ZoraVerifiedProvenance;
+  sourceRegistryId: string;
+  updatedAt: string;
+  bitmapWords: readonly { wordPosition: number; bitmap: bigint }[];
+  initializedTicks: readonly {
+    tick: number;
+    liquidityGross: bigint;
+    liquidityNet: bigint;
+  }[];
+  bitmapChunkSize?: number;
+  tickChunkSize?: number;
+}): FameV4ClReplayCandidateStateRows {
+  if (options.candidateId.length === 0) {
+    throw new Error("V4 CL replay candidateId must be non-empty.");
+  }
+  assertNonNegativeBigInt(options.sqrtPriceX96, "sqrtPriceX96");
+  assertNonNegativeBigInt(options.liquidity, "liquidity");
+  assertNonNegativeBigInt(options.lpFee, "lpFee");
+  assertNonNegativeBigInt(options.protocolFee, "protocolFee");
+
+  const bitmapChunkSize =
+    options.bitmapChunkSize ?? CL_REPLAY_DEFAULT_BITMAP_WORDS_PER_CHUNK;
+  const tickChunkSize =
+    options.tickChunkSize ?? CL_REPLAY_DEFAULT_TICKS_PER_CHUNK;
+  assertPositiveChunkSize(bitmapChunkSize, "bitmapChunkSize");
+  assertPositiveChunkSize(tickChunkSize, "tickChunkSize");
+
+  const bitmapWords = [...options.bitmapWords]
+    .filter((word) => word.bitmap !== 0n)
+    .sort((left, right) => left.wordPosition - right.wordPosition)
+    .map((word) => ({
+      wordPosition: word.wordPosition,
+      bitmap: canonicalUint256Hex(word.bitmap),
+    }));
+  const initializedTicks = [...options.initializedTicks]
+    .sort((left, right) => left.tick - right.tick)
+    .map((tick) => {
+      assertNonNegativeBigInt(tick.liquidityGross, "liquidityGross");
+      return {
+        tick: tick.tick,
+        liquidityGross: tick.liquidityGross.toString(),
+        liquidityNet: tick.liquidityNet.toString(),
+      };
+    });
+
+  const chunkExpiresAt = expiresAtFromIsoTimestamp(
+    options.updatedAt,
+    "updatedAt",
+  );
+
+  assertStrictlyIncreasing(
+    bitmapWords.map((word) => word.wordPosition),
+    "bitmap word",
+  );
+  assertStrictlyIncreasing(
+    initializedTicks.map((tick) => tick.tick),
+    "initialized tick",
+  );
+
+  const latest = {
+    ...latestV4ClReplayCandidateStateKey(options.pool),
+    stateKind: "v4-cl-replay-candidate-v1",
+    poolId: options.pool.id,
+    chainId: options.pool.chainId,
+    poolKey: options.pool.poolKey,
+    stateViewAddress: options.pool.stateViewAddress,
+    token0: options.pool.token0,
+    token1: options.pool.token1,
+    venueFamily: options.pool.venueFamily,
+    tickSpacing: options.pool.tickSpacing,
+    sqrtPriceX96: options.sqrtPriceX96.toString(),
+    tick: options.tick,
+    liquidity: options.liquidity.toString(),
+    lpFee: options.lpFee.toString(),
+    protocolFee: options.protocolFee.toString(),
+    feeSource: "v4-slot0",
+    observedThroughBlock: options.observedThroughBlock,
+    blockHash: options.blockHash,
+    parentHash: options.parentHash,
+    candidateId: options.candidateId,
+    stateHash: options.stateHash,
+    source: "uniswap-v4-state-view",
+    zoraProvenance: options.zoraProvenance,
+    sourceRegistryId: options.sourceRegistryId,
+    updatedAt: options.updatedAt,
+    bitmapWordCount: bitmapWords.length,
+    initializedTickCount: initializedTicks.length,
+    bitmapChunkCount: Math.ceil(bitmapWords.length / bitmapChunkSize),
+    tickChunkCount: Math.ceil(initializedTicks.length / tickChunkSize),
+    minWordPosition: minOrNull(bitmapWords.map((word) => word.wordPosition)),
+    maxWordPosition: maxOrNull(bitmapWords.map((word) => word.wordPosition)),
+    minTick: minOrNull(initializedTicks.map((tick) => tick.tick)),
+    maxTick: maxOrNull(initializedTicks.map((tick) => tick.tick)),
+  } satisfies FameV4ClReplayCandidateLatestState;
+
+  const bitmapChunks = chunkArray(bitmapWords, bitmapChunkSize).map(
+    (chunk, chunkIndex) =>
+      ({
+        ...v4ClReplayCandidateBitmapChunkKey(
+          options.pool,
+          options.candidateId,
+          chunkIndex,
+        ),
+        stateKind: "v4-cl-replay-candidate-bitmap-chunk-v1",
+        poolId: options.pool.id,
+        chainId: options.pool.chainId,
+        poolKey: options.pool.poolKey,
+        stateViewAddress: options.pool.stateViewAddress,
+        observedThroughBlock: options.observedThroughBlock,
+        blockHash: options.blockHash,
+        parentHash: options.parentHash,
+        candidateId: options.candidateId,
+        stateHash: options.stateHash,
+        source: "uniswap-v4-state-view",
+        sourceRegistryId: options.sourceRegistryId,
+        updatedAt: options.updatedAt,
+        expiresAt: chunkExpiresAt,
+        chunkIndex,
+        bitmapWords: chunk,
+      }) satisfies FameV4ClReplayCandidateBitmapChunkState,
+  );
+
+  const tickChunks = chunkArray(initializedTicks, tickChunkSize).map(
+    (chunk, chunkIndex) =>
+      ({
+        ...v4ClReplayCandidateTickChunkKey(
+          options.pool,
+          options.candidateId,
+          chunkIndex,
+        ),
+        stateKind: "v4-cl-replay-candidate-tick-chunk-v1",
+        poolId: options.pool.id,
+        chainId: options.pool.chainId,
+        poolKey: options.pool.poolKey,
+        stateViewAddress: options.pool.stateViewAddress,
+        observedThroughBlock: options.observedThroughBlock,
+        blockHash: options.blockHash,
+        parentHash: options.parentHash,
+        candidateId: options.candidateId,
+        stateHash: options.stateHash,
+        source: "uniswap-v4-state-view",
+        sourceRegistryId: options.sourceRegistryId,
+        updatedAt: options.updatedAt,
+        expiresAt: chunkExpiresAt,
+        chunkIndex,
+        initializedTicks: chunk,
+      }) satisfies FameV4ClReplayCandidateTickChunkState,
   );
 
   return {
@@ -2925,6 +3583,48 @@ function assertV4ClReplayLatestChunkBounds(
   }
 }
 
+function assertV4ClReplayCandidateChunkBounds(
+  latest: FameV4ClReplayCandidateLatestState,
+): void {
+  if (latest.bitmapWordCount === 0) {
+    if (latest.bitmapChunkCount !== 0) {
+      throw new PoolStateInvalidItemError(
+        "latest V4 CL replay candidate",
+        "bitmapChunkCount",
+        "must be 0 when bitmapWordCount is 0",
+      );
+    }
+  } else if (
+    latest.bitmapChunkCount < 1 ||
+    latest.bitmapChunkCount > latest.bitmapWordCount
+  ) {
+    throw new PoolStateInvalidItemError(
+      "latest V4 CL replay candidate",
+      "bitmapChunkCount",
+      "must be between 1 and bitmapWordCount",
+    );
+  }
+
+  if (latest.initializedTickCount === 0) {
+    if (latest.tickChunkCount !== 0) {
+      throw new PoolStateInvalidItemError(
+        "latest V4 CL replay candidate",
+        "tickChunkCount",
+        "must be 0 when initializedTickCount is 0",
+      );
+    }
+  } else if (
+    latest.tickChunkCount < 1 ||
+    latest.tickChunkCount > latest.initializedTickCount
+  ) {
+    throw new PoolStateInvalidItemError(
+      "latest V4 CL replay candidate",
+      "tickChunkCount",
+      "must be between 1 and initializedTickCount",
+    );
+  }
+}
+
 export async function batchGetLatestClReplayMaintenanceStates({
   db = defaultDb,
   tableName,
@@ -3110,6 +3810,116 @@ export async function batchGetLatestV4ClReplayStates({
     pools,
   });
   return batchGetV4ClReplayStateCapsules({
+    db,
+    tableName,
+    latestStates,
+  });
+}
+
+export async function batchGetLatestV4ClReplayMaintenanceStates({
+  db = defaultDb,
+  tableName,
+  pools,
+}: {
+  db?: PoolStateDocumentClient;
+  tableName: string;
+  pools: readonly FameV4ClReplayRegistryEntry[];
+}): Promise<FameV4ClReplayMaintenanceState[]> {
+  if (pools.length === 0) return [];
+
+  const latestItems = await batchGetPoolStateItems({
+    db,
+    tableName,
+    keys: pools.map((pool) => latestV4ClReplayMaintenanceStateKey(pool)),
+  });
+  return latestItems
+    .map(itemToLatestV4ClReplayMaintenanceState)
+    .filter((item): item is FameV4ClReplayMaintenanceState => item !== null);
+}
+
+export async function batchGetLatestV4ClReplayCandidatePointers({
+  db = defaultDb,
+  tableName,
+  pools,
+}: {
+  db?: PoolStateDocumentClient;
+  tableName: string;
+  pools: readonly FameV4ClReplayRegistryEntry[];
+}): Promise<FameV4ClReplayCandidateLatestState[]> {
+  if (pools.length === 0) return [];
+
+  const latestItems = await batchGetPoolStateItems({
+    db,
+    tableName,
+    keys: pools.map((pool) => latestV4ClReplayCandidateStateKey(pool)),
+  });
+  return latestItems
+    .map(itemToLatestV4ClReplayCandidateState)
+    .filter((item): item is FameV4ClReplayCandidateLatestState => item !== null)
+    .map((latest) => {
+      assertV4ClReplayCandidateChunkBounds(latest);
+      return latest;
+    });
+}
+
+export async function batchGetV4ClReplayCandidateStateCapsules({
+  db = defaultDb,
+  tableName,
+  latestStates,
+}: {
+  db?: PoolStateDocumentClient;
+  tableName: string;
+  latestStates: readonly FameV4ClReplayCandidateLatestState[];
+}): Promise<FameV4ClReplayCandidateStateCapsule[]> {
+  if (latestStates.length === 0) return [];
+
+  const chunkKeys = latestStates.flatMap((latest) => [
+    ...Array.from({ length: latest.bitmapChunkCount }, (_, chunkIndex) =>
+      v4ClReplayCandidateBitmapChunkKey(latest, latest.candidateId, chunkIndex),
+    ),
+    ...Array.from({ length: latest.tickChunkCount }, (_, chunkIndex) =>
+      v4ClReplayCandidateTickChunkKey(latest, latest.candidateId, chunkIndex),
+    ),
+  ]);
+  const chunkItems =
+    chunkKeys.length === 0
+      ? []
+      : await batchGetPoolStateItems({
+          db,
+          tableName,
+          keys: chunkKeys,
+        });
+  const itemsByKey = new Map(
+    chunkItems.map((item) => [
+      itemDynamoKeyString(item, "V4 CL replay candidate chunk"),
+      item,
+    ]),
+  );
+
+  return latestStates
+    .map((latest) =>
+      completeV4ReplayCandidateCapsuleFromItems({ latest, itemsByKey }),
+    )
+    .filter(
+      (state): state is FameV4ClReplayCandidateStateCapsule => state !== null,
+    );
+}
+
+export async function batchGetLatestV4ClReplayCandidateStates({
+  db = defaultDb,
+  tableName,
+  pools,
+}: {
+  db?: PoolStateDocumentClient;
+  tableName: string;
+  pools: readonly FameV4ClReplayRegistryEntry[];
+}): Promise<FameV4ClReplayCandidateStateCapsule[]> {
+  const latestStates = await batchGetLatestV4ClReplayCandidatePointers({
+    db,
+    tableName,
+    pools,
+  });
+  return batchGetV4ClReplayCandidateStateCapsules({
     db,
     tableName,
     latestStates,
@@ -3311,6 +4121,75 @@ export async function putLatestV4ClReplayState({
   db?: PoolStateDocumentClient;
   tableName: string;
   rows: FameV4ClReplayStateRows;
+}): Promise<PutLatestPoolStateResult> {
+  for (const chunk of [...rows.bitmapChunks, ...rows.tickChunks]) {
+    await db.send(
+      new PutCommand({
+        TableName: tableName,
+        Item: chunk,
+      }),
+    );
+  }
+
+  try {
+    await db.send(
+      new PutCommand({
+        TableName: tableName,
+        Item: rows.latest,
+        ConditionExpression:
+          "attribute_not_exists(pk) OR observedThroughBlock < :observedThroughBlock OR (observedThroughBlock = :observedThroughBlock AND sourceRegistryId = :sourceRegistryId)",
+        ExpressionAttributeValues: {
+          ":observedThroughBlock": rows.latest.observedThroughBlock,
+          ":sourceRegistryId": rows.latest.sourceRegistryId,
+        },
+      }),
+    );
+    return "written";
+  } catch (error) {
+    if (isConditionalCheckFailed(error)) return "ignored";
+    throw error;
+  }
+}
+
+export async function putLatestV4ClReplayMaintenanceState({
+  db = defaultDb,
+  tableName,
+  state,
+}: {
+  db?: PoolStateDocumentClient;
+  tableName: string;
+  state: FameV4ClReplayMaintenanceState;
+}): Promise<PutLatestPoolStateResult> {
+  try {
+    await db.send(
+      new PutCommand({
+        TableName: tableName,
+        Item: state,
+        ConditionExpression:
+          "attribute_not_exists(pk) OR cursorBlock < :cursorBlock OR (cursorBlock = :cursorBlock AND cursorTransactionIndex < :cursorTransactionIndex) OR (cursorBlock = :cursorBlock AND cursorTransactionIndex = :cursorTransactionIndex AND cursorLogIndex < :cursorLogIndex) OR (cursorBlock = :cursorBlock AND cursorTransactionIndex = :cursorTransactionIndex AND cursorLogIndex = :cursorLogIndex AND sourceRegistryId = :sourceRegistryId)",
+        ExpressionAttributeValues: {
+          ":cursorBlock": state.cursorBlock,
+          ":cursorTransactionIndex": state.cursorTransactionIndex,
+          ":cursorLogIndex": state.cursorLogIndex,
+          ":sourceRegistryId": state.sourceRegistryId,
+        },
+      }),
+    );
+    return "written";
+  } catch (error) {
+    if (isConditionalCheckFailed(error)) return "ignored";
+    throw error;
+  }
+}
+
+export async function putLatestV4ClReplayCandidateState({
+  db = defaultDb,
+  tableName,
+  rows,
+}: {
+  db?: PoolStateDocumentClient;
+  tableName: string;
+  rows: FameV4ClReplayCandidateStateRows;
 }): Promise<PutLatestPoolStateResult> {
   for (const chunk of [...rows.bitmapChunks, ...rows.tickChunks]) {
     await db.send(

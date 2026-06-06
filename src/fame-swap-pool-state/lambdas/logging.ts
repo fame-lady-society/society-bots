@@ -67,6 +67,11 @@ interface SelectedV4ZoraReplayLogSummary extends PoolStateLogFields {
   initializedTickCount: number | null;
   bitmapChunkCount: number | null;
   tickChunkCount: number | null;
+  scannedLogCount: number | null;
+  appliedEventCount: number | null;
+  maintenanceStatus: string | null;
+  maintenanceReason: string | null;
+  candidateWritten: boolean | null;
   lpFee: string | null;
   protocolFee: string | null;
   stateHash: string | null;
@@ -89,9 +94,7 @@ function statusCounts(response: Pick<FamePoolStateBatchResponse, "pools">) {
   return counts;
 }
 
-function poolQuoteStatusCounts(
-  quotes: FamePoolQuoteResponseEntry[],
-) {
+function poolQuoteStatusCounts(quotes: FamePoolQuoteResponseEntry[]) {
   const statusCounts: Record<string, number> = {};
   const reasonCounts: Record<string, number> = {};
   for (const quote of quotes) {
@@ -111,7 +114,8 @@ function selectedClReplayCandidateQuoteLogSummary(
   response: Pick<FamePoolQuoteBatchResponse, "quotes">,
 ): SelectedClReplayCandidateQuoteLogSummary | null {
   const selectedQuotes = response.quotes.filter(
-    (quote) => poolQuotePoolId(quote) === FAME_SELECTED_CL_REPLAY_CANDIDATE_POOL_ID,
+    (quote) =>
+      poolQuotePoolId(quote) === FAME_SELECTED_CL_REPLAY_CANDIDATE_POOL_ID,
   );
   if (selectedQuotes.length === 0) return null;
 
@@ -355,6 +359,19 @@ function indexerResultLogFields(
       lpFee: metric.lpFee,
       protocolFee: metric.protocolFee,
     })),
+    v4ClReplayMaintenanceMetrics: result.v4ClReplayMaintenanceMetrics.map(
+      (metric) => ({
+        poolId: metric.poolId,
+        status: metric.status,
+        reason: metric.reason,
+        fromBlock: metric.fromBlock,
+        toBlock: metric.toBlock,
+        scannedLogCount: metric.scannedLogCount,
+        appliedEventCount: metric.appliedEventCount,
+        candidateWritten: metric.candidateWritten,
+        stateHash: metric.stateHash,
+      }),
+    ),
     sourceRegistryId: result.sourceRegistryId,
   };
   const selectedCandidate = selectedClReplayCandidateLogSummary(result);
@@ -397,18 +414,26 @@ function selectedV4ZoraReplayLogSummary(
   const snapshot = result.v4ClReplayMetrics.find(
     (metric) => metric.poolId === FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
   );
-  if (!snapshot) return null;
+  const maintenance = result.v4ClReplayMaintenanceMetrics.find(
+    (metric) => metric.poolId === FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
+  );
+  if (!snapshot && !maintenance) return null;
 
   return {
     poolId: FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
-    providerReadCount: snapshot.providerReadCount,
-    bitmapWordCount: snapshot.bitmapWordCount,
-    initializedTickCount: snapshot.initializedTickCount,
-    bitmapChunkCount: snapshot.bitmapChunkCount,
-    tickChunkCount: snapshot.tickChunkCount,
-    lpFee: snapshot.lpFee,
-    protocolFee: snapshot.protocolFee,
-    stateHash: snapshot.stateHash,
+    providerReadCount: snapshot?.providerReadCount ?? null,
+    bitmapWordCount: snapshot?.bitmapWordCount ?? null,
+    initializedTickCount: snapshot?.initializedTickCount ?? null,
+    bitmapChunkCount: snapshot?.bitmapChunkCount ?? null,
+    tickChunkCount: snapshot?.tickChunkCount ?? null,
+    scannedLogCount: maintenance?.scannedLogCount ?? null,
+    appliedEventCount: maintenance?.appliedEventCount ?? null,
+    maintenanceStatus: maintenance?.status ?? null,
+    maintenanceReason: maintenance?.reason ?? null,
+    candidateWritten: maintenance?.candidateWritten ?? null,
+    lpFee: snapshot?.lpFee ?? null,
+    protocolFee: snapshot?.protocolFee ?? null,
+    stateHash: maintenance?.stateHash ?? snapshot?.stateHash ?? null,
   };
 }
 
