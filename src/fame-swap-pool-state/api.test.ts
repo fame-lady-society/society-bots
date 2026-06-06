@@ -33,6 +33,7 @@ import {
   type FameV4ClReplayLatestState,
   type FameV4ClReplayMaintenanceState,
   type FameV4ClReplayRegistryEntry,
+  type FameV4ReviewedPoolEvidence,
   type FameV4ClReplayTickChunkState,
   type FameV4ZoraVerifiedProvenance,
   type FamePoolLatestState,
@@ -40,6 +41,7 @@ import {
   type PoolStateDynamoResponse,
 } from "./dynamodb/pool-state.ts";
 import { famePoolStateRegistry } from "./registry/index.ts";
+import { fameV4ZoraQuoteLaneManifestForPool } from "./v4-zora-manifests.ts";
 import type { FamePoolStateRegistryEntry } from "./types.ts";
 
 type SentCommand = Parameters<PoolStateDocumentClient["send"]>[0];
@@ -241,9 +243,11 @@ function clReplayCandidatePool(): FameClReplayRegistryEntry {
   };
 }
 
-function v4ClReplayPool(): FameV4ClReplayRegistryEntry {
+function v4ClReplayPool(
+  poolId = "uniswap-v4-basedflick-zora",
+): FameV4ClReplayRegistryEntry {
   const entry = famePoolStateRegistry.pools.find(
-    (pool) => pool.id === "uniswap-v4-basedflick-zora",
+    (pool) => pool.id === poolId,
   );
   if (
     !entry ||
@@ -283,6 +287,30 @@ function verifiedV4ZoraProvenance(
     transactionHash:
       "0x7777777777777777777777777777777777777777777777777777777777777777",
     eventName: "CoinCreatedV4",
+  };
+}
+
+function reviewedV4PoolEvidence(
+  pool: FameV4ClReplayRegistryEntry,
+): FameV4ReviewedPoolEvidence {
+  const manifest = fameV4ZoraQuoteLaneManifestForPool(pool.id);
+  if (manifest === null) {
+    throw new Error(`Missing reviewed V4 manifest for ${pool.id}.`);
+  }
+  const shape = manifest.reviewedPoolShape;
+  return {
+    status: "verified",
+    source: "reviewed-v4-manifest",
+    kind: manifest.provenanceRequired
+      ? "zora-protocol-pool"
+      : "zero-hook-static-fee",
+    manifestVersion: manifest.version,
+    poolId: manifest.poolId,
+    poolKey: shape.poolKey,
+    staticFee: shape.fee.toString(),
+    hookAddress: shape.hooks,
+    hookData: shape.hookData,
+    protocolFeeStatus: "zero",
   };
 }
 
@@ -387,12 +415,16 @@ function clReplayRowsForPool(pool: FameClReplayRegistryEntry) {
 }
 
 function v4ClReplayRowsForPool(pool: FameV4ClReplayRegistryEntry) {
+  const manifest = fameV4ZoraQuoteLaneManifestForPool(pool.id);
+  if (manifest === null) {
+    throw new Error(`Missing reviewed V4 manifest for ${pool.id}.`);
+  }
   return v4ClReplayStateRowsFromSnapshot({
     pool,
     sqrtPriceX96: 2n ** 96n,
     tick: -17_400,
     liquidity: 8_888n,
-    lpFee: 30_000n,
+    lpFee: BigInt(manifest.reviewedPoolShape.fee),
     protocolFee: 0n,
     observedThroughBlock: 120,
     blockHash:
@@ -402,7 +434,10 @@ function v4ClReplayRowsForPool(pool: FameV4ClReplayRegistryEntry) {
     snapshotId: "unit-v4-cl-replay",
     stateHash:
       "0x6666666666666666666666666666666666666666666666666666666666666666",
-    zoraProvenance: verifiedV4ZoraProvenance(pool),
+    reviewedPoolEvidence: reviewedV4PoolEvidence(pool),
+    ...(manifest.provenanceRequired
+      ? { zoraProvenance: verifiedV4ZoraProvenance(pool) }
+      : {}),
     sourceRegistryId: sourceRegistryIdFor(famePoolStateRegistry.source),
     updatedAt: "2026-05-21T00:00:00.000Z",
     bitmapWords: [{ wordPosition: -1, bitmap: 1n << 169n }],
@@ -451,12 +486,16 @@ function quoteV4ClReplayRowsForPool(
     zoraProvenance?: FameV4ZoraVerifiedProvenance;
   } = {},
 ) {
+  const manifest = fameV4ZoraQuoteLaneManifestForPool(pool.id);
+  if (manifest === null) {
+    throw new Error(`Missing reviewed V4 manifest for ${pool.id}.`);
+  }
   return v4ClReplayStateRowsFromSnapshot({
     pool,
     sqrtPriceX96: 2n ** 96n,
     tick: 0,
     liquidity: 1_000_000_000_000_000_000n,
-    lpFee: 30_000n,
+    lpFee: BigInt(manifest.reviewedPoolShape.fee),
     protocolFee: options.protocolFee ?? 0n,
     observedThroughBlock: 120,
     blockHash:
@@ -466,7 +505,12 @@ function quoteV4ClReplayRowsForPool(
     snapshotId: "unit-v4-cl-quote",
     stateHash:
       "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-    zoraProvenance: options.zoraProvenance ?? verifiedV4ZoraProvenance(pool),
+    reviewedPoolEvidence: reviewedV4PoolEvidence(pool),
+    ...(options.zoraProvenance !== undefined
+      ? { zoraProvenance: options.zoraProvenance }
+      : manifest.provenanceRequired
+        ? { zoraProvenance: verifiedV4ZoraProvenance(pool) }
+        : {}),
     sourceRegistryId: sourceRegistryIdFor(famePoolStateRegistry.source),
     updatedAt: "2026-05-21T00:00:00.000Z",
     bitmapWords: [
@@ -1124,6 +1168,74 @@ describe("FAME pool-state API contract", () => {
       expect(quote).not.toHaveProperty("initializedTicks");
       if (quote.status !== "quoted") {
         throw new Error("Expected quoted V4 CL quote.");
+      }
+      expect(BigInt(quote.amountOut)).toBeGreaterThan(0n);
+    }
+  });
+
+  test("returns no-hook ZORA/ETH V4 compact CL quotes without provenance", async () => {
+    const pool = v4ClReplayPool("uniswap-v4-zora-eth");
+    const rows = quoteV4ClReplayRowsForPool(pool);
+    const response = await handleFamePoolQuoteBatchRequest({
+      request: {
+        currentBlock: 125,
+        quotes: [
+          {
+            poolId: pool.id,
+            tokenIn: pool.token0,
+            tokenOut: pool.token1,
+            amountIn: "1000000",
+          },
+          {
+            poolId: pool.id,
+            tokenIn: pool.token1,
+            tokenOut: pool.token0,
+            amountIn: "1000000",
+          },
+        ],
+      },
+      tableName: "PoolState",
+      db: new BatchStateDb([
+        trustedMaintenanceForV4ReplayRows(pool, rows),
+        rows.latest,
+        ...rows.bitmapChunks,
+        ...rows.tickChunks,
+      ]),
+      producerMaxFreshnessBlocks: 120,
+    });
+
+    expect(response.quotes).toHaveLength(2);
+    for (const quote of response.quotes) {
+      expect(quote).toMatchObject({
+        status: "quoted",
+        quoteKind: "cl-quote-v1",
+        poolId: pool.id,
+        poolAddress: null,
+        poolKey: pool.poolKey,
+        stateViewAddress: pool.stateViewAddress,
+        venueFamily: "UniswapV4",
+        source: "uniswap-v4-state-view",
+        fee: "3000",
+        lpFee: "3000",
+        protocolFee: "0",
+        protocolFeeStatus: "zero",
+        staticFee: "3000",
+        feeSource: "v4-slot0",
+        hookAddress: "0x0000000000000000000000000000000000000000",
+        hookData: "0x",
+        hookDataStatus: "empty",
+        reviewedPoolEvidence: expect.objectContaining({
+          kind: "zero-hook-static-fee",
+          poolId: "uniswap-v4-zora-eth",
+          staticFee: "3000",
+          hookAddress: "0x0000000000000000000000000000000000000000",
+          hookData: "0x",
+          protocolFeeStatus: "zero",
+        }),
+      });
+      expect(quote).not.toHaveProperty("zoraProvenance");
+      if (quote.status !== "quoted") {
+        throw new Error("Expected quoted ZORA/ETH V4 CL quote.");
       }
       expect(BigInt(quote.amountOut)).toBeGreaterThan(0n);
     }
@@ -2179,7 +2291,7 @@ describe("FAME pool-state API contract", () => {
         {
           ...rows.latest,
           zoraProvenance: {
-            ...rows.latest.zoraProvenance,
+            ...verifiedV4ZoraProvenance(pool),
             coinAddress: pool.token0,
           },
         },

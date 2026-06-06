@@ -52,6 +52,7 @@ import {
   type FameClHeadSnapshotRegistryEntry,
   type FameClReplayRegistryEntry,
   type FameV4ClReplayRegistryEntry,
+  type FameV4ReviewedPoolEvidence,
   type FameV4ZoraVerifiedProvenance,
   type PoolStateDocumentClient,
   type PoolStateDynamoResponse,
@@ -60,7 +61,10 @@ import {
   FAME_SELECTED_CL_REPLAY_CANDIDATE_POOL_ID,
   type FameClReplayReducerRegistryEntry,
 } from "./cl-reducer-manifests.ts";
-import { FAME_V4_ZORA_REVIEWED_POOL_SHAPE } from "./v4-zora-manifests.ts";
+import {
+  FAME_V4_ZORA_REVIEWED_POOL_SHAPE,
+  fameV4ZoraQuoteLaneManifestForPool,
+} from "./v4-zora-manifests.ts";
 import { famePoolStateRegistry } from "./registry/index.ts";
 import type {
   FamePoolStateRegistryEntry,
@@ -722,8 +726,10 @@ function clReplayPromotedCandidatePool(): FameClReplayReducerRegistryEntry {
   };
 }
 
-function v4ClReplayPool(): FameV4ClReplayRegistryEntry {
-  const entry = registryEntry("uniswap-v4-basedflick-zora");
+function v4ClReplayPool(
+  poolId = "uniswap-v4-basedflick-zora",
+): FameV4ClReplayRegistryEntry {
+  const entry = registryEntry(poolId);
   if (
     entry.venue !== "uniswap-v4" ||
     entry.venueFamily !== "UniswapV4" ||
@@ -733,7 +739,7 @@ function v4ClReplayPool(): FameV4ClReplayRegistryEntry {
     entry.stateViewAddress === null ||
     entry.tickSpacing === null
   ) {
-    throw new Error("uniswap-v4-basedflick-zora is not V4 replay eligible.");
+    throw new Error(`${poolId} is not V4 replay eligible.`);
   }
   return {
     ...entry,
@@ -761,6 +767,30 @@ function verifiedV4ZoraProvenance(
     transactionHash:
       "0x7777777777777777777777777777777777777777777777777777777777777777",
     eventName: "CoinCreatedV4",
+  };
+}
+
+function reviewedV4PoolEvidence(
+  pool: FameV4ClReplayRegistryEntry,
+): FameV4ReviewedPoolEvidence {
+  const manifest = fameV4ZoraQuoteLaneManifestForPool(pool.id);
+  if (manifest === null) {
+    throw new Error(`Missing reviewed V4 manifest for ${pool.id}.`);
+  }
+  const shape = manifest.reviewedPoolShape;
+  return {
+    status: "verified",
+    source: "reviewed-v4-manifest",
+    kind: manifest.provenanceRequired
+      ? "zora-protocol-pool"
+      : "zero-hook-static-fee",
+    manifestVersion: manifest.version,
+    poolId: manifest.poolId,
+    poolKey: shape.poolKey,
+    staticFee: shape.fee.toString(),
+    hookAddress: shape.hooks,
+    hookData: shape.hookData,
+    protocolFeeStatus: "zero",
   };
 }
 
@@ -1109,6 +1139,7 @@ function v4ClReplaySeedCapsule(pool: FameV4ClReplayRegistryEntry) {
     snapshotId: "v4-seed-120",
     stateHash:
       "0x3333333333333333333333333333333333333333333333333333333333333333",
+    reviewedPoolEvidence: reviewedV4PoolEvidence(pool),
     zoraProvenance: verifiedV4ZoraProvenance(pool),
     sourceRegistryId: "unit-registry",
     updatedAt: "2026-05-20T00:00:00.000Z",
@@ -1370,6 +1401,7 @@ describe("FAME pool-state indexer", () => {
       parentHash:
         "0x5555555555555555555555555555555555555555555555555555555555555555",
       candidateId: "unit-v4-candidate",
+      reviewedPoolEvidence: reviewedV4PoolEvidence(pool),
       zoraProvenance: verifiedV4ZoraProvenance(pool),
       sourceRegistryId: "unit-registry",
       updatedAt: "2026-05-20T00:01:00.000Z",
@@ -1496,6 +1528,7 @@ describe("FAME pool-state indexer", () => {
         parentHash:
           "0x5555555555555555555555555555555555555555555555555555555555555555",
         candidateId: "unit-v4-candidate",
+        reviewedPoolEvidence: reviewedV4PoolEvidence(pool),
         zoraProvenance: verifiedV4ZoraProvenance(pool),
         sourceRegistryId,
         updatedAt: "2026-05-20T00:01:00.000Z",
@@ -1991,6 +2024,76 @@ describe("FAME pool-state indexer", () => {
     expect(
       stringField(parseItem(db.getLatestV4ClReplay(v4Pool)), "snapshotId"),
     ).toContain(result.sourceRegistryId);
+  });
+
+  test("writes no-hook ZORA/ETH V4 replay snapshots without Zora provenance", async () => {
+    const v4Pool = v4ClReplayPool("uniswap-v4-zora-eth");
+    const db = new InMemoryPoolStateDb();
+    const client = new FakePoolStateClient([], 120n);
+    client.v4ClReplaySnapshotsByPoolId.set(v4Pool.id, {
+      sqrtPriceX96: 2n ** 96n,
+      tick: -1_200,
+      liquidity: 7_777n,
+      lpFee: 3_000n,
+      protocolFee: 0n,
+      blockHash:
+        "0x3333333333333333333333333333333333333333333333333333333333333333",
+      parentHash:
+        "0x4444444444444444444444444444444444444444444444444444444444444444",
+      bitmapWords: [{ wordPosition: -1, bitmap: 1n << 240n }],
+      initializedTicks: [
+        { tick: -1_200, liquidityGross: 30n, liquidityNet: 10n },
+      ],
+      providerReadCount: 19,
+      durationMs: 11,
+    });
+
+    const result = await indexFamePoolStates({
+      client,
+      db,
+      tableName: "PoolState",
+      registry: registryWithPools([v4Pool]),
+      now: new Date("2026-05-21T00:01:00.000Z"),
+    });
+
+    expect(result).toMatchObject({
+      v4ClReplaySnapshots: 1,
+      v4ClReplayWrittenPools: 1,
+      v4ClReplayFailedPools: 0,
+      v4ClReplayMetrics: [
+        {
+          poolId: v4Pool.id,
+          bitmapWordCount: 1,
+          initializedTickCount: 1,
+          bitmapChunkCount: 1,
+          tickChunkCount: 1,
+          providerReadCount: 19,
+          durationMs: 11,
+          stateHash: expect.stringMatching(/^0x[0-9a-f]{64}$/),
+          lpFee: "3000",
+          protocolFee: "0",
+        },
+      ],
+    });
+    expect(db.getLatestV4ClReplay(v4Pool)).toMatchObject({
+      stateKind: "v4-cl-replay-v1",
+      poolId: v4Pool.id,
+      poolKey: v4Pool.poolKey,
+      stateViewAddress: v4Pool.stateViewAddress,
+      tick: -1_200,
+      liquidity: "7777",
+      lpFee: "3000",
+      protocolFee: "0",
+      reviewedPoolEvidence: expect.objectContaining({
+        kind: "zero-hook-static-fee",
+        poolId: "uniswap-v4-zora-eth",
+        staticFee: "3000",
+        protocolFeeStatus: "zero",
+      }),
+    });
+    expect(db.getLatestV4ClReplay(v4Pool)).not.toHaveProperty(
+      "zoraProvenance",
+    );
   });
 
   test("seeds approved V4 maintenance once then advances from PoolManager deltas", async () => {

@@ -121,6 +121,18 @@ function freshV4ReplayPool(): FamePoolStateResponseEntry {
     snapshotId: "v4-cl-replay-v1:uniswap-v4-basedflick-zora:120",
     stateHash: HEX_32,
     source: "uniswap-v4-state-view",
+    reviewedPoolEvidence: {
+      status: "verified",
+      source: "reviewed-v4-manifest",
+      kind: "zora-protocol-pool",
+      manifestVersion: 1,
+      poolId: FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
+      poolKey: HEX_32,
+      staticFee: "30000",
+      hookAddress: ADDRESS_A,
+      hookData: "0x" as Hex,
+      protocolFeeStatus: "zero",
+    },
     zoraProvenance: {
       status: "verified",
       source: "zora-factory-event",
