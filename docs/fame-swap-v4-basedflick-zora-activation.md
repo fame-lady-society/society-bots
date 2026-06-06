@@ -6,7 +6,7 @@ This note defines the release evidence contract for the one-pool V4 compact quot
 
 - Target pool: `uniswap-v4-basedflick-zora`.
 - Quote lane: compact `cl-quote-v1` rows with explicit V4 identity.
-- Not in scope: broad Uniswap V4 support, `uniswap-v4-usdc-eth`, `uniswap-v4-zora-eth`, stable-pool activation, or future Zora-protocol pools.
+- Not in scope for this lane: broad Uniswap V4 support, `uniswap-v4-usdc-eth`, stable-pool activation, or future Zora-protocol pools. The no-hook ZORA/ETH lane is reviewed separately in `docs/fame-swap-v4-zora-eth-activation.md`.
 
 ## Required Gates
 
