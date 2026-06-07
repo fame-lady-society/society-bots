@@ -2308,6 +2308,37 @@ describe("FAME pool-state API contract", () => {
     });
   });
 
+  test("returns unknown for V4 replay rows with mismatched reviewed evidence kind", async () => {
+    const pool = v4ClReplayPool("uniswap-v4-zora-eth");
+    const rows = v4ClReplayRowsForPool(pool);
+    const response = await handleFamePoolStateBatchRequest({
+      request: {
+        currentBlock: 125,
+        stateSurfaces: ["v4-cl-replay-v1"],
+        pools: [{ poolId: pool.id }],
+      },
+      tableName: "PoolState",
+      db: new BatchStateDb([
+        {
+          ...rows.latest,
+          reviewedPoolEvidence: {
+            ...rows.latest.reviewedPoolEvidence,
+            kind: "zora-protocol-pool",
+          },
+        },
+        ...rows.bitmapChunks,
+        ...rows.tickChunks,
+      ]),
+      producerMaxFreshnessBlocks: 120,
+    });
+
+    expect(response.pools[0]).toEqual({
+      status: "unknown",
+      requested: { poolId: pool.id },
+      reason: "missing-indexed-state",
+    });
+  });
+
   test("returns stale V4 replay metadata without loading tick chunks", async () => {
     const pool = v4ClReplayPool();
     const rows = v4ClReplayRowsForPool(pool);

@@ -3,7 +3,10 @@ import type {
   FamePoolStateResponseEntry,
 } from "../api.ts";
 import { FAME_SELECTED_CL_REPLAY_CANDIDATE_POOL_ID } from "../cl-reducer-manifests.ts";
-import { FAME_V4_ZORA_QUOTE_LANE_POOL_ID } from "../v4-zora-manifests.ts";
+import {
+  FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
+  FAME_V4_ZORA_QUOTE_LANE_POOL_IDS,
+} from "../v4-zora-manifests.ts";
 import type {
   FamePoolQuoteBatchResponse,
   FamePoolQuoteResponseEntry,
@@ -130,19 +133,29 @@ function selectedClReplayCandidateQuoteLogSummary(
 
 function selectedV4ZoraQuoteLogSummary(
   response: Pick<FamePoolQuoteBatchResponse, "quotes">,
+  poolId = FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
 ): SelectedClReplayCandidateQuoteLogSummary | null {
   const selectedQuotes = response.quotes.filter(
-    (quote) => poolQuotePoolId(quote) === FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
+    (quote) => poolQuotePoolId(quote) === poolId,
   );
   if (selectedQuotes.length === 0) return null;
 
   const counts = poolQuoteStatusCounts(selectedQuotes);
   return {
-    poolId: FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
+    poolId,
     returned: selectedQuotes.length,
     statusCounts: counts.statusCounts,
     reasonCounts: counts.reasonCounts,
   };
+}
+
+function reviewedV4ZoraQuoteLogSummaries(
+  response: Pick<FamePoolQuoteBatchResponse, "quotes">,
+): SelectedClReplayCandidateQuoteLogSummary[] {
+  return FAME_V4_ZORA_QUOTE_LANE_POOL_IDS.flatMap((poolId) => {
+    const summary = selectedV4ZoraQuoteLogSummary(response, poolId);
+    return summary ? [summary] : [];
+  });
 }
 
 function isClReplayResponse(
@@ -261,6 +274,10 @@ export function poolQuoteApiBatchLogFields(
   if (selectedV4Zora) {
     fields.selectedV4ZoraQuote = selectedV4Zora;
   }
+  const reviewedV4Zora = reviewedV4ZoraQuoteLogSummaries(response);
+  if (reviewedV4Zora.length > 0) {
+    fields.reviewedV4ZoraQuotes = reviewedV4Zora;
+  }
   return fields;
 }
 
@@ -378,6 +395,10 @@ function indexerResultLogFields(
   if (selectedCandidate) fields.selectedClReplayCandidate = selectedCandidate;
   const selectedV4Zora = selectedV4ZoraReplayLogSummary(result);
   if (selectedV4Zora) fields.selectedV4ZoraReplay = selectedV4Zora;
+  const reviewedV4Zora = reviewedV4ZoraReplayLogSummaries(result);
+  if (reviewedV4Zora.length > 0) {
+    fields.reviewedV4ZoraReplay = reviewedV4Zora;
+  }
   return fields;
 }
 
@@ -410,17 +431,18 @@ function selectedClReplayCandidateLogSummary(
 
 function selectedV4ZoraReplayLogSummary(
   result: FamePoolStateIndexerResult,
+  poolId = FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
 ): SelectedV4ZoraReplayLogSummary | null {
   const snapshot = result.v4ClReplayMetrics.find(
-    (metric) => metric.poolId === FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
+    (metric) => metric.poolId === poolId,
   );
   const maintenance = result.v4ClReplayMaintenanceMetrics.find(
-    (metric) => metric.poolId === FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
+    (metric) => metric.poolId === poolId,
   );
   if (!snapshot && !maintenance) return null;
 
   return {
-    poolId: FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
+    poolId,
     providerReadCount: snapshot?.providerReadCount ?? null,
     bitmapWordCount: snapshot?.bitmapWordCount ?? null,
     initializedTickCount: snapshot?.initializedTickCount ?? null,
@@ -435,6 +457,15 @@ function selectedV4ZoraReplayLogSummary(
     protocolFee: snapshot?.protocolFee ?? null,
     stateHash: maintenance?.stateHash ?? snapshot?.stateHash ?? null,
   };
+}
+
+function reviewedV4ZoraReplayLogSummaries(
+  result: FamePoolStateIndexerResult,
+): SelectedV4ZoraReplayLogSummary[] {
+  return FAME_V4_ZORA_QUOTE_LANE_POOL_IDS.flatMap((poolId) => {
+    const summary = selectedV4ZoraReplayLogSummary(result, poolId);
+    return summary ? [summary] : [];
+  });
 }
 
 export function logPoolStateApiBatch(

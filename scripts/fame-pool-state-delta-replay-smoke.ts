@@ -9,16 +9,23 @@ import type {
   FamePoolQuoteUnavailableReason,
 } from "../src/fame-swap-pool-state/cl-quote.ts";
 import type { FamePoolActivationStatus } from "../src/fame-swap-pool-state/types.ts";
+import {
+  FAME_V4_ZORA_ETH_QUOTE_LANE_POOL_ID,
+  FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
+  fameV4ZoraQuoteLaneManifestForPool,
+} from "../src/fame-swap-pool-state/v4-zora-manifests.ts";
 
 const SELECTED_CL_ACTIVATION_CANDIDATE = "slipstream-basedflick-fame";
 const LIVE_ROUTE_DEPENDENCY = "uniswap-v4-basedflick-zora";
-const TARGET_V4_ZORA_POOL_ID = "uniswap-v4-basedflick-zora";
 const BASELINE_CL_COMPACT_POOL_ID = "slipstream-usdc-weth-100";
 const DEFAULT_PROVIDER_READ_THRESHOLD = 1_000;
-const REQUIRED_V4_ZORA_DIRECTION_COVERAGE = [
-  "BASEDFLICK->ZORA",
-  "ZORA->BASEDFLICK",
-] as const;
+const V4_REVIEWED_LANE_DIRECTION_COVERAGE: Record<string, readonly string[]> = {
+  [FAME_V4_ZORA_QUOTE_LANE_POOL_ID]: [
+    "BASEDFLICK->ZORA",
+    "ZORA->BASEDFLICK",
+  ],
+  [FAME_V4_ZORA_ETH_QUOTE_LANE_POOL_ID]: ["ETH->ZORA", "ZORA->ETH"],
+};
 const FAME_UPSTREAM_POOL_UNIVERSE_POOL_IDS = [
   "aerodrome-v2-usdc-weth",
   "scale-equalizer-frxusd-fame",
@@ -60,6 +67,10 @@ const FAME_POOL_ACTIVATION_STATUS_VALUES = [
 const FAME_UPSTREAM_POOL_UNIVERSE_COUNT =
   FAME_UPSTREAM_POOL_UNIVERSE_POOL_IDS.length;
 
+type FameV4ReviewedPoolEvidenceKind =
+  | "zora-protocol-pool"
+  | "zero-hook-static-fee";
+
 export interface FameDeltaReplaySmokeInput {
   indexer: Pick<
     FamePoolStateIndexerResult,
@@ -73,6 +84,7 @@ export interface FameDeltaReplaySmokeInput {
   routeLab?: FameRouteLabEvidenceInput;
   activationReport?: FamePoolActivationReportEvidenceInput;
   v4ZoraActivation?: FameV4ZoraActivationEvidenceInput;
+  v4ReviewedActivations?: readonly FameV4ZoraActivationEvidenceInput[];
   providerReadThreshold?: number;
 }
 
@@ -164,6 +176,7 @@ export interface FamePoolActivationReportEvidenceInput {
 export interface FameV4ZoraActivationEvidenceInput {
   poolId: string;
   status: "active" | "blocked" | "pending";
+  reviewedPoolEvidenceKind?: FameV4ReviewedPoolEvidenceKind;
   provenanceStatus:
     | "verified"
     | "missing"
@@ -251,6 +264,7 @@ export interface FameDeltaReplayActivationEvidence {
   providerReadThreshold: number;
   selectedCandidate: FameSelectedCandidateEvidence;
   v4ZoraActivation: FameV4ZoraActivationEvidence;
+  v4ReviewedActivations: FameV4ZoraActivationEvidence[];
   routeDependency: FameRouteDependencyEvidence;
   baseline: FameActivationBaselineEvidence;
   nonPromotion: FameActivationNonPromotionEvidence;
@@ -260,6 +274,10 @@ export interface FameDeltaReplayActivationEvidence {
 export interface FameV4ZoraActivationEvidence {
   poolId: string;
   status: "active" | "blocked" | "pending";
+  poolQuoteStatus: "active" | "blocked" | "pending";
+  routeEligibilityStatus: "active" | "blocked" | "pending";
+  reviewedPoolEvidenceKind: FameV4ReviewedPoolEvidenceKind | null;
+  expectedReviewedPoolEvidenceKind: FameV4ReviewedPoolEvidenceKind | null;
   provenanceStatus: FameV4ZoraActivationEvidenceInput["provenanceStatus"];
   shapeStatus: FameV4ZoraActivationEvidenceInput["shapeStatus"];
   stateStatus: FameV4ZoraActivationEvidenceInput["stateStatus"];
@@ -273,6 +291,8 @@ export interface FameV4ZoraActivationEvidence {
   fallbackCount: number | null;
   unavailableReasons: Partial<Record<FamePoolQuoteUnavailableReason, number>>;
   deferredHardening: string[];
+  poolQuoteGates: FameEvidenceGate[];
+  routeEligibilityGates: FameEvidenceGate[];
   gates: FameEvidenceGate[];
 }
 
@@ -825,87 +845,111 @@ function activationReportValue(
 
 function v4ZoraActivationValue(
   value: unknown,
+  name = "v4ZoraActivation",
 ): FameV4ZoraActivationEvidenceInput | undefined {
   if (value === undefined) return undefined;
-  const input = objectValue(value, "v4ZoraActivation");
+  const input = objectValue(value, name);
   return {
-    poolId: stringValue(input.poolId, "v4ZoraActivation.poolId"),
-    status: stringEnumValue(input.status, "v4ZoraActivation.status", [
+    poolId: stringValue(input.poolId, `${name}.poolId`),
+    status: stringEnumValue(input.status, `${name}.status`, [
       "active",
       "blocked",
       "pending",
     ] as const),
+    reviewedPoolEvidenceKind:
+      input.reviewedPoolEvidenceKind === undefined
+        ? undefined
+        : stringEnumValue(
+            input.reviewedPoolEvidenceKind,
+            `${name}.reviewedPoolEvidenceKind`,
+            ["zora-protocol-pool", "zero-hook-static-fee"] as const,
+          ),
     provenanceStatus: stringEnumValue(
       input.provenanceStatus,
-      "v4ZoraActivation.provenanceStatus",
+      `${name}.provenanceStatus`,
       ["verified", "missing", "mismatch", "not-applicable"] as const,
     ),
     shapeStatus: stringEnumValue(
       input.shapeStatus,
-      "v4ZoraActivation.shapeStatus",
+      `${name}.shapeStatus`,
       ["matched", "mismatch", "unknown"] as const,
     ),
     stateStatus: stringEnumValue(
       input.stateStatus,
-      "v4ZoraActivation.stateStatus",
+      `${name}.stateStatus`,
       ["fresh", "stale", "missing", "incomplete"] as const,
     ),
     quoteStatus: stringEnumValue(
       input.quoteStatus,
-      "v4ZoraActivation.quoteStatus",
+      `${name}.quoteStatus`,
       ["quoted", "unavailable", "missing"] as const,
     ),
     parityStatus: stringEnumValue(
       input.parityStatus,
-      "v4ZoraActivation.parityStatus",
+      `${name}.parityStatus`,
       ["passed", "failed", "missing"] as const,
     ),
     routeSimulationStatus: stringEnumValue(
       input.routeSimulationStatus,
-      "v4ZoraActivation.routeSimulationStatus",
+      `${name}.routeSimulationStatus`,
       ["passed", "failed", "missing"] as const,
     ),
     directionCoverage: arrayValue(
       input.directionCoverage,
-      "v4ZoraActivation.directionCoverage",
+      `${name}.directionCoverage`,
     ).map((direction, index) =>
       stringValue(
         direction,
-        `v4ZoraActivation.directionCoverage[${index.toString()}]`,
+        `${name}.directionCoverage[${index.toString()}]`,
       ),
     ),
     sourceRegistryId:
       optionalStringValue(
         input.sourceRegistryId,
-        "v4ZoraActivation.sourceRegistryId",
+        `${name}.sourceRegistryId`,
       ) ?? undefined,
     evidenceId:
-      optionalStringValue(input.evidenceId, "v4ZoraActivation.evidenceId") ??
-      undefined,
+      optionalStringValue(input.evidenceId, `${name}.evidenceId`) ?? undefined,
     providerReadCount:
       optionalNonNegativeNumberValue(
         input.providerReadCount,
-        "v4ZoraActivation.providerReadCount",
+        `${name}.providerReadCount`,
       ) ?? undefined,
     fallbackCount:
       optionalNonNegativeNumberValue(
         input.fallbackCount,
-        "v4ZoraActivation.fallbackCount",
+        `${name}.fallbackCount`,
       ) ?? undefined,
     unavailableReasons:
       unavailableReasonCountsValue(
         input.unavailableReasons,
-        "v4ZoraActivation.unavailableReasons",
+        `${name}.unavailableReasons`,
       ) ?? undefined,
     deferredHardening: Array.isArray(input.deferredHardening)
       ? input.deferredHardening.map((item, index) =>
           stringValue(
             item,
-            `v4ZoraActivation.deferredHardening[${index.toString()}]`,
+            `${name}.deferredHardening[${index.toString()}]`,
           ),
         )
       : undefined,
   };
+}
+
+function v4ReviewedActivationsValue(
+  value: unknown,
+): FameV4ZoraActivationEvidenceInput[] | undefined {
+  if (value === undefined) return undefined;
+  return arrayValue(value, "v4ReviewedActivations").map((activation, index) => {
+    const parsed = v4ZoraActivationValue(
+      activation,
+      `v4ReviewedActivations[${index.toString()}]`,
+    );
+    if (!parsed) {
+      throw new Error("v4ReviewedActivations entries must be present.");
+    }
+    return parsed;
+  });
 }
 
 function validateSmokeInput(value: unknown): FameDeltaReplaySmokeInput {
@@ -951,6 +995,9 @@ function validateSmokeInput(value: unknown): FameDeltaReplaySmokeInput {
     routeLab: routeLabRowsValue(input.routeLab, "routeLab"),
     activationReport: activationReportValue(input.activationReport),
     v4ZoraActivation: v4ZoraActivationValue(input.v4ZoraActivation),
+    v4ReviewedActivations: v4ReviewedActivationsValue(
+      input.v4ReviewedActivations,
+    ),
     ...(providerReadThreshold === undefined ? {} : { providerReadThreshold }),
   };
 }
@@ -1054,6 +1101,10 @@ function activationPoolIdsByStatus(
   );
 }
 
+function isReviewedV4QuoteLanePoolId(poolId: string): boolean {
+  return fameV4ZoraQuoteLaneManifestForPool(poolId) !== null;
+}
+
 function activationBaseline(
   report: FamePoolActivationReportEvidenceInput | undefined,
   selectedPoolId = SELECTED_CL_ACTIVATION_CANDIDATE,
@@ -1061,7 +1112,7 @@ function activationBaseline(
   const compactClPoolIds = activationPoolIdsByStatus(
     report,
     "cl-compact-quote-active",
-  );
+  ).filter((poolId) => !isReviewedV4QuoteLanePoolId(poolId));
   const baselineCompactClPoolIds = compactClPoolIds
     .filter((poolId) => poolId !== selectedPoolId)
     .sort();
@@ -1118,75 +1169,116 @@ function selectedCompactClQuoteUsedCount(
   );
 }
 
-function defaultV4ZoraActivationEvidence(): FameV4ZoraActivationEvidence {
+function expectedV4ReviewedPoolEvidenceKind(
+  poolId: string,
+): FameV4ReviewedPoolEvidenceKind | null {
+  const manifest = fameV4ZoraQuoteLaneManifestForPool(poolId);
+  if (!manifest) return null;
+  return manifest.provenanceRequired
+    ? "zora-protocol-pool"
+    : "zero-hook-static-fee";
+}
+
+function defaultV4ZoraActivationInput(
+  poolId = FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
+): FameV4ZoraActivationEvidenceInput {
+  const expectedKind = expectedV4ReviewedPoolEvidenceKind(poolId);
   return {
-    poolId: TARGET_V4_ZORA_POOL_ID,
+    poolId,
     status: "pending",
-    provenanceStatus: "missing",
+    reviewedPoolEvidenceKind: expectedKind ?? undefined,
+    provenanceStatus:
+      expectedKind === "zero-hook-static-fee" ? "not-applicable" : "missing",
     shapeStatus: "unknown",
     stateStatus: "missing",
     quoteStatus: "missing",
     parityStatus: "missing",
     routeSimulationStatus: "missing",
     directionCoverage: [],
-    sourceRegistryId: null,
-    evidenceId: null,
-    providerReadCount: null,
-    fallbackCount: null,
-    unavailableReasons: {},
-    deferredHardening: [],
-    gates: [],
   };
+}
+
+function v4StatusFromGates(
+  requested: FameV4ZoraActivationEvidenceInput["status"],
+  gates: readonly FameEvidenceGate[],
+): FameV4ZoraActivationEvidence["poolQuoteStatus"] {
+  if (requested === "pending") return "pending";
+  return gates.every((gate) => gate.passed) ? "active" : "blocked";
 }
 
 function v4ZoraActivationEvidence(
   input: FameV4ZoraActivationEvidenceInput | undefined,
   expectedSourceRegistryId: string,
   providerReadThreshold: number,
+  defaultPoolId = FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
+  routeEvidence?: FameRouteDependencyEvidence,
 ): FameV4ZoraActivationEvidence {
-  const base = input
-    ? {
-        poolId: input.poolId,
-        status: input.status,
-        provenanceStatus: input.provenanceStatus,
-        shapeStatus: input.shapeStatus,
-        stateStatus: input.stateStatus,
-        quoteStatus: input.quoteStatus,
-        parityStatus: input.parityStatus,
-        routeSimulationStatus: input.routeSimulationStatus,
-        directionCoverage: sortedStrings(input.directionCoverage),
-        sourceRegistryId: input.sourceRegistryId ?? null,
-        evidenceId: input.evidenceId ?? null,
-        providerReadCount: input.providerReadCount ?? null,
-        fallbackCount: input.fallbackCount ?? null,
-        unavailableReasons: input.unavailableReasons ?? {},
-        deferredHardening: sortedStrings(input.deferredHardening ?? []),
-      }
-    : defaultV4ZoraActivationEvidence();
+  const source = input ?? defaultV4ZoraActivationInput(defaultPoolId);
+  const manifest = fameV4ZoraQuoteLaneManifestForPool(source.poolId);
+  const expectedKind = expectedV4ReviewedPoolEvidenceKind(source.poolId);
+  const reviewedPoolEvidenceKind =
+    source.reviewedPoolEvidenceKind ?? expectedKind;
+  const base = {
+    poolId: source.poolId,
+    status: source.status,
+    reviewedPoolEvidenceKind,
+    expectedReviewedPoolEvidenceKind: expectedKind,
+    provenanceStatus: source.provenanceStatus,
+    shapeStatus: source.shapeStatus,
+    stateStatus: source.stateStatus,
+    quoteStatus: source.quoteStatus,
+    parityStatus: source.parityStatus,
+    routeSimulationStatus: source.routeSimulationStatus,
+    directionCoverage: sortedStrings(source.directionCoverage),
+    sourceRegistryId: source.sourceRegistryId ?? null,
+    evidenceId: source.evidenceId ?? null,
+    providerReadCount: source.providerReadCount ?? null,
+    fallbackCount: source.fallbackCount ?? null,
+    unavailableReasons: source.unavailableReasons ?? {},
+    deferredHardening: sortedStrings(source.deferredHardening ?? []),
+  };
   const providerReadsWithinThreshold =
     base.providerReadCount !== null &&
     base.providerReadCount <= providerReadThreshold;
-  const missingDirections = REQUIRED_V4_ZORA_DIRECTION_COVERAGE.filter(
+  const requiredDirectionCoverage =
+    V4_REVIEWED_LANE_DIRECTION_COVERAGE[base.poolId] ?? [];
+  const missingDirections = requiredDirectionCoverage.filter(
     (direction) => !base.directionCoverage.includes(direction),
   );
   const unexpectedDirections = base.directionCoverage.filter(
     (direction) =>
-      !REQUIRED_V4_ZORA_DIRECTION_COVERAGE.includes(
-        direction as (typeof REQUIRED_V4_ZORA_DIRECTION_COVERAGE)[number],
-      ),
+      !requiredDirectionCoverage.some((expected) => expected === direction),
   );
   const directionCoveragePassed =
-    missingDirections.length === 0 && unexpectedDirections.length === 0;
-  const gates: FameEvidenceGate[] = [
+    requiredDirectionCoverage.length > 0 &&
+    missingDirections.length === 0 &&
+    unexpectedDirections.length === 0;
+  const provenancePassed =
+    manifest !== null &&
+    (manifest.provenanceRequired
+      ? base.provenanceStatus === "verified"
+      : base.provenanceStatus === "not-applicable");
+  const poolQuoteGates: FameEvidenceGate[] = [
     {
-      name: "v4_zora_target_pool",
-      passed: base.poolId === TARGET_V4_ZORA_POOL_ID,
+      name: "v4_zora_reviewed_pool",
+      passed: manifest !== null && manifest.poolId === base.poolId,
       detail: base.poolId,
     },
     {
-      name: "v4_zora_provenance_verified",
-      passed: base.provenanceStatus === "verified",
-      detail: base.provenanceStatus,
+      name: "v4_zora_reviewed_evidence_kind",
+      passed:
+        expectedKind !== null && base.reviewedPoolEvidenceKind === expectedKind,
+      detail: base.reviewedPoolEvidenceKind ?? "missing",
+    },
+    {
+      name: manifest?.provenanceRequired
+        ? "v4_zora_provenance_verified"
+        : "v4_zora_provenance_not_required",
+      passed: provenancePassed,
+      detail:
+        manifest?.provenanceRequired === false
+          ? base.provenanceStatus
+          : base.provenanceStatus,
     },
     {
       name: "v4_zora_shape_matched",
@@ -1207,11 +1299,6 @@ function v4ZoraActivationEvidence(
       name: "v4_zora_parity_passed",
       passed: base.parityStatus === "passed",
       detail: base.parityStatus,
-    },
-    {
-      name: "v4_zora_route_simulation_passed",
-      passed: base.routeSimulationStatus === "passed",
-      detail: base.routeSimulationStatus,
     },
     {
       name: "v4_zora_source_registry_matches",
@@ -1249,13 +1336,48 @@ function v4ZoraActivationEvidence(
       detail: base.evidenceId ?? "missing",
     },
   ];
+  const routeEligibilityGates: FameEvidenceGate[] = [
+    {
+      name: "v4_zora_route_simulation_passed",
+      passed: base.routeSimulationStatus === "passed",
+      detail: base.routeSimulationStatus,
+    },
+    ...(routeEvidence
+      ? [
+          {
+            name: "v4_zora_route_evidence_bound",
+            passed:
+              routeEvidence.selectedPools.includes(base.poolId) &&
+              routeEvidence.selectedCandidateId !== null &&
+              routeEvidence.materializedRouteHash !== null,
+            detail:
+              routeEvidence.routeLabRowId ??
+              routeEvidence.routeArtifactId ??
+              "missing route-lab row",
+          },
+        ]
+      : []),
+  ];
+  const poolQuoteStatus = v4StatusFromGates(base.status, poolQuoteGates);
+  const routeEligibilityStatus =
+    base.routeSimulationStatus === "missing"
+      ? "pending"
+      : routeEligibilityGates.every((gate) => gate.passed)
+        ? "active"
+        : "blocked";
   return {
     ...base,
     status:
-      base.status === "active" && gates.every((gate) => gate.passed)
+      base.status === "active" && poolQuoteStatus === "active"
         ? "active"
         : base.status,
-    gates,
+    poolQuoteStatus,
+    routeEligibilityStatus,
+    reviewedPoolEvidenceKind: base.reviewedPoolEvidenceKind,
+    expectedReviewedPoolEvidenceKind: expectedKind,
+    poolQuoteGates,
+    routeEligibilityGates,
+    gates: [...poolQuoteGates, ...routeEligibilityGates],
   };
 }
 
@@ -1386,11 +1508,34 @@ function buildActivationEvidence({
     routeDependency,
     selectedPoolId,
   );
+  const reviewedActivationInputs = input.v4ReviewedActivations ?? [];
+  const legacyV4ZoraInput =
+    input.v4ZoraActivation ??
+    reviewedActivationInputs.find(
+      (activation) => activation.poolId === FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
+    );
   const v4ZoraActivation = v4ZoraActivationEvidence(
-    input.v4ZoraActivation,
+    legacyV4ZoraInput,
     input.indexer.sourceRegistryId,
     providerReadThreshold,
+    FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
+    routeDependency,
   );
+  const v4ReviewedActivations = [
+    v4ZoraActivation,
+    ...reviewedActivationInputs
+      .filter(
+        (activation) => activation.poolId !== FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
+      )
+      .map((activation) =>
+        v4ZoraActivationEvidence(
+          activation,
+          input.indexer.sourceRegistryId,
+          providerReadThreshold,
+          activation.poolId,
+        ),
+      ),
+  ];
   const sourceRegistryCompatible =
     input.quoteResponse?.sourceRegistryId === input.indexer.sourceRegistryId &&
     routeDependency.evidenceSourceRegistryId === input.indexer.sourceRegistryId;
@@ -1480,27 +1625,22 @@ function buildActivationEvidence({
   ];
 
   const validationErrors: string[] = [...activationReportErrors];
-  if (
-    input.v4ZoraActivation?.status === "active" &&
-    !v4ZoraActivation.gates.every((gate) => gate.passed)
-  ) {
-    validationErrors.push(
-      "V4 Zora activation is active but one or more V4 gates failed.",
-    );
-  }
-  if (input.v4ZoraActivation?.status === "active") {
-    if (routeDependency.routeSimulationStatus !== "passed") {
+  const activeV4Inputs = [
+    ...(legacyV4ZoraInput?.status === "active" ? [v4ZoraActivation] : []),
+    ...v4ReviewedActivations.filter(
+      (activation) =>
+        activation.poolId !== FAME_V4_ZORA_QUOTE_LANE_POOL_ID &&
+        reviewedActivationInputs.some(
+          (inputActivation) =>
+            inputActivation.poolId === activation.poolId &&
+            inputActivation.status === "active",
+        ),
+    ),
+  ];
+  for (const activation of activeV4Inputs) {
+    if (!activation.poolQuoteGates.every((gate) => gate.passed)) {
       validationErrors.push(
-        "Active V4 Zora activation requires passed route-lab simulation evidence.",
-      );
-    }
-    if (
-      !routeDependency.selectedPools.includes(liveDependencyPoolId) ||
-      !routeDependency.selectedCandidateId ||
-      !routeDependency.materializedRouteHash
-    ) {
-      validationErrors.push(
-        "Active V4 Zora activation requires bound route-lab route evidence.",
+        `${activation.poolId} V4 pool quote activation is active but one or more pool quote gates failed.`,
       );
     }
   }
@@ -1578,6 +1718,7 @@ function buildActivationEvidence({
     providerReadThreshold,
     selectedCandidate,
     v4ZoraActivation,
+    v4ReviewedActivations,
     routeDependency,
     baseline,
     nonPromotion,

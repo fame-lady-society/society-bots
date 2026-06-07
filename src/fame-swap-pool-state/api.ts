@@ -569,6 +569,10 @@ function v4ClReplayLatestStateMatchesRegistry({
       entry.stateViewAddress.toLowerCase() &&
     reviewed.status === "verified" &&
     reviewed.source === "reviewed-v4-manifest" &&
+    reviewed.kind ===
+      (manifest.provenanceRequired
+        ? "zora-protocol-pool"
+        : "zero-hook-static-fee") &&
     reviewed.manifestVersion === manifest.version &&
     reviewed.poolId === manifest.poolId &&
     reviewed.poolKey.toLowerCase() === entry.poolKey.toLowerCase() &&
