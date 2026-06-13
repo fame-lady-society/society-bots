@@ -9,7 +9,7 @@ import { FamePoolState } from "../lib/fame-pool-state.js";
 import { HttpApi } from "../lib/http-api.js";
 
 function preflight(env: {
-  BASE_RPCS_JSON: string;
+  FAME_POOL_STATE_INDEXER_BASE_RPCS_JSON: string;
   FAME_POOL_STATE_SERVICE_TOKEN: string;
 }) {
   return spawnSync(
@@ -18,7 +18,8 @@ function preflight(env: {
     {
       env: {
         PATH: process.env.PATH ?? "",
-        BASE_RPCS_JSON: env.BASE_RPCS_JSON,
+        FAME_POOL_STATE_INDEXER_BASE_RPCS_JSON:
+          env.FAME_POOL_STATE_INDEXER_BASE_RPCS_JSON,
         FAME_POOL_STATE_SERVICE_TOKEN: env.FAME_POOL_STATE_SERVICE_TOKEN,
       },
       encoding: "utf8",
@@ -47,7 +48,7 @@ describe("FamePoolState infrastructure", () => {
     const stack = new cdk.Stack(app, "TestStack");
 
     new FamePoolState(stack, "FamePoolState", {
-      baseRpcsJson: JSON.stringify(["https://base.example"]),
+      indexerBaseRpcsJson: JSON.stringify(["https://indexer-base.example"]),
       serviceToken: "unit-token",
     });
 
@@ -87,7 +88,7 @@ describe("FamePoolState infrastructure", () => {
     const stack = new cdk.Stack(app, "TestStack");
 
     new FamePoolState(stack, "FamePoolState", {
-      baseRpcsJson: JSON.stringify(["https://base.example"]),
+      indexerBaseRpcsJson: JSON.stringify(["https://indexer-base.example"]),
       serviceToken: "unit-token",
     });
 
@@ -122,7 +123,7 @@ describe("FamePoolState infrastructure", () => {
     const stack = new cdk.Stack(app, "TestStack");
 
     new FamePoolState(stack, "FamePoolState", {
-      baseRpcsJson: JSON.stringify(["https://base.example"]),
+      indexerBaseRpcsJson: JSON.stringify(["https://indexer-base.example"]),
       serviceToken: "unit-token",
     });
 
@@ -130,7 +131,7 @@ describe("FamePoolState infrastructure", () => {
     template.hasResourceProperties("AWS::Lambda::Function", {
       Environment: {
         Variables: Match.objectLike({
-          BASE_RPCS_JSON: JSON.stringify(["https://base.example"]),
+          BASE_RPCS_JSON: JSON.stringify(["https://indexer-base.example"]),
           FAME_POOL_STATE_DEFAULT_MAX_FRESHNESS_BLOCKS: "120",
           FAME_POOL_STATE_MAX_BATCH_SIZE: "64",
           FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE: "steady-state",
@@ -160,7 +161,7 @@ describe("FamePoolState infrastructure", () => {
     const stack = new cdk.Stack(app, "TestStack");
 
     new FamePoolState(stack, "FamePoolState", {
-      baseRpcsJson: JSON.stringify(["https://base.example"]),
+      indexerBaseRpcsJson: JSON.stringify(["https://indexer-base.example"]),
       serviceToken: "unit-token",
       clReplayMaintenanceMode: "checkpoint",
       clReplayTrustPromotion: false,
@@ -182,7 +183,7 @@ describe("FamePoolState infrastructure", () => {
     const stack = new cdk.Stack(app, "TestStack");
 
     new FamePoolState(stack, "FamePoolState", {
-      baseRpcsJson: JSON.stringify(["https://base.example"]),
+      indexerBaseRpcsJson: JSON.stringify(["https://indexer-base.example"]),
       serviceToken: "unit-token",
     });
 
@@ -301,7 +302,8 @@ describe("FamePoolState infrastructure", () => {
   });
 
   test("synthesizes pool-state-only dev stack without legacy app env", () => {
-    const previousBaseRpcsJson = process.env.BASE_RPCS_JSON;
+    const previousIndexerBaseRpcsJson =
+      process.env.FAME_POOL_STATE_INDEXER_BASE_RPCS_JSON;
     const previousServiceToken = process.env.FAME_POOL_STATE_DEV_SERVICE_TOKEN;
     const previousMaintenanceMode =
       process.env.FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE;
@@ -311,7 +313,9 @@ describe("FamePoolState infrastructure", () => {
     const previousDiscordAppId = process.env.DISCORD_APP_ID;
     const previousFarcasterAppId = process.env.FARCASTER_APP_ID;
 
-    process.env.BASE_RPCS_JSON = JSON.stringify(["https://base.example"]);
+    process.env.FAME_POOL_STATE_INDEXER_BASE_RPCS_JSON = JSON.stringify([
+      "https://indexer-base.example",
+    ]);
     process.env.FAME_POOL_STATE_DEV_SERVICE_TOKEN = "unit-token";
     delete process.env.FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE;
     delete process.env.FAME_POOL_STATE_CL_REPLAY_TRUST_PROMOTION;
@@ -351,8 +355,12 @@ describe("FamePoolState infrastructure", () => {
       expectOutputMatching(template, "FamePoolStateDevEndpointUrl");
       expectOutputMatching(template, "FamePoolQuotesDevEndpointUrl");
     } finally {
-      if (previousBaseRpcsJson === undefined) delete process.env.BASE_RPCS_JSON;
-      else process.env.BASE_RPCS_JSON = previousBaseRpcsJson;
+      if (previousIndexerBaseRpcsJson === undefined) {
+        delete process.env.FAME_POOL_STATE_INDEXER_BASE_RPCS_JSON;
+      } else {
+        process.env.FAME_POOL_STATE_INDEXER_BASE_RPCS_JSON =
+          previousIndexerBaseRpcsJson;
+      }
       if (previousServiceToken === undefined) {
         delete process.env.FAME_POOL_STATE_DEV_SERVICE_TOKEN;
       } else {
@@ -387,7 +395,9 @@ describe("FamePoolState infrastructure", () => {
 
   test("deploy preflight fails before CDK when required config is empty", () => {
     const result = preflight({
-      BASE_RPCS_JSON: JSON.stringify(["https://base.example"]),
+      FAME_POOL_STATE_INDEXER_BASE_RPCS_JSON: JSON.stringify([
+        "https://indexer-base.example",
+      ]),
       FAME_POOL_STATE_SERVICE_TOKEN: "",
     });
 
@@ -401,17 +411,21 @@ describe("FamePoolState infrastructure", () => {
     ["a blank RPC URL", JSON.stringify([""])],
   ])("deploy preflight rejects %s", (_name, baseRpcsJson) => {
     const result = preflight({
-      BASE_RPCS_JSON: baseRpcsJson,
+      FAME_POOL_STATE_INDEXER_BASE_RPCS_JSON: baseRpcsJson,
       FAME_POOL_STATE_SERVICE_TOKEN: "unit-token",
     });
 
     expect(result.status).toBe(1);
-    expect(`${result.stdout}${result.stderr}`).toContain("BASE_RPCS_JSON");
+    expect(`${result.stdout}${result.stderr}`).toContain(
+      "FAME_POOL_STATE_INDEXER_BASE_RPCS_JSON",
+    );
   });
 
   test("deploy preflight accepts non-empty required config", () => {
     const result = preflight({
-      BASE_RPCS_JSON: JSON.stringify(["https://base.example"]),
+      FAME_POOL_STATE_INDEXER_BASE_RPCS_JSON: JSON.stringify([
+        "https://indexer-base.example",
+      ]),
       FAME_POOL_STATE_SERVICE_TOKEN: "unit-token",
     });
 
@@ -426,7 +440,9 @@ describe("FamePoolState infrastructure", () => {
     expect(
       () =>
         new FamePoolState(stack, "FamePoolState", {
-          baseRpcsJson: JSON.stringify(["https://base.example"]),
+          indexerBaseRpcsJson: JSON.stringify([
+            "https://indexer-base.example",
+          ]),
           serviceToken: "",
         }),
     ).toThrow(/FAME_POOL_STATE_SERVICE_TOKEN must be configured/);
@@ -439,30 +455,38 @@ describe("FamePoolState infrastructure", () => {
     expect(
       () =>
         new FamePoolState(stack, "FamePoolState", {
-          baseRpcsJson: "",
+          indexerBaseRpcsJson: "",
           serviceToken: "unit-token",
         }),
-    ).toThrow(/BASE_RPCS_JSON must be configured/);
+    ).toThrow(/FAME_POOL_STATE_INDEXER_BASE_RPCS_JSON must be configured/);
   });
 
   test.each([
-    ["invalid JSON", "not-json", /BASE_RPCS_JSON must be valid JSON/],
+    [
+      "invalid JSON",
+      "not-json",
+      /FAME_POOL_STATE_INDEXER_BASE_RPCS_JSON must be valid JSON/,
+    ],
     [
       "an empty RPC array",
       "[]",
-      /BASE_RPCS_JSON must be a non-empty JSON array/,
+      /FAME_POOL_STATE_INDEXER_BASE_RPCS_JSON must be a non-empty JSON array/,
     ],
-    ["a blank RPC URL", JSON.stringify([""]), /BASE_RPCS_JSON\[0\]/],
+    [
+      "a blank RPC URL",
+      JSON.stringify([""]),
+      /FAME_POOL_STATE_INDEXER_BASE_RPCS_JSON\[0\]/,
+    ],
   ])(
     "fails fast when Base RPC configuration is %s",
-    (_name, baseRpcsJson, error) => {
+    (_name, indexerBaseRpcsJson, error) => {
       const app = new cdk.App();
       const stack = new cdk.Stack(app, "TestStack");
 
       expect(
         () =>
           new FamePoolState(stack, "FamePoolState", {
-            baseRpcsJson,
+            indexerBaseRpcsJson,
             serviceToken: "unit-token",
           }),
       ).toThrow(error);
@@ -480,6 +504,7 @@ describe("FamePoolState infrastructure", () => {
     expect(bootstrapStep).toBeGreaterThan(-1);
     expect(preflightStep).toBeLessThan(bootstrapStep);
     expect(workflow).toContain("FAME_POOL_STATE_PR_SERVICE_TOKEN");
+    expect(workflow).toContain("FAME_POOL_STATE_INDEXER_BASE_RPCS_JSON");
     expect(workflow).toContain("FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE");
     expect(workflow).toContain("FAME_POOL_STATE_CL_REPLAY_TRUST_PROMOTION");
     expect(workflow).not.toContain(
@@ -503,6 +528,7 @@ describe("FamePoolState infrastructure", () => {
     expect(workflow).toContain("DEPLOY_DEV");
     expect(workflow).toContain("STAGE: dev");
     expect(workflow).toContain("FAME_POOL_STATE_DEV_SERVICE_TOKEN");
+    expect(workflow).toContain("FAME_POOL_STATE_INDEXER_BASE_RPCS_JSON");
     expect(workflow).toContain("FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE");
     expect(workflow).toContain("FAME_POOL_STATE_CL_REPLAY_TRUST_PROMOTION");
     expect(workflow).toContain('ENABLE_EVENT_SCHEDULES: "false"');
@@ -525,7 +551,10 @@ describe("FamePoolState infrastructure", () => {
     expect(jobStart).toBeGreaterThan(-1);
     expect(job).toContain("DEPLOY_POOL_STATE_DEV");
     expect(job).toContain('POOL_STATE_ONLY: "true"');
-    expect(job).toContain("BASE_RPCS_JSON");
+    expect(job).toContain("FAME_POOL_STATE_INDEXER_BASE_RPCS_JSON");
+    expect(job).not.toContain(
+      "BASE_RPCS_JSON: ${{ secrets.BASE_RPCS_JSON }}",
+    );
     expect(job).toContain("FAME_POOL_STATE_DEV_SERVICE_TOKEN");
     expect(job).toContain("FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE");
     expect(job).toContain("FAME_POOL_STATE_CL_REPLAY_TRUST_PROMOTION");

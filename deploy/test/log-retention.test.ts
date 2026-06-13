@@ -79,7 +79,7 @@ describe("Lambda CloudWatch log retention", () => {
     const stack = new cdk.Stack(app, "TestStack");
 
     new FamePoolState(stack, "FamePoolState", {
-      baseRpcsJson: JSON.stringify(["https://base.example"]),
+      indexerBaseRpcsJson: JSON.stringify(["https://indexer-base.example"]),
       serviceToken: "unit-token",
     });
 

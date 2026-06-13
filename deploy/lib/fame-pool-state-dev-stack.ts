@@ -16,7 +16,7 @@ export class FamePoolStateDevStack extends cdk.Stack {
     super(scope, id, props);
 
     const poolState = new FamePoolState(this, "FamePoolState", {
-      baseRpcsJson: process.env.BASE_RPCS_JSON,
+      indexerBaseRpcsJson: process.env.FAME_POOL_STATE_INDEXER_BASE_RPCS_JSON,
       serviceToken: process.env.FAME_POOL_STATE_DEV_SERVICE_TOKEN ?? "",
       clReplayMaintenanceMode: famePoolStateClReplayMaintenanceModeFromEnv(
         process.env.FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE,

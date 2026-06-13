@@ -16,7 +16,7 @@ import { createLambdaLogGroup } from "./lambda-log-groups.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export interface FamePoolStateProps {
-  readonly baseRpcsJson: string | undefined;
+  readonly indexerBaseRpcsJson: string | undefined;
   readonly serviceToken: string | undefined;
   readonly apiReservedConcurrency?: number;
   readonly defaultMaxFreshnessBlocks?: number;
@@ -89,25 +89,25 @@ function requiredNonEmpty(value: string | undefined, name: string): string {
   return value;
 }
 
-function requiredBaseRpcsJson(value: string | undefined): string {
-  const trimmed = requiredNonEmpty(value, "BASE_RPCS_JSON");
+function requiredBaseRpcsJson(value: string | undefined, name: string): string {
+  const trimmed = requiredNonEmpty(value, name);
   let parsed: unknown;
   try {
     parsed = JSON.parse(trimmed);
   } catch {
-    throw new Error("BASE_RPCS_JSON must be valid JSON.");
+    throw new Error(`${name} must be valid JSON.`);
   }
 
   if (!Array.isArray(parsed) || parsed.length === 0) {
     throw new Error(
-      "BASE_RPCS_JSON must be a non-empty JSON array of non-empty RPC URLs.",
+      `${name} must be a non-empty JSON array of non-empty RPC URLs.`,
     );
   }
 
   const rpcs = parsed.map((rpc, index) => {
     if (typeof rpc !== "string" || rpc.trim().length === 0) {
       throw new Error(
-        `BASE_RPCS_JSON[${index.toString()}] must be a non-empty RPC URL.`,
+        `${name}[${index.toString()}] must be a non-empty RPC URL.`,
       );
     }
     return rpc.trim();
@@ -126,7 +126,10 @@ export class FamePoolState extends Construct {
   constructor(scope: Construct, id: string, props: FamePoolStateProps) {
     super(scope, id);
 
-    const baseRpcsJson = requiredBaseRpcsJson(props.baseRpcsJson);
+    const indexerBaseRpcsJson = requiredBaseRpcsJson(
+      props.indexerBaseRpcsJson,
+      "FAME_POOL_STATE_INDEXER_BASE_RPCS_JSON",
+    );
     const serviceToken = requiredNonEmpty(
       props.serviceToken,
       "FAME_POOL_STATE_SERVICE_TOKEN",
@@ -175,7 +178,7 @@ export class FamePoolState extends Construct {
       reservedConcurrentExecutions: 1,
       environment: {
         ...commonEnvironment,
-        BASE_RPCS_JSON: baseRpcsJson,
+        BASE_RPCS_JSON: indexerBaseRpcsJson,
         FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE: clReplayMaintenanceMode,
         FAME_POOL_STATE_CL_REPLAY_TRUST_PROMOTION: clReplayTrustPromotion,
         FAME_POOL_STATE_CL_REPLAY_MAX_RANGE_BLOCKS: clReplayMaxRangeBlocks,
