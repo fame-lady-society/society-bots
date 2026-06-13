@@ -73,6 +73,7 @@ const unsupportedReasonValues = [
   "concentrated-liquidity",
   "missing-fee-metadata",
   "native-wrap",
+  "non-direct-fame-pool",
   "stable-pool",
   "unsupported-venue",
 ] as const satisfies readonly FamePoolStateUnsupportedReason[];
@@ -609,7 +610,13 @@ export function getFamePoolStateRegistryEntry(
 
 export {
   FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
+  FAME_V4_ZORA_ETH_QUOTE_LANE_POOL_ID,
+  FAME_V4_ZORA_ETH_QUOTE_LANE_MANIFEST,
+  FAME_V4_ZORA_ETH_REVIEWED_POOL_SHAPE,
+  FAME_V4_ZORA_QUOTE_LANE_MANIFESTS,
+  FAME_V4_ZORA_QUOTE_LANE_POOL_IDS,
   FAME_V4_ZORA_QUOTE_LANE_MANIFEST,
   FAME_V4_ZORA_REVIEWED_POOL_SHAPE,
   classifyV4ZoraQuoteLane,
+  fameV4ZoraQuoteLaneManifestForPool,
 } from "../v4-zora-manifests.ts";

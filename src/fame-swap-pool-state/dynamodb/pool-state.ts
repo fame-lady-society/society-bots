@@ -106,6 +106,21 @@ export type FameV4ZoraVerifiedProvenance = Extract<
   FamePoolStateV4ZoraProvenanceEvidence,
   { status: "verified" }
 >;
+export type FameV4ReviewedPoolEvidenceKind =
+  | "zero-hook-static-fee"
+  | "zora-protocol-pool";
+export interface FameV4ReviewedPoolEvidence {
+  status: "verified";
+  source: "reviewed-v4-manifest";
+  kind: FameV4ReviewedPoolEvidenceKind;
+  manifestVersion: number;
+  poolId: string;
+  poolKey: Hex;
+  staticFee: string;
+  hookAddress: Address;
+  hookData: Hex;
+  protocolFeeStatus: "zero";
+}
 
 export interface FameClReplayBitmapWord {
   wordPosition: number;
@@ -241,7 +256,8 @@ export interface FameV4ClReplayLatestState extends Record<string, unknown> {
   snapshotId: string;
   stateHash: Hex;
   source: FameV4ClReplaySource;
-  zoraProvenance: FameV4ZoraVerifiedProvenance;
+  reviewedPoolEvidence: FameV4ReviewedPoolEvidence;
+  zoraProvenance?: FameV4ZoraVerifiedProvenance;
   sourceRegistryId: string;
   updatedAt: string;
   bitmapWordCount: number;
@@ -304,7 +320,8 @@ export interface FameV4ClReplayCandidateLatestState
   candidateId: string;
   stateHash: Hex;
   source: FameV4ClReplaySource;
-  zoraProvenance: FameV4ZoraVerifiedProvenance;
+  reviewedPoolEvidence: FameV4ReviewedPoolEvidence;
+  zoraProvenance?: FameV4ZoraVerifiedProvenance;
   sourceRegistryId: string;
   updatedAt: string;
   bitmapWordCount: number;
@@ -1031,6 +1048,18 @@ function bytes32HexField(
   return value as Hex;
 }
 
+function hexField(
+  item: Record<string, unknown>,
+  recordType: string,
+  field: string,
+): Hex {
+  const value = stringField(item, recordType, field);
+  if (!isHex(value)) {
+    invalidItem(recordType, field, "expected a hex string");
+  }
+  return value;
+}
+
 function uint256HexField(
   item: Record<string, unknown>,
   recordType: string,
@@ -1241,6 +1270,48 @@ function v4ClReplaySourceField(
   return value;
 }
 
+function v4ReviewedPoolEvidenceKindField(
+  item: Record<string, unknown>,
+  recordType: string,
+  field: string,
+): FameV4ReviewedPoolEvidenceKind {
+  const value = item[field];
+  if (value !== "zero-hook-static-fee" && value !== "zora-protocol-pool") {
+    invalidItem(recordType, field, "expected a V4 reviewed pool evidence kind");
+  }
+  return value;
+}
+
+function v4ReviewedPoolEvidenceField(
+  item: Record<string, unknown>,
+  recordType: string,
+  field: string,
+): FameV4ReviewedPoolEvidence {
+  const evidence = recordField(item, recordType, field);
+  return {
+    status: literalField(evidence, recordType, "status", "verified"),
+    source: literalField(
+      evidence,
+      recordType,
+      "source",
+      "reviewed-v4-manifest",
+    ),
+    kind: v4ReviewedPoolEvidenceKindField(evidence, recordType, "kind"),
+    manifestVersion: numberField(evidence, recordType, "manifestVersion"),
+    poolId: stringField(evidence, recordType, "poolId"),
+    poolKey: bytes32HexField(evidence, recordType, "poolKey"),
+    staticFee: decimalStringField(evidence, recordType, "staticFee"),
+    hookAddress: addressField(evidence, recordType, "hookAddress"),
+    hookData: hexField(evidence, recordType, "hookData"),
+    protocolFeeStatus: literalField(
+      evidence,
+      recordType,
+      "protocolFeeStatus",
+      "zero",
+    ),
+  };
+}
+
 function v4ZoraVerifiedProvenanceField(
   item: Record<string, unknown>,
   recordType: string,
@@ -1258,6 +1329,15 @@ function v4ZoraVerifiedProvenanceField(
     transactionHash: bytes32HexField(provenance, recordType, "transactionHash"),
     eventName: nullableStringField(provenance, recordType, "eventName"),
   };
+}
+
+function optionalV4ZoraVerifiedProvenanceField(
+  item: Record<string, unknown>,
+  recordType: string,
+  field: string,
+): FameV4ZoraVerifiedProvenance | undefined {
+  if (item[field] === undefined) return undefined;
+  return v4ZoraVerifiedProvenanceField(item, recordType, field);
 }
 
 function v4ZoraProvenanceChainIdField(
@@ -1658,7 +1738,12 @@ function parseLatestV4ClReplayStateItem(
     snapshotId: stringField(item, recordType, "snapshotId"),
     stateHash: bytes32HexField(item, recordType, "stateHash"),
     source: v4ClReplaySourceField(item, recordType, "source"),
-    zoraProvenance: v4ZoraVerifiedProvenanceField(
+    reviewedPoolEvidence: v4ReviewedPoolEvidenceField(
+      item,
+      recordType,
+      "reviewedPoolEvidence",
+    ),
+    zoraProvenance: optionalV4ZoraVerifiedProvenanceField(
       item,
       recordType,
       "zoraProvenance",
@@ -1755,7 +1840,12 @@ function parseLatestV4ClReplayCandidateStateItem(
     candidateId: stringField(item, recordType, "candidateId"),
     stateHash: bytes32HexField(item, recordType, "stateHash"),
     source: v4ClReplaySourceField(item, recordType, "source"),
-    zoraProvenance: v4ZoraVerifiedProvenanceField(
+    reviewedPoolEvidence: v4ReviewedPoolEvidenceField(
+      item,
+      recordType,
+      "reviewedPoolEvidence",
+    ),
+    zoraProvenance: optionalV4ZoraVerifiedProvenanceField(
       item,
       recordType,
       "zoraProvenance",
@@ -2885,7 +2975,8 @@ export function v4ClReplayStateRowsFromSnapshot(options: {
   parentHash: Hex;
   snapshotId: string;
   stateHash: Hex;
-  zoraProvenance: FameV4ZoraVerifiedProvenance;
+  reviewedPoolEvidence: FameV4ReviewedPoolEvidence;
+  zoraProvenance?: FameV4ZoraVerifiedProvenance;
   sourceRegistryId: string;
   updatedAt: string;
   bitmapWords: readonly { wordPosition: number; bitmap: bigint }[];
@@ -2964,7 +3055,10 @@ export function v4ClReplayStateRowsFromSnapshot(options: {
     snapshotId: options.snapshotId,
     stateHash: options.stateHash,
     source: "uniswap-v4-state-view",
-    zoraProvenance: options.zoraProvenance,
+    reviewedPoolEvidence: options.reviewedPoolEvidence,
+    ...(options.zoraProvenance
+      ? { zoraProvenance: options.zoraProvenance }
+      : {}),
     sourceRegistryId: options.sourceRegistryId,
     updatedAt: options.updatedAt,
     bitmapWordCount: bitmapWords.length,
@@ -3046,7 +3140,8 @@ export function v4ClReplayCandidateStateRowsFromSnapshot(options: {
   parentHash: Hex;
   candidateId: string;
   stateHash: Hex;
-  zoraProvenance: FameV4ZoraVerifiedProvenance;
+  reviewedPoolEvidence: FameV4ReviewedPoolEvidence;
+  zoraProvenance?: FameV4ZoraVerifiedProvenance;
   sourceRegistryId: string;
   updatedAt: string;
   bitmapWords: readonly { wordPosition: number; bitmap: bigint }[];
@@ -3128,7 +3223,10 @@ export function v4ClReplayCandidateStateRowsFromSnapshot(options: {
     candidateId: options.candidateId,
     stateHash: options.stateHash,
     source: "uniswap-v4-state-view",
-    zoraProvenance: options.zoraProvenance,
+    reviewedPoolEvidence: options.reviewedPoolEvidence,
+    ...(options.zoraProvenance
+      ? { zoraProvenance: options.zoraProvenance }
+      : {}),
     sourceRegistryId: options.sourceRegistryId,
     updatedAt: options.updatedAt,
     bitmapWordCount: bitmapWords.length,

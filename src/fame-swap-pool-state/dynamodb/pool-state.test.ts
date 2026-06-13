@@ -32,12 +32,14 @@ import {
   type FameClReplayMaintenanceState,
   type FameClHeadSnapshotRegistryEntry,
   type FameV4ClReplayRegistryEntry,
+  type FameV4ReviewedPoolEvidence,
   type FameV4ZoraVerifiedProvenance,
   type PoolStateDocumentClient,
   type PoolStateDynamoResponse,
 } from "./pool-state.ts";
 import { FAME_SELECTED_CL_REPLAY_CANDIDATE_POOL_ID } from "../cl-reducer-manifests.ts";
 import { famePoolStateRegistry } from "../registry/index.ts";
+import { fameV4ZoraQuoteLaneManifestForPool } from "../v4-zora-manifests.ts";
 import type { FamePoolStateRegistryEntry } from "../types.ts";
 
 type SentCommand = Parameters<PoolStateDocumentClient["send"]>[0];
@@ -405,6 +407,30 @@ function verifiedV4ZoraProvenance(
   };
 }
 
+function reviewedV4PoolEvidence(
+  pool: FameV4ClReplayRegistryEntry,
+): FameV4ReviewedPoolEvidence {
+  const manifest = fameV4ZoraQuoteLaneManifestForPool(pool.id);
+  if (manifest === null) {
+    throw new Error(`Missing reviewed V4 manifest for ${pool.id}.`);
+  }
+  const shape = manifest.reviewedPoolShape;
+  return {
+    status: "verified",
+    source: "reviewed-v4-manifest",
+    kind: manifest.provenanceRequired
+      ? "zora-protocol-pool"
+      : "zero-hook-static-fee",
+    manifestVersion: manifest.version,
+    poolId: manifest.poolId,
+    poolKey: shape.poolKey,
+    staticFee: shape.fee.toString(),
+    hookAddress: shape.hooks,
+    hookData: shape.hookData,
+    protocolFeeStatus: "zero",
+  };
+}
+
 describe("FAME pool-state DynamoDB mapping", () => {
   test("includes the helper registry contract version in source registry ids", () => {
     expect(sourceRegistryIdFor(famePoolStateRegistry.source)).toMatch(
@@ -606,6 +632,7 @@ describe("FAME pool-state DynamoDB mapping", () => {
       snapshotId: "unit-v4-snapshot-654",
       stateHash:
         "0x6666666666666666666666666666666666666666666666666666666666666666",
+      reviewedPoolEvidence: reviewedV4PoolEvidence(pool),
       zoraProvenance: verifiedV4ZoraProvenance(pool),
       sourceRegistryId: "unit-registry",
       updatedAt: "2026-05-21T00:00:00.000Z",
@@ -665,6 +692,7 @@ describe("FAME pool-state DynamoDB mapping", () => {
       protocolFee: "0",
       feeSource: "v4-slot0",
       source: "uniswap-v4-state-view",
+      reviewedPoolEvidence: reviewedV4PoolEvidence(pool),
       zoraProvenance: verifiedV4ZoraProvenance(pool),
       bitmapWordCount: 2,
       initializedTickCount: 3,
@@ -1234,6 +1262,7 @@ describe("FAME pool-state DynamoDB mapping", () => {
       snapshotId: "unit-v4-snapshot-654",
       stateHash:
         "0x6666666666666666666666666666666666666666666666666666666666666666",
+      reviewedPoolEvidence: reviewedV4PoolEvidence(pool),
       zoraProvenance: verifiedV4ZoraProvenance(pool),
       sourceRegistryId: "unit-registry",
       updatedAt: "2026-05-21T00:00:00.000Z",
@@ -1245,8 +1274,10 @@ describe("FAME pool-state DynamoDB mapping", () => {
       tickChunkSize: 1,
     });
     const { poolKey: _poolKey, ...latestWithoutPoolKey } = rows.latest;
-    const { zoraProvenance: _zoraProvenance, ...latestWithoutProvenance } =
-      rows.latest;
+    const {
+      reviewedPoolEvidence: _reviewedPoolEvidence,
+      ...latestWithoutReviewedPoolEvidence
+    } = rows.latest;
 
     await expect(
       batchGetLatestV4ClReplayStates({
@@ -1273,7 +1304,7 @@ describe("FAME pool-state DynamoDB mapping", () => {
     await expect(
       batchGetLatestV4ClReplayStates({
         db: new ReplayStateDb([
-          latestWithoutProvenance,
+          latestWithoutReviewedPoolEvidence,
           ...rows.bitmapChunks,
           ...rows.tickChunks,
         ]),

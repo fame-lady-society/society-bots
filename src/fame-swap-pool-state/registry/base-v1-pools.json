@@ -9,7 +9,7 @@
     "poolsContentHash": "0xcf346fe2875d030a9b5872895e59e044e6e2b01613e3f3072c721c49c2234715",
     "solverRoutesJsonHash": "0x44cd1807a871080e02630714058ccd2545746712c9b382ffe4411223feeaf218",
     "solverRoutesContentHash": "0x053806dd44f7bf3751a0675b628dd4558a155a9608e8635f8cbdb180c48041a8",
-    "activationLedgerHash": "0xb5b11fb5b0e829d7cef286ed3eb9df977260d1de50aabd658994b3995efb958b"
+    "activationLedgerHash": "0xb533796d3cec89d202f49e0245c9769cba8aa7c92ad537fe33cfc44597927c0f"
   },
   "candidateDirections": [
     {
@@ -58,12 +58,12 @@
       },
       "tickSpacing": null,
       "stateViewAddress": null,
-      "capability": "quote-model",
-      "activationStatus": "reserve-compact-quote-active",
-      "stateSurface": "constant-product-reserves",
+      "capability": "tracked-only",
+      "activationStatus": "tracked-only",
+      "stateSurface": null,
       "replaySurface": null,
-      "quoteModel": "constant-product-reserves",
-      "unsupportedReason": null
+      "quoteModel": null,
+      "unsupportedReason": "non-direct-fame-pool"
     },
     {
       "id": "native-wrap-weth",
@@ -171,7 +171,7 @@
       "stateSurface": null,
       "replaySurface": null,
       "quoteModel": null,
-      "unsupportedReason": "stable-pool"
+      "unsupportedReason": "non-direct-fame-pool"
     },
     {
       "id": "scale-equalizer-usdc-scale",
@@ -193,12 +193,12 @@
       },
       "tickSpacing": null,
       "stateViewAddress": null,
-      "capability": "quote-model",
-      "activationStatus": "reserve-compact-quote-active",
-      "stateSurface": "constant-product-reserves",
+      "capability": "tracked-only",
+      "activationStatus": "tracked-only",
+      "stateSurface": null,
       "replaySurface": null,
-      "quoteModel": "constant-product-reserves",
-      "unsupportedReason": null
+      "quoteModel": null,
+      "unsupportedReason": "non-direct-fame-pool"
     },
     {
       "id": "scale-equalizer-weth-fame",
@@ -274,12 +274,12 @@
       },
       "tickSpacing": 1,
       "stateViewAddress": null,
-      "capability": "market-state",
-      "activationStatus": "cl-head-only",
-      "stateSurface": "cl-head-snapshot",
+      "capability": "tracked-only",
+      "activationStatus": "tracked-only",
+      "stateSurface": null,
       "replaySurface": null,
       "quoteModel": null,
-      "unsupportedReason": null
+      "unsupportedReason": "non-direct-fame-pool"
     },
     {
       "id": "slipstream-usdc-weth-100",
@@ -301,12 +301,12 @@
       },
       "tickSpacing": 100,
       "stateViewAddress": null,
-      "capability": "market-state",
-      "activationStatus": "cl-compact-quote-active",
-      "stateSurface": "cl-head-snapshot",
-      "replaySurface": "cl-replay-v1",
+      "capability": "tracked-only",
+      "activationStatus": "tracked-only",
+      "stateSurface": null,
+      "replaySurface": null,
       "quoteModel": null,
-      "unsupportedReason": null
+      "unsupportedReason": "non-direct-fame-pool"
     },
     {
       "id": "slipstream-zora-usdc",
@@ -328,12 +328,12 @@
       },
       "tickSpacing": 100,
       "stateViewAddress": null,
-      "capability": "market-state",
-      "activationStatus": "cl-head-only",
-      "stateSurface": "cl-head-snapshot",
+      "capability": "tracked-only",
+      "activationStatus": "tracked-only",
+      "stateSurface": null,
       "replaySurface": null,
       "quoteModel": null,
-      "unsupportedReason": null
+      "unsupportedReason": "non-direct-fame-pool"
     },
     {
       "id": "slipstream-zora-weth",
@@ -355,12 +355,12 @@
       },
       "tickSpacing": 100,
       "stateViewAddress": null,
-      "capability": "market-state",
-      "activationStatus": "cl-head-only",
-      "stateSurface": "cl-head-snapshot",
+      "capability": "tracked-only",
+      "activationStatus": "tracked-only",
+      "stateSurface": null,
       "replaySurface": null,
       "quoteModel": null,
-      "unsupportedReason": null
+      "unsupportedReason": "non-direct-fame-pool"
     },
     {
       "id": "uniswap-v2-fame-direct",
@@ -409,12 +409,12 @@
       },
       "tickSpacing": null,
       "stateViewAddress": null,
-      "capability": "quote-model",
-      "activationStatus": "reserve-compact-quote-active",
-      "stateSurface": "constant-product-reserves",
+      "capability": "tracked-only",
+      "activationStatus": "tracked-only",
+      "stateSurface": null,
       "replaySurface": null,
-      "quoteModel": "constant-product-reserves",
-      "unsupportedReason": null
+      "quoteModel": null,
+      "unsupportedReason": "non-direct-fame-pool"
     },
     {
       "id": "uniswap-v3-usdc-weth-30bps",
@@ -436,12 +436,12 @@
       },
       "tickSpacing": 60,
       "stateViewAddress": null,
-      "capability": "market-state",
-      "activationStatus": "cl-head-only",
-      "stateSurface": "cl-head-snapshot",
+      "capability": "tracked-only",
+      "activationStatus": "tracked-only",
+      "stateSurface": null,
       "replaySurface": null,
       "quoteModel": null,
-      "unsupportedReason": null
+      "unsupportedReason": "non-direct-fame-pool"
     },
     {
       "id": "uniswap-v3-usdc-weth-5bps",
@@ -463,12 +463,12 @@
       },
       "tickSpacing": 10,
       "stateViewAddress": null,
-      "capability": "market-state",
-      "activationStatus": "cl-head-only",
-      "stateSurface": "cl-head-snapshot",
+      "capability": "tracked-only",
+      "activationStatus": "tracked-only",
+      "stateSurface": null,
       "replaySurface": null,
       "quoteModel": null,
-      "unsupportedReason": null
+      "unsupportedReason": "non-direct-fame-pool"
     },
     {
       "id": "uniswap-v3-zora-usdc",
@@ -490,12 +490,12 @@
       },
       "tickSpacing": 60,
       "stateViewAddress": null,
-      "capability": "market-state",
-      "activationStatus": "cl-head-only",
-      "stateSurface": "cl-head-snapshot",
+      "capability": "tracked-only",
+      "activationStatus": "tracked-only",
+      "stateSurface": null,
       "replaySurface": null,
       "quoteModel": null,
-      "unsupportedReason": null
+      "unsupportedReason": "non-direct-fame-pool"
     },
     {
       "id": "uniswap-v3-zora-weth",
@@ -517,12 +517,12 @@
       },
       "tickSpacing": 60,
       "stateViewAddress": null,
-      "capability": "market-state",
-      "activationStatus": "cl-head-only",
-      "stateSurface": "cl-head-snapshot",
+      "capability": "tracked-only",
+      "activationStatus": "tracked-only",
+      "stateSurface": null,
       "replaySurface": null,
       "quoteModel": null,
-      "unsupportedReason": null
+      "unsupportedReason": "non-direct-fame-pool"
     },
     {
       "id": "uniswap-v4-basedflick-zora",
@@ -544,12 +544,12 @@
       },
       "tickSpacing": 200,
       "stateViewAddress": "0xa3c0c9b65bad0b08107aa264b0f3db444b867a71",
-      "capability": "market-state",
-      "activationStatus": "unsupported",
-      "stateSurface": "cl-head-snapshot",
+      "capability": "tracked-only",
+      "activationStatus": "tracked-only",
+      "stateSurface": null,
       "replaySurface": null,
       "quoteModel": null,
-      "unsupportedReason": null
+      "unsupportedReason": "non-direct-fame-pool"
     },
     {
       "id": "uniswap-v4-usdc-eth",
@@ -571,12 +571,12 @@
       },
       "tickSpacing": 60,
       "stateViewAddress": "0xa3c0c9b65bad0b08107aa264b0f3db444b867a71",
-      "capability": "market-state",
-      "activationStatus": "unsupported",
-      "stateSurface": "cl-head-snapshot",
+      "capability": "tracked-only",
+      "activationStatus": "tracked-only",
+      "stateSurface": null,
       "replaySurface": null,
       "quoteModel": null,
-      "unsupportedReason": null
+      "unsupportedReason": "non-direct-fame-pool"
     },
     {
       "id": "uniswap-v4-zora-eth",
@@ -598,12 +598,12 @@
       },
       "tickSpacing": 60,
       "stateViewAddress": "0xa3c0c9b65bad0b08107aa264b0f3db444b867a71",
-      "capability": "market-state",
-      "activationStatus": "unsupported",
-      "stateSurface": "cl-head-snapshot",
+      "capability": "tracked-only",
+      "activationStatus": "tracked-only",
+      "stateSurface": null,
       "replaySurface": null,
       "quoteModel": null,
-      "unsupportedReason": null
+      "unsupportedReason": "non-direct-fame-pool"
     }
   ]
 }

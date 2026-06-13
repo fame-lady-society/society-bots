@@ -14,13 +14,14 @@ import {
   type FameClReplayLatestState,
   type FameV4ClReplayLatestState,
   type FameV4ClReplayRegistryEntry,
+  type FameV4ReviewedPoolEvidence,
   type FameV4ClReplayStateCapsule,
   type FameV4ZoraVerifiedProvenance,
   type FamePoolLatestState,
   type PoolStateDocumentClient,
 } from "./dynamodb/pool-state.ts";
 import { famePoolStateRegistry } from "./registry/index.ts";
-import { FAME_V4_ZORA_QUOTE_LANE_POOL_ID } from "./v4-zora-manifests.ts";
+import { fameV4ZoraQuoteLaneManifestForPool } from "./v4-zora-manifests.ts";
 import type {
   FamePoolStateRegistryEntry,
   FamePoolStateRegistryFile,
@@ -124,7 +125,8 @@ interface FameV4ClReplayResponseBase {
   snapshotId: string;
   stateHash: Hex;
   source: "uniswap-v4-state-view";
-  zoraProvenance: FameV4ZoraVerifiedProvenance;
+  reviewedPoolEvidence: FameV4ReviewedPoolEvidence;
+  zoraProvenance?: FameV4ZoraVerifiedProvenance;
   sourceRegistryId: string;
   maxFreshnessBlocks: number;
   bitmapWordCount: number;
@@ -433,7 +435,7 @@ function isV4ClReplayPool(
   pool: FamePoolStateRegistryEntry,
 ): pool is V4ClReplayPool {
   return (
-    pool.id === FAME_V4_ZORA_QUOTE_LANE_POOL_ID &&
+    fameV4ZoraQuoteLaneManifestForPool(pool.id) !== null &&
     pool.venue === "uniswap-v4" &&
     pool.venueFamily === "UniswapV4" &&
     pool.poolAddress === null &&
@@ -543,6 +545,21 @@ function v4ClReplayLatestStateMatchesRegistry({
   entry: V4ClReplayPool;
   sourceRegistryId: string;
 }): boolean {
+  const manifest = fameV4ZoraQuoteLaneManifestForPool(entry.id);
+  if (manifest === null) return false;
+  const reviewed = latest.reviewedPoolEvidence;
+  const provenanceOk =
+    manifest.provenanceRequired &&
+    latest.zoraProvenance !== undefined
+      ? latest.zoraProvenance.status === "verified" &&
+        latest.zoraProvenance.chainId === entry.chainId &&
+        latest.zoraProvenance.coinAddress.toLowerCase() ===
+          entry.token1.toLowerCase() &&
+        latest.zoraProvenance.poolKey.toLowerCase() ===
+          entry.poolKey.toLowerCase() &&
+        latest.zoraProvenance.poolId.toLowerCase() ===
+          entry.poolKey.toLowerCase()
+      : !manifest.provenanceRequired && latest.zoraProvenance === undefined;
   return (
     latest.sourceRegistryId === sourceRegistryId &&
     latest.poolId === entry.id &&
@@ -550,14 +567,22 @@ function v4ClReplayLatestStateMatchesRegistry({
     latest.poolKey.toLowerCase() === entry.poolKey.toLowerCase() &&
     latest.stateViewAddress.toLowerCase() ===
       entry.stateViewAddress.toLowerCase() &&
-    latest.zoraProvenance.status === "verified" &&
-    latest.zoraProvenance.chainId === entry.chainId &&
-    latest.zoraProvenance.coinAddress.toLowerCase() ===
-      entry.token1.toLowerCase() &&
-    latest.zoraProvenance.poolKey.toLowerCase() ===
-      entry.poolKey.toLowerCase() &&
-    latest.zoraProvenance.poolId.toLowerCase() ===
-      entry.poolKey.toLowerCase() &&
+    reviewed.status === "verified" &&
+    reviewed.source === "reviewed-v4-manifest" &&
+    reviewed.kind ===
+      (manifest.provenanceRequired
+        ? "zora-protocol-pool"
+        : "zero-hook-static-fee") &&
+    reviewed.manifestVersion === manifest.version &&
+    reviewed.poolId === manifest.poolId &&
+    reviewed.poolKey.toLowerCase() === entry.poolKey.toLowerCase() &&
+    reviewed.staticFee === manifest.reviewedPoolShape.fee.toString() &&
+    reviewed.hookAddress.toLowerCase() ===
+      manifest.reviewedPoolShape.hooks.toLowerCase() &&
+    reviewed.hookData.toLowerCase() ===
+      manifest.reviewedPoolShape.hookData.toLowerCase() &&
+    reviewed.protocolFeeStatus === "zero" &&
+    provenanceOk &&
     latest.token0.toLowerCase() === entry.token0.toLowerCase() &&
     latest.token1.toLowerCase() === entry.token1.toLowerCase() &&
     latest.venueFamily === entry.venueFamily &&
@@ -655,7 +680,10 @@ function v4ClReplayResponseBase({
     snapshotId: latest.snapshotId,
     stateHash: latest.stateHash,
     source: latest.source,
-    zoraProvenance: latest.zoraProvenance,
+    reviewedPoolEvidence: latest.reviewedPoolEvidence,
+    ...(latest.zoraProvenance
+      ? { zoraProvenance: latest.zoraProvenance }
+      : {}),
     sourceRegistryId: latest.sourceRegistryId,
     maxFreshnessBlocks,
     bitmapWordCount: latest.bitmapWordCount,

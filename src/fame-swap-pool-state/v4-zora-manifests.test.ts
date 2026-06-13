@@ -8,6 +8,8 @@ import type {
 import {
   FAME_V4_ZORA_APPROVED_PROVENANCE,
   FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
+  FAME_V4_ZORA_ETH_QUOTE_LANE_POOL_ID,
+  FAME_V4_ZORA_ETH_REVIEWED_POOL_SHAPE,
   FAME_V4_ZORA_REVIEWED_POOL_SHAPE,
   UNISWAP_V4_DYNAMIC_FEE_FLAG,
   classifyV4ZoraQuoteLane,
@@ -108,6 +110,45 @@ describe("FAME V4 Zora quote lane manifest", () => {
     });
   });
 
+  test("accepts the no-hook ZORA/ETH reviewed pool without provenance", () => {
+    const pool = registryEntry(FAME_V4_ZORA_ETH_QUOTE_LANE_POOL_ID);
+    const classification = classifyV4ZoraQuoteLane(pool);
+    const permissions = decodeUniswapV4HookPermissions(
+      FAME_V4_ZORA_ETH_REVIEWED_POOL_SHAPE.hooks,
+    );
+
+    expect(classification.status).toBe("target-eligible");
+    expect(fameV4ZoraQuoteLaneStatus(pool)).toBe("target-eligible");
+    expect(permissions).toMatchObject({
+      afterInitialize: false,
+      afterSwap: false,
+      beforeSwap: false,
+      beforeSwapReturnDelta: false,
+      afterSwapReturnDelta: false,
+    });
+    if (classification.status !== "target-eligible") {
+      throw new Error("Expected ZORA/ETH target-eligible classification.");
+    }
+    expect(classification).not.toHaveProperty("provenance");
+    expect(classification.manifest).toMatchObject({
+      poolId: FAME_V4_ZORA_ETH_QUOTE_LANE_POOL_ID,
+      provenanceRequired: false,
+      reviewedPoolShape: {
+        poolId: FAME_V4_ZORA_ETH_QUOTE_LANE_POOL_ID,
+        poolManager: "0x498581ff718922c3f8e6a244956af099b2652b2b",
+        stateViewAddress: "0xa3c0c9b65bad0b08107aa264b0f3db444b867a71",
+        poolKey:
+          "0xd694bd7285eeeee19d3d5da38f613859168c422d628def88a0c95dad12071f3a",
+        currency0: "0x0000000000000000000000000000000000000000",
+        currency1: "0x1111111111166b7fe7bd91427724b487980afc69",
+        fee: 3000,
+        tickSpacing: 60,
+        hooks: "0x0000000000000000000000000000000000000000",
+        hookData: "0x",
+      },
+    });
+  });
+
   test("keeps non-target V4 pools outside the quote lane", () => {
     expect(
       classifyV4ZoraQuoteLane(
@@ -116,17 +157,8 @@ describe("FAME V4 Zora quote lane manifest", () => {
       ),
     ).toMatchObject({
       status: "non-target-v4-unsupported",
-      reason: "non-target-v4-pool",
-    });
-    expect(
-      classifyV4ZoraQuoteLane(
-        registryEntry("uniswap-v4-zora-eth"),
-        VERIFIED_PROVENANCE,
-      ),
-    ).toMatchObject({
-      status: "non-target-v4-unsupported",
-      reason: "non-target-v4-pool",
-    });
+        reason: "non-target-v4-pool",
+      });
   });
 
   test("rejects dynamic or mismatched V4 fees", () => {
@@ -194,6 +226,46 @@ describe("FAME V4 Zora quote lane manifest", () => {
       status: "target-blocked",
       reason: "unsafe-hook-permissions",
       unsafeHookPermissions: ["afterSwapReturnDelta"],
+    });
+  });
+
+  test("rejects ZORA/ETH shape drift without requiring BASEDFLICK provenance", () => {
+    expect(
+      classifyV4ZoraReviewedPoolShape({
+        ...FAME_V4_ZORA_ETH_REVIEWED_POOL_SHAPE,
+        fee: UNISWAP_V4_DYNAMIC_FEE_FLAG,
+      }),
+    ).toMatchObject({
+      status: "target-blocked",
+      reason: "dynamic-fee",
+    });
+    expect(
+      classifyV4ZoraReviewedPoolShape({
+        ...FAME_V4_ZORA_ETH_REVIEWED_POOL_SHAPE,
+        hooks: "0x0000000000000000000000000000000000000040",
+      }),
+    ).toMatchObject({
+      status: "target-blocked",
+      reason: "hook-address-mismatch",
+    });
+    expect(
+      classifyV4ZoraReviewedPoolShape({
+        ...FAME_V4_ZORA_ETH_REVIEWED_POOL_SHAPE,
+        hookData: "0x1234",
+      }),
+    ).toMatchObject({
+      status: "target-blocked",
+      reason: "hook-data-mismatch",
+    });
+    expect(
+      classifyV4ZoraReviewedPoolShape({
+        ...FAME_V4_ZORA_ETH_REVIEWED_POOL_SHAPE,
+        currency0: FAME_V4_ZORA_ETH_REVIEWED_POOL_SHAPE.currency1,
+        currency1: FAME_V4_ZORA_ETH_REVIEWED_POOL_SHAPE.currency0,
+      }),
+    ).toMatchObject({
+      status: "target-blocked",
+      reason: "currency0-mismatch",
     });
   });
 

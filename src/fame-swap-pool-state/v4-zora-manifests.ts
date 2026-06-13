@@ -6,7 +6,11 @@ import type {
 } from "./types.ts";
 
 export const FAME_V4_ZORA_QUOTE_LANE_MANIFEST_VERSION = 1;
-export const FAME_V4_ZORA_QUOTE_LANE_POOL_ID = "uniswap-v4-basedflick-zora";
+export const FAME_V4_BASEDFLICK_ZORA_QUOTE_LANE_POOL_ID =
+  "uniswap-v4-basedflick-zora";
+export const FAME_V4_ZORA_ETH_QUOTE_LANE_POOL_ID = "uniswap-v4-zora-eth";
+export const FAME_V4_ZORA_QUOTE_LANE_POOL_ID =
+  FAME_V4_BASEDFLICK_ZORA_QUOTE_LANE_POOL_ID;
 export const UNISWAP_V4_DYNAMIC_FEE_FLAG = 0x800000;
 export const UNISWAP_V4_MAX_LP_FEE = 1_000_000;
 
@@ -28,7 +32,7 @@ export interface FameV4HookPermissions {
 }
 
 export interface FameV4ZoraReviewedPoolShape {
-  poolId: typeof FAME_V4_ZORA_QUOTE_LANE_POOL_ID;
+  poolId: string;
   chainId: 8453;
   venue: "uniswap-v4";
   venueFamily: "UniswapV4";
@@ -39,20 +43,17 @@ export interface FameV4ZoraReviewedPoolShape {
   currency0: Address;
   currency1: Address;
   fee: number;
-  tickSpacing: 200;
+  tickSpacing: number;
   hooks: Address;
   hookData: Hex;
 }
 
 export interface FameV4ZoraQuoteLaneManifest {
   version: typeof FAME_V4_ZORA_QUOTE_LANE_MANIFEST_VERSION;
-  poolId: typeof FAME_V4_ZORA_QUOTE_LANE_POOL_ID;
-  provenanceRequired: true;
+  poolId: string;
+  provenanceRequired: boolean;
   reviewedPoolShape: FameV4ZoraReviewedPoolShape;
-  allowedHookPermissions: Pick<
-    FameV4HookPermissions,
-    "afterInitialize" | "afterSwap"
-  >;
+  requiredHookPermissions: readonly (keyof FameV4HookPermissions)[];
   forbiddenSwapHookPermissions: readonly (
     | "beforeSwap"
     | "beforeSwapReturnDelta"
@@ -100,10 +101,10 @@ export type FameV4ZoraQuoteLaneBlockReason =
 export type FameV4ZoraQuoteLaneClassification =
   | {
       status: "target-eligible";
-      poolId: typeof FAME_V4_ZORA_QUOTE_LANE_POOL_ID;
+      poolId: string;
       manifest: FameV4ZoraQuoteLaneManifest;
       hookPermissions: FameV4HookPermissions;
-      provenance: Extract<
+      provenance?: Extract<
         FamePoolStateV4ZoraProvenanceEvidence,
         { status: "verified" }
       >;
@@ -144,7 +145,7 @@ const HOOK_FLAGS = {
 } as const satisfies Record<keyof FameV4HookPermissions, bigint>;
 
 export const FAME_V4_ZORA_REVIEWED_POOL_SHAPE = {
-  poolId: FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
+  poolId: FAME_V4_BASEDFLICK_ZORA_QUOTE_LANE_POOL_ID,
   chainId: 8453,
   venue: "uniswap-v4",
   venueFamily: "UniswapV4",
@@ -160,15 +161,29 @@ export const FAME_V4_ZORA_REVIEWED_POOL_SHAPE = {
   hookData: "0x",
 } as const satisfies FameV4ZoraReviewedPoolShape;
 
+export const FAME_V4_ZORA_ETH_REVIEWED_POOL_SHAPE = {
+  poolId: FAME_V4_ZORA_ETH_QUOTE_LANE_POOL_ID,
+  chainId: 8453,
+  venue: "uniswap-v4",
+  venueFamily: "UniswapV4",
+  router: "0x6ff5693b99212da76ad316178a184ab56d299b43",
+  poolManager: "0x498581ff718922c3f8e6a244956af099b2652b2b",
+  stateViewAddress: "0xa3c0c9b65bad0b08107aa264b0f3db444b867a71",
+  poolKey: "0xd694bd7285eeeee19d3d5da38f613859168c422d628def88a0c95dad12071f3a",
+  currency0: "0x0000000000000000000000000000000000000000",
+  currency1: "0x1111111111166b7fe7bd91427724b487980afc69",
+  fee: 3_000,
+  tickSpacing: 60,
+  hooks: "0x0000000000000000000000000000000000000000",
+  hookData: "0x",
+} as const satisfies FameV4ZoraReviewedPoolShape;
+
 export const FAME_V4_ZORA_QUOTE_LANE_MANIFEST = {
   version: FAME_V4_ZORA_QUOTE_LANE_MANIFEST_VERSION,
-  poolId: FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
+  poolId: FAME_V4_BASEDFLICK_ZORA_QUOTE_LANE_POOL_ID,
   provenanceRequired: true,
   reviewedPoolShape: FAME_V4_ZORA_REVIEWED_POOL_SHAPE,
-  allowedHookPermissions: {
-    afterInitialize: true,
-    afterSwap: true,
-  },
+  requiredHookPermissions: ["afterInitialize", "afterSwap"],
   forbiddenSwapHookPermissions: [
     "beforeSwap",
     "beforeSwapReturnDelta",
@@ -176,6 +191,28 @@ export const FAME_V4_ZORA_QUOTE_LANE_MANIFEST = {
   ],
   activationStatuses: ["unsupported"],
 } as const satisfies FameV4ZoraQuoteLaneManifest;
+
+export const FAME_V4_ZORA_ETH_QUOTE_LANE_MANIFEST = {
+  version: FAME_V4_ZORA_QUOTE_LANE_MANIFEST_VERSION,
+  poolId: FAME_V4_ZORA_ETH_QUOTE_LANE_POOL_ID,
+  provenanceRequired: false,
+  reviewedPoolShape: FAME_V4_ZORA_ETH_REVIEWED_POOL_SHAPE,
+  requiredHookPermissions: [],
+  forbiddenSwapHookPermissions: [
+    "beforeSwap",
+    "beforeSwapReturnDelta",
+    "afterSwapReturnDelta",
+  ],
+  activationStatuses: ["unsupported"],
+} as const satisfies FameV4ZoraQuoteLaneManifest;
+
+export const FAME_V4_ZORA_QUOTE_LANE_MANIFESTS = [
+  FAME_V4_ZORA_QUOTE_LANE_MANIFEST,
+  FAME_V4_ZORA_ETH_QUOTE_LANE_MANIFEST,
+] as const satisfies readonly FameV4ZoraQuoteLaneManifest[];
+
+export const FAME_V4_ZORA_QUOTE_LANE_POOL_IDS =
+  FAME_V4_ZORA_QUOTE_LANE_MANIFESTS.map((manifest) => manifest.poolId);
 
 export const FAME_V4_ZORA_APPROVED_PROVENANCE = {
   status: "verified",
@@ -251,12 +288,27 @@ export function decodeUniswapV4HookPermissions(
   };
 }
 
+function v4ZoraQuoteLaneManifestForPool(
+  poolId: string,
+): FameV4ZoraQuoteLaneManifest | null {
+  return (
+    FAME_V4_ZORA_QUOTE_LANE_MANIFESTS.find(
+      (manifest) => manifest.poolId === poolId,
+    ) ?? null
+  );
+}
+
+export function fameV4ZoraQuoteLaneManifestForPool(
+  poolId: string,
+): FameV4ZoraQuoteLaneManifest | null {
+  return v4ZoraQuoteLaneManifestForPool(poolId);
+}
+
 function unsafeSwapHookPermissions(
+  manifest: FameV4ZoraQuoteLaneManifest,
   permissions: FameV4HookPermissions,
 ): string[] {
-  return FAME_V4_ZORA_QUOTE_LANE_MANIFEST.forbiddenSwapHookPermissions.filter(
-    (name) => permissions[name],
-  );
+  return manifest.forbiddenSwapHookPermissions.filter((name) => permissions[name]);
 }
 
 function registryShapeBlockReason(
@@ -311,15 +363,15 @@ export function classifyV4ZoraReviewedPoolShape(
   shape: FameV4ZoraReviewedPoolShape,
   provenance?: FamePoolStateV4ZoraProvenanceEvidence,
 ): FameV4ZoraQuoteLaneClassification {
-  const manifest = FAME_V4_ZORA_QUOTE_LANE_MANIFEST;
-  const expected = manifest.reviewedPoolShape;
-  if (shape.poolId !== expected.poolId) {
+  const manifest = v4ZoraQuoteLaneManifestForPool(shape.poolId);
+  if (manifest === null) {
     return {
       status: "non-target-v4-unsupported",
       poolId: shape.poolId,
       reason: "non-target-v4-pool",
     };
   }
+  const expected = manifest.reviewedPoolShape;
   if (shape.chainId !== expected.chainId) {
     return block(shape.poolId, "chain-mismatch");
   }
@@ -361,51 +413,59 @@ export function classifyV4ZoraReviewedPoolShape(
   }
 
   const hookPermissions = decodeUniswapV4HookPermissions(shape.hooks);
-  const unsafePermissions = unsafeSwapHookPermissions(hookPermissions);
-  if (
-    !hookPermissions.afterInitialize ||
-    !hookPermissions.afterSwap ||
-    unsafePermissions.length > 0
-  ) {
+  const missingRequiredPermissions = manifest.requiredHookPermissions.filter(
+    (name) => !hookPermissions[name],
+  );
+  const unsafePermissions = unsafeSwapHookPermissions(manifest, hookPermissions);
+  if (missingRequiredPermissions.length > 0 || unsafePermissions.length > 0) {
     return block(shape.poolId, "unsafe-hook-permissions", {
       hookPermissions,
-      unsafeHookPermissions: unsafePermissions,
+      unsafeHookPermissions: [
+        ...missingRequiredPermissions,
+        ...unsafePermissions,
+      ],
     });
   }
   if (!sameAddress(shape.hooks, expected.hooks)) {
     return block(shape.poolId, "hook-address-mismatch", { hookPermissions });
   }
 
-  if (!provenance || provenance.status === "missing") {
-    return block(shape.poolId, "missing-provenance", { hookPermissions });
-  }
-  if (provenance.chainId !== shape.chainId) {
-    return block(shape.poolId, "provenance-chain-mismatch", {
-      hookPermissions,
-    });
-  }
-  if (!sameAddress(provenance.coinAddress, shape.currency1)) {
-    return block(shape.poolId, "provenance-coin-mismatch", {
-      hookPermissions,
-    });
-  }
-  if (!sameHex(provenance.poolKey, shape.poolKey)) {
-    return block(shape.poolId, "provenance-pool-key-mismatch", {
-      hookPermissions,
-    });
-  }
-  if (!sameHex(provenance.poolId, shape.poolKey)) {
-    return block(shape.poolId, "provenance-pool-id-mismatch", {
-      hookPermissions,
-    });
+  let verifiedProvenance:
+    | Extract<FamePoolStateV4ZoraProvenanceEvidence, { status: "verified" }>
+    | undefined;
+  if (manifest.provenanceRequired) {
+    if (!provenance || provenance.status === "missing") {
+      return block(shape.poolId, "missing-provenance", { hookPermissions });
+    }
+    if (provenance.chainId !== shape.chainId) {
+      return block(shape.poolId, "provenance-chain-mismatch", {
+        hookPermissions,
+      });
+    }
+    if (!sameAddress(provenance.coinAddress, shape.currency1)) {
+      return block(shape.poolId, "provenance-coin-mismatch", {
+        hookPermissions,
+      });
+    }
+    if (!sameHex(provenance.poolKey, shape.poolKey)) {
+      return block(shape.poolId, "provenance-pool-key-mismatch", {
+        hookPermissions,
+      });
+    }
+    if (!sameHex(provenance.poolId, shape.poolKey)) {
+      return block(shape.poolId, "provenance-pool-id-mismatch", {
+        hookPermissions,
+      });
+    }
+    verifiedProvenance = provenance;
   }
 
   return {
     status: "target-eligible",
-    poolId: FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
+    poolId: manifest.poolId,
     manifest,
     hookPermissions,
-    provenance,
+    ...(verifiedProvenance ? { provenance: verifiedProvenance } : {}),
   };
 }
 
@@ -420,7 +480,8 @@ export function classifyV4ZoraQuoteLane(
       reason: "not-uniswap-v4",
     };
   }
-  if (pool.id !== FAME_V4_ZORA_QUOTE_LANE_POOL_ID) {
+  const manifest = v4ZoraQuoteLaneManifestForPool(pool.id);
+  if (manifest === null) {
     return {
       status: "non-target-v4-unsupported",
       poolId: pool.id,
@@ -428,7 +489,6 @@ export function classifyV4ZoraQuoteLane(
     };
   }
 
-  const manifest = FAME_V4_ZORA_QUOTE_LANE_MANIFEST;
   const blockedReason = registryShapeBlockReason(pool, manifest);
   if (blockedReason !== null) return block(pool.id, blockedReason);
   return classifyV4ZoraReviewedPoolShape(

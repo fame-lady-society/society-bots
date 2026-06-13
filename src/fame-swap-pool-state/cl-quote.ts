@@ -18,6 +18,7 @@ import {
   type FameV4ClReplayLatestState,
   type FameV4ClReplayMaintenanceState,
   type FameV4ClReplayRegistryEntry,
+  type FameV4ReviewedPoolEvidence,
   type FameV4ClReplayStateCapsule,
   type FameV4ZoraVerifiedProvenance,
   type PoolStateDocumentClient,
@@ -31,8 +32,7 @@ import type {
 } from "./types.ts";
 import {
   classifyV4ZoraQuoteLane,
-  FAME_V4_ZORA_QUOTE_LANE_MANIFEST,
-  FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
+  fameV4ZoraQuoteLaneManifestForPool,
 } from "./v4-zora-manifests.ts";
 
 export interface FamePoolQuoteRequest {
@@ -149,7 +149,8 @@ interface FameV4ClQuoteEntry {
   hookAddress: Address;
   hookData: Hex;
   hookDataStatus: "empty";
-  zoraProvenance: FameV4ZoraVerifiedProvenance;
+  reviewedPoolEvidence: FameV4ReviewedPoolEvidence;
+  zoraProvenance?: FameV4ZoraVerifiedProvenance;
 }
 
 interface FamePriceImpactEstimate {
@@ -413,7 +414,7 @@ function isV4ClReplayPool(
   pool: FamePoolStateRegistryEntry,
 ): pool is V4ClReplayPool {
   return (
-    pool.id === FAME_V4_ZORA_QUOTE_LANE_POOL_ID &&
+    fameV4ZoraQuoteLaneManifestForPool(pool.id) !== null &&
     pool.venue === "uniswap-v4" &&
     pool.venueFamily === "UniswapV4" &&
     pool.poolAddress === null &&
@@ -437,6 +438,10 @@ function isReserveQuotePool(
 }
 
 function sameAddress(left: Address, right: Address): boolean {
+  return left.toLowerCase() === right.toLowerCase();
+}
+
+function sameHex(left: Hex, right: Hex): boolean {
   return left.toLowerCase() === right.toLowerCase();
 }
 
@@ -545,8 +550,30 @@ function v4ClReplayLatestUnavailableReason({
     latest.tickSpacing === entry.tickSpacing;
   if (!shapeMatches) return "v4-shape-mismatch";
 
+  const manifest = fameV4ZoraQuoteLaneManifestForPool(entry.id);
+  if (manifest === null) return "v4-shape-mismatch";
+  const reviewed = latest.reviewedPoolEvidence;
+  if (
+    reviewed.status !== "verified" ||
+    reviewed.source !== "reviewed-v4-manifest" ||
+    reviewed.manifestVersion !== manifest.version ||
+    reviewed.poolId !== manifest.poolId ||
+    !sameHex(reviewed.poolKey, manifest.reviewedPoolShape.poolKey) ||
+    reviewed.staticFee !== manifest.reviewedPoolShape.fee.toString() ||
+    !sameAddress(reviewed.hookAddress, manifest.reviewedPoolShape.hooks) ||
+    reviewed.hookData.toLowerCase() !==
+      manifest.reviewedPoolShape.hookData.toLowerCase() ||
+    reviewed.protocolFeeStatus !== "zero"
+  ) {
+    return "v4-shape-mismatch";
+  }
+
+  if (!manifest.provenanceRequired) {
+    return latest.zoraProvenance === undefined ? null : "missing-provenance";
+  }
   const provenance = latest.zoraProvenance;
   const provenanceMatches =
+    provenance !== undefined &&
     provenance.status === "verified" &&
     provenance.chainId === entry.chainId &&
     provenance.coinAddress.toLowerCase() === entry.token1.toLowerCase() &&
@@ -1149,6 +1176,26 @@ function v4AdmissionUnavailableReason({
     return "v4-shape-mismatch";
   }
 
+  const reviewed = latest.reviewedPoolEvidence;
+  const shape = classification.manifest.reviewedPoolShape;
+  if (
+    reviewed.status !== "verified" ||
+    reviewed.source !== "reviewed-v4-manifest" ||
+    reviewed.kind !==
+      (classification.manifest.provenanceRequired
+        ? "zora-protocol-pool"
+        : "zero-hook-static-fee") ||
+    reviewed.manifestVersion !== classification.manifest.version ||
+    reviewed.poolId !== classification.manifest.poolId ||
+    !sameHex(reviewed.poolKey, shape.poolKey) ||
+    reviewed.staticFee !== shape.fee.toString() ||
+    !sameAddress(reviewed.hookAddress, shape.hooks) ||
+    reviewed.hookData.toLowerCase() !== shape.hookData.toLowerCase() ||
+    reviewed.protocolFeeStatus !== "zero"
+  ) {
+    return "v4-shape-mismatch";
+  }
+
   const lpFee = parseUnsignedDecimal(latest.lpFee);
   const protocolFee = parseUnsignedDecimal(latest.protocolFee);
   if (
@@ -1388,8 +1435,18 @@ function quoteFromV4ReplayState(options: {
     );
   }
 
-  const reviewedShape =
-    FAME_V4_ZORA_QUOTE_LANE_MANIFEST.reviewedPoolShape;
+  const classification = classifyV4ZoraQuoteLane(
+    options.entry,
+    latest.zoraProvenance,
+  );
+  if (classification.status !== "target-eligible") {
+    return unavailable(
+      request,
+      "v4-shape-mismatch",
+      v4QuoteMetadata(latest, options.maxFreshnessBlocks),
+    );
+  }
+  const reviewedShape = classification.manifest.reviewedPoolShape;
   return {
     status: "quoted",
     quoteKind: "cl-quote-v1",
@@ -1428,7 +1485,10 @@ function quoteFromV4ReplayState(options: {
     hookAddress: reviewedShape.hooks,
     hookData: reviewedShape.hookData,
     hookDataStatus: "empty",
-    zoraProvenance: latest.zoraProvenance,
+    reviewedPoolEvidence: latest.reviewedPoolEvidence,
+    ...(latest.zoraProvenance
+      ? { zoraProvenance: latest.zoraProvenance }
+      : {}),
   };
 }
 

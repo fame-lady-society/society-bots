@@ -6,7 +6,10 @@ import type {
 } from "../api.ts";
 import type { FamePoolQuoteBatchResponse } from "../cl-quote.ts";
 import type { FamePoolStateIndexerResult } from "../indexer.ts";
-import { FAME_V4_ZORA_QUOTE_LANE_POOL_ID } from "../v4-zora-manifests.ts";
+import {
+  FAME_V4_ZORA_ETH_QUOTE_LANE_POOL_ID,
+  FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
+} from "../v4-zora-manifests.ts";
 import {
   logPoolStateApiBatch,
   logPoolStateIndexerResult,
@@ -121,6 +124,18 @@ function freshV4ReplayPool(): FamePoolStateResponseEntry {
     snapshotId: "v4-cl-replay-v1:uniswap-v4-basedflick-zora:120",
     stateHash: HEX_32,
     source: "uniswap-v4-state-view",
+    reviewedPoolEvidence: {
+      status: "verified",
+      source: "reviewed-v4-manifest",
+      kind: "zora-protocol-pool",
+      manifestVersion: 1,
+      poolId: FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
+      poolKey: HEX_32,
+      staticFee: "30000",
+      hookAddress: ADDRESS_A,
+      hookData: "0x" as Hex,
+      protocolFeeStatus: "zero",
+    },
     zoraProvenance: {
       status: "verified",
       source: "zora-factory-event",
@@ -533,8 +548,8 @@ describe("FAME pool-state Lambda logging", () => {
     try {
       logPoolStateIndexerResult(
         indexerResult({
-          v4ClReplaySnapshots: 1,
-          v4ClReplayWrittenPools: 1,
+          v4ClReplaySnapshots: 2,
+          v4ClReplayWrittenPools: 2,
           v4ClReplayMetrics: [
             {
               poolId: FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
@@ -548,6 +563,18 @@ describe("FAME pool-state Lambda logging", () => {
               lpFee: "30000",
               protocolFee: "0",
             },
+            {
+              poolId: FAME_V4_ZORA_ETH_QUOTE_LANE_POOL_ID,
+              bitmapWordCount: 6,
+              initializedTickCount: 7,
+              bitmapChunkCount: 3,
+              tickChunkCount: 4,
+              providerReadCount: 29,
+              durationMs: 88,
+              stateHash: HEX_32,
+              lpFee: "3000",
+              protocolFee: "0",
+            },
           ],
         }),
       );
@@ -557,8 +584,8 @@ describe("FAME pool-state Lambda logging", () => {
       expect(line).not.toContain("bitmapWords");
       expect(line).not.toContain("initializedTicks");
       expect(parseLogLine(line)).toMatchObject({
-        v4ClReplaySnapshots: 1,
-        v4ClReplayWrittenPools: 1,
+        v4ClReplaySnapshots: 2,
+        v4ClReplayWrittenPools: 2,
         selectedV4ZoraReplay: {
           poolId: FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
           providerReadCount: 47,
@@ -570,6 +597,20 @@ describe("FAME pool-state Lambda logging", () => {
           protocolFee: "0",
           stateHash: HEX_32,
         },
+        reviewedV4ZoraReplay: [
+          {
+            poolId: FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
+            providerReadCount: 47,
+            lpFee: "30000",
+            protocolFee: "0",
+          },
+          {
+            poolId: FAME_V4_ZORA_ETH_QUOTE_LANE_POOL_ID,
+            providerReadCount: 29,
+            lpFee: "3000",
+            protocolFee: "0",
+          },
+        ],
       });
     } finally {
       infoLog.mockRestore();
@@ -603,7 +644,17 @@ describe("FAME pool-state Lambda logging", () => {
     response.quotes.push({
       status: "unavailable",
       requested: {
-        poolId: "uniswap-v4-basedflick-zora",
+        poolId: FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
+        tokenIn: ADDRESS_A,
+        tokenOut: ADDRESS_B,
+        amountIn: "1000",
+      },
+      reason: "unsupported-pool",
+    });
+    response.quotes.push({
+      status: "unavailable",
+      requested: {
+        poolId: FAME_V4_ZORA_ETH_QUOTE_LANE_POOL_ID,
         tokenIn: ADDRESS_A,
         tokenOut: ADDRESS_B,
         amountIn: "1000",
@@ -613,11 +664,11 @@ describe("FAME pool-state Lambda logging", () => {
 
     expect(poolQuoteApiBatchLogFields(response)).toMatchObject({
       statusCounts: {
-        unavailable: 2,
+        unavailable: 3,
       },
       reasonCounts: {
         "producer-untrusted": 1,
-        "unsupported-pool": 1,
+        "unsupported-pool": 2,
       },
       selectedClReplayCandidateQuote: {
         poolId: "slipstream-basedflick-fame",
@@ -630,7 +681,7 @@ describe("FAME pool-state Lambda logging", () => {
         },
       },
       selectedV4ZoraQuote: {
-        poolId: "uniswap-v4-basedflick-zora",
+        poolId: FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
         returned: 1,
         statusCounts: {
           unavailable: 1,
@@ -639,6 +690,28 @@ describe("FAME pool-state Lambda logging", () => {
           "unsupported-pool": 1,
         },
       },
+      reviewedV4ZoraQuotes: [
+        {
+          poolId: FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
+          returned: 1,
+          statusCounts: {
+            unavailable: 1,
+          },
+          reasonCounts: {
+            "unsupported-pool": 1,
+          },
+        },
+        {
+          poolId: FAME_V4_ZORA_ETH_QUOTE_LANE_POOL_ID,
+          returned: 1,
+          statusCounts: {
+            unavailable: 1,
+          },
+          reasonCounts: {
+            "unsupported-pool": 1,
+          },
+        },
+      ],
     });
   });
 });

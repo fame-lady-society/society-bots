@@ -50,6 +50,7 @@ import {
   type FameV4ClReplayCandidateStateCapsule,
   type FameV4ClReplayMaintenanceState,
   type FameV4ClReplayRegistryEntry,
+  type FameV4ReviewedPoolEvidence,
   type FameV4ClReplayStateCapsule,
   type FameV4ClReplayStateRows,
   type FameV4ZoraVerifiedProvenance,
@@ -64,8 +65,9 @@ import {
 import { famePoolStateRegistry } from "./registry/index.ts";
 import {
   FAME_V4_ZORA_REVIEWED_POOL_SHAPE,
-  FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
   classifyV4ZoraQuoteLane,
+  fameV4ZoraQuoteLaneManifestForPool,
+  type FameV4ZoraQuoteLaneClassification,
 } from "./v4-zora-manifests.ts";
 import type {
   FamePoolStateRegistryEntry,
@@ -83,6 +85,53 @@ type ClReplaySeedCapsule =
 type V4ClReplaySeedCapsule =
   | FameV4ClReplayStateCapsule
   | FameV4ClReplayCandidateStateCapsule;
+type V4EligibleQuoteLaneClassification = Extract<
+  FameV4ZoraQuoteLaneClassification,
+  { status: "target-eligible" }
+>;
+
+function v4ReviewedPoolEvidenceFromClassification(
+  classification: V4EligibleQuoteLaneClassification,
+): FameV4ReviewedPoolEvidence {
+  const shape = classification.manifest.reviewedPoolShape;
+  return {
+    status: "verified",
+    source: "reviewed-v4-manifest",
+    kind: classification.manifest.provenanceRequired
+      ? "zora-protocol-pool"
+      : "zero-hook-static-fee",
+    manifestVersion: classification.manifest.version,
+    poolId: classification.manifest.poolId,
+    poolKey: shape.poolKey,
+    staticFee: shape.fee.toString(),
+    hookAddress: shape.hooks,
+    hookData: shape.hookData,
+    protocolFeeStatus: "zero",
+  };
+}
+
+function eligibleV4QuoteLaneEvidence({
+  pool,
+  provenance,
+}: {
+  pool: V4ClReplayPool;
+  provenance?: FamePoolStateV4ZoraProvenanceEvidence;
+}): {
+  reviewedPoolEvidence: FameV4ReviewedPoolEvidence;
+  zoraProvenance?: FameV4ZoraVerifiedProvenance;
+} {
+  const classification = classifyV4ZoraQuoteLane(pool, provenance);
+  if (classification.status !== "target-eligible") {
+    throw new Error(`${pool.id} V4 replay pool is not reviewed quote eligible.`);
+  }
+  return {
+    reviewedPoolEvidence:
+      v4ReviewedPoolEvidenceFromClassification(classification),
+    ...(classification.provenance
+      ? { zoraProvenance: classification.provenance }
+      : {}),
+  };
+}
 type ClReplayTrustedCursorCheck =
   | { canAdvance: true; reason: null }
   | { canAdvance: false; reason: string | null };
@@ -849,7 +898,6 @@ function v4ClReplayPools({
   provenance?: FamePoolStateV4ZoraProvenanceEvidence;
 }): V4ClReplayPool[] {
   return registry.pools.filter((pool): pool is V4ClReplayPool => {
-    if (pool.id !== FAME_V4_ZORA_QUOTE_LANE_POOL_ID) return false;
     if (
       classifyV4ZoraQuoteLane(pool, provenance).status !== "target-eligible"
     ) {
@@ -1216,6 +1264,7 @@ function v4ClReplayRowsFromSnapshot({
   pool,
   snapshot,
   observedThroughBlock,
+  reviewedPoolEvidence,
   zoraProvenance,
   sourceRegistryId,
   updatedAt,
@@ -1223,7 +1272,8 @@ function v4ClReplayRowsFromSnapshot({
   pool: V4ClReplayPool;
   snapshot: FameV4ClReplaySnapshotRead;
   observedThroughBlock: number;
-  zoraProvenance: FameV4ZoraVerifiedProvenance;
+  reviewedPoolEvidence: FameV4ReviewedPoolEvidence;
+  zoraProvenance?: FameV4ZoraVerifiedProvenance;
   sourceRegistryId: string;
   updatedAt: string;
 }): FameV4ClReplayStateRows {
@@ -1244,6 +1294,7 @@ function v4ClReplayRowsFromSnapshot({
       sourceRegistryId,
     }),
     stateHash: v4ClReplayStateHash({ pool, snapshot, observedThroughBlock }),
+    reviewedPoolEvidence,
     zoraProvenance,
     sourceRegistryId,
     updatedAt,
@@ -1331,6 +1382,7 @@ function v4ClReplayRowsFromCandidateRows({
     parentHash: rows.latest.parentHash,
     snapshotId: `v4-cl-replay-v1:${pool.id}:${rows.latest.observedThroughBlock.toString()}:${rows.latest.blockHash}:${rows.latest.sourceRegistryId}`,
     stateHash: rows.latest.stateHash,
+    reviewedPoolEvidence: rows.latest.reviewedPoolEvidence,
     zoraProvenance: rows.latest.zoraProvenance,
     sourceRegistryId: rows.latest.sourceRegistryId,
     updatedAt: rows.latest.updatedAt,
@@ -2045,6 +2097,7 @@ export function applyV4ClReplayDeltas({
   blockHash,
   parentHash,
   candidateId,
+  reviewedPoolEvidence,
   zoraProvenance,
   sourceRegistryId,
   updatedAt,
@@ -2056,7 +2109,8 @@ export function applyV4ClReplayDeltas({
   blockHash: Hex;
   parentHash: Hex;
   candidateId: string;
-  zoraProvenance: FameV4ZoraVerifiedProvenance;
+  reviewedPoolEvidence: FameV4ReviewedPoolEvidence;
+  zoraProvenance?: FameV4ZoraVerifiedProvenance;
   sourceRegistryId: string;
   updatedAt: string;
 }): FameV4ClReplayDeltaApplyResult {
@@ -2080,6 +2134,15 @@ export function applyV4ClReplayDeltas({
   let liquidity = BigInt(seed.latest.liquidity);
   let lpFee = BigInt(seed.latest.lpFee);
   const protocolFee = BigInt(seed.latest.protocolFee);
+  const manifest = fameV4ZoraQuoteLaneManifestForPool(pool.id);
+  if (manifest === null) {
+    return {
+      status: "event-gap",
+      reason: "pool-shape-mismatch",
+      appliedEventCount: 0,
+    };
+  }
+  const reviewedStaticFee = BigInt(manifest.reviewedPoolShape.fee);
   const tickStates = new Map(
     seed.initializedTicks.map((initializedTick) => [
       initializedTick.tick,
@@ -2104,7 +2167,7 @@ export function applyV4ClReplayDeltas({
     }
 
     if (event.kind === "swap") {
-      if (event.lpFee !== BigInt(FAME_V4_ZORA_REVIEWED_POOL_SHAPE.fee)) {
+      if (event.lpFee !== reviewedStaticFee) {
         return {
           status: "event-gap",
           reason: "lp-fee-mismatch",
@@ -2121,7 +2184,7 @@ export function applyV4ClReplayDeltas({
 
     if (event.kind === "initialize") {
       if (
-        event.lpFee !== BigInt(FAME_V4_ZORA_REVIEWED_POOL_SHAPE.fee) ||
+        event.lpFee !== reviewedStaticFee ||
         event.tickSpacing !== pool.tickSpacing
       ) {
         return {
@@ -2236,6 +2299,7 @@ export function applyV4ClReplayDeltas({
       parentHash,
       candidateId,
       stateHash: v4ClReplayStateHash({ pool, snapshot, observedThroughBlock }),
+      reviewedPoolEvidence,
       zoraProvenance,
       sourceRegistryId,
       updatedAt,
@@ -3661,14 +3725,15 @@ export async function indexFamePoolStates({
   const v4ClReplayMetrics: FameV4ClReplaySnapshotMetric[] = [];
   const v4ClReplayRowsByPoolId = new Map<string, FameV4ClReplayStateRows>();
   for (const { pool, snapshot } of v4ClReplaySnapshots) {
-    if (!v4ZoraProvenance || v4ZoraProvenance.status !== "verified") {
-      throw new Error(`${pool.id} V4 replay rows require verified provenance.`);
-    }
+    const evidence = eligibleV4QuoteLaneEvidence({
+      pool,
+      provenance: v4ZoraProvenance,
+    });
     const rows = v4ClReplayRowsFromSnapshot({
       pool,
       snapshot,
       observedThroughBlock,
-      zoraProvenance: v4ZoraProvenance,
+      ...evidence,
       sourceRegistryId,
       updatedAt,
     });
@@ -3914,9 +3979,10 @@ export async function indexFamePoolStates({
 
   const v4ClReplayMaintenanceMetrics: FameClReplayMaintenanceMetric[] = [];
   for (const pool of v4ReplayPools) {
-    if (!v4ZoraProvenance || v4ZoraProvenance.status !== "verified") {
-      throw new Error(`${pool.id} V4 replay maintenance requires provenance.`);
-    }
+    const evidence = eligibleV4QuoteLaneEvidence({
+      pool,
+      provenance: v4ZoraProvenance,
+    });
     const snapshotRows = v4ClReplayRowsByPoolId.get(pool.id);
     const checkpointBootstrap =
       v4CheckpointBootstrapPoolIds.has(pool.id) && snapshotRows !== undefined;
@@ -3994,7 +4060,7 @@ export async function indexFamePoolStates({
           parentHash:
             snapshotRows?.latest.parentHash ?? targetBlockIdentity.parentHash,
           candidateId: `v4-cl-replay-candidate-v1:${pool.id}:${observedThroughBlock.toString()}:${sourceRegistryId}`,
-          zoraProvenance: v4ZoraProvenance,
+          ...evidence,
           sourceRegistryId,
           updatedAt,
         });
