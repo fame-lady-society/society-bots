@@ -42,13 +42,16 @@ import {
 } from "./dynamodb/pool-state.ts";
 import { famePoolStateRegistry } from "./registry/index.ts";
 import { fameV4ZoraQuoteLaneManifestForPool } from "./v4-zora-manifests.ts";
-import type { FamePoolStateRegistryEntry } from "./types.ts";
+import type {
+  FamePoolStateRegistryEntry,
+  FamePoolStateRegistryFile,
+} from "./types.ts";
 
 type SentCommand = Parameters<PoolStateDocumentClient["send"]>[0];
 
 const ADDRESS_A = "0x0000000000000000000000000000000000000001" as Address;
 const POOL_QUOTES_V1_FIXTURE_SHA256 =
-  "1167e7daf16ed8c90c01b053dce24bb08579aef88a24a1ae1a756b290c34237d";
+  "3218b241ffb1752f824c2eb58fc84dfad876927e3fc8716afc1c13a70a424594";
 
 class BatchStateDb implements PoolStateDocumentClient {
   public readCount = 0;
@@ -179,19 +182,30 @@ function quoteModelPools(): (FamePoolStateRegistryEntry & {
   );
 }
 
+function registryWithPools(
+  pools: readonly FamePoolStateRegistryEntry[],
+): FamePoolStateRegistryFile {
+  return {
+    ...famePoolStateRegistry,
+    pools: [...pools],
+  };
+}
+
 function clHeadPool(id: string): FameClHeadSnapshotRegistryEntry {
   const entry = famePoolStateRegistry.pools.find((pool) => pool.id === id);
-  if (
-    !entry ||
-    entry.stateSurface !== "cl-head-snapshot" ||
-    entry.tickSpacing === null
-  ) {
+  if (!entry || entry.tickSpacing === null) {
     throw new Error(`Missing CL head pool ${id}.`);
   }
   return {
     ...entry,
-    stateSurface: entry.stateSurface,
+    capability: "market-state",
+    activationStatus:
+      entry.activationStatus === "tracked-only"
+        ? "cl-head-only"
+        : entry.activationStatus,
+    stateSurface: "cl-head-snapshot",
     tickSpacing: entry.tickSpacing,
+    unsupportedReason: null,
   };
 }
 
@@ -201,8 +215,6 @@ function clReplayPool(): FameClReplayRegistryEntry {
   );
   if (
     !entry ||
-    entry.replaySurface !== "cl-replay-v1" ||
-    entry.stateSurface !== "cl-head-snapshot" ||
     entry.poolAddress === null ||
     entry.tickSpacing === null ||
     entry.venue !== "aerodrome-slipstream"
@@ -211,11 +223,14 @@ function clReplayPool(): FameClReplayRegistryEntry {
   }
   return {
     ...entry,
-    replaySurface: entry.replaySurface,
-    stateSurface: entry.stateSurface,
+    capability: "market-state",
+    activationStatus: "cl-compact-quote-active",
+    replaySurface: "cl-replay-v1",
+    stateSurface: "cl-head-snapshot",
     poolAddress: entry.poolAddress,
     tickSpacing: entry.tickSpacing,
     venue: entry.venue,
+    unsupportedReason: null,
   };
 }
 
@@ -234,12 +249,14 @@ function clReplayCandidatePool(): FameClReplayRegistryEntry {
   }
   return {
     ...entry,
+    capability: "market-state",
     activationStatus: "cl-replay-candidate",
     replaySurface: null,
     stateSurface: entry.stateSurface,
     poolAddress: entry.poolAddress,
     tickSpacing: entry.tickSpacing,
     venue: entry.venue,
+    unsupportedReason: null,
   };
 }
 
@@ -253,7 +270,6 @@ function v4ClReplayPool(
     !entry ||
     entry.venue !== "uniswap-v4" ||
     entry.venueFamily !== "UniswapV4" ||
-    entry.stateSurface !== "cl-head-snapshot" ||
     entry.poolAddress !== null ||
     entry.poolKey === null ||
     entry.stateViewAddress === null ||
@@ -263,13 +279,16 @@ function v4ClReplayPool(
   }
   return {
     ...entry,
+    capability: "market-state",
+    activationStatus: "unsupported",
     venue: entry.venue,
     venueFamily: entry.venueFamily,
-    stateSurface: entry.stateSurface,
+    stateSurface: "cl-head-snapshot",
     poolAddress: entry.poolAddress,
     poolKey: entry.poolKey,
     stateViewAddress: entry.stateViewAddress,
     tickSpacing: entry.tickSpacing,
+    unsupportedReason: null,
   };
 }
 
@@ -830,12 +849,12 @@ describe("FAME pool-state API contract", () => {
       expect.objectContaining({
         status: "unsupported",
         poolId: "scale-equalizer-usdc-frxusd",
-        unsupportedReason: "stable-pool",
+        unsupportedReason: "non-direct-fame-pool",
       }),
       expect.objectContaining({
         status: "unsupported",
         poolId: "uniswap-v4-usdc-eth",
-        unsupportedReason: "concentrated-liquidity",
+        unsupportedReason: "non-direct-fame-pool",
       }),
     ]);
   });
@@ -849,6 +868,7 @@ describe("FAME pool-state API contract", () => {
         pools: [{ poolId: pool.id }],
       },
       tableName: "PoolState",
+      registry: registryWithPools([pool]),
       db: new BatchStateDb([clHeadStateForPool(pool, 120)]),
       producerMaxFreshnessBlocks: 120,
     });
@@ -879,6 +899,7 @@ describe("FAME pool-state API contract", () => {
         pools: [{ poolId: pool.id }],
       },
       tableName: "PoolState",
+      registry: registryWithPools([pool]),
       db: new BatchStateDb([
         trustedMaintenanceForReplayRows(pool, rows),
         rows.latest,
@@ -938,6 +959,7 @@ describe("FAME pool-state API contract", () => {
         pools: [{ poolId: pool.id }],
       },
       tableName: "PoolState",
+      registry: registryWithPools([pool]),
       db: new BatchStateDb([
         trustedMaintenanceForReplayRows(pool, rows),
         rows.latest,
@@ -960,7 +982,7 @@ describe("FAME pool-state API contract", () => {
   });
 
   test("returns compact CL quotes without raw replay arrays", async () => {
-    const pool = clReplayPool();
+    const pool = selectedActiveClReplayPool();
     const rows = quoteClReplayRowsForPool(pool);
     const response = await handleFamePoolQuoteBatchRequest({
       request: {
@@ -1126,6 +1148,7 @@ describe("FAME pool-state API contract", () => {
         ],
       },
       tableName: "PoolState",
+      registry: registryWithPools([pool]),
       db: new BatchStateDb([
         trustedMaintenanceForV4ReplayRows(pool, rows),
         rows.latest,
@@ -1195,6 +1218,7 @@ describe("FAME pool-state API contract", () => {
         ],
       },
       tableName: "PoolState",
+      registry: registryWithPools([pool]),
       db: new BatchStateDb([
         trustedMaintenanceForV4ReplayRows(pool, rows),
         rows.latest,
@@ -1257,6 +1281,7 @@ describe("FAME pool-state API contract", () => {
         ],
       },
       tableName: "PoolState",
+      registry: registryWithPools([pool]),
       db: new BatchStateDb([
         warmingMaintenanceForV4ReplayRows(pool, rows),
         rows.latest,
@@ -1296,6 +1321,7 @@ describe("FAME pool-state API contract", () => {
         ],
       },
       tableName: "PoolState",
+      registry: registryWithPools([pool]),
       db: new BatchStateDb([
         {
           ...rows.latest,
@@ -1335,6 +1361,7 @@ describe("FAME pool-state API contract", () => {
         ],
       },
       tableName: "PoolState",
+      registry: registryWithPools([pool]),
       db: new BatchStateDb([
         {
           ...rows.latest,
@@ -1373,6 +1400,7 @@ describe("FAME pool-state API contract", () => {
         ],
       },
       tableName: "PoolState",
+      registry: registryWithPools([pool]),
       db: new BatchStateDb([
         {
           ...rows.latest,
@@ -1411,6 +1439,7 @@ describe("FAME pool-state API contract", () => {
         ],
       },
       tableName: "PoolState",
+      registry: registryWithPools([pool]),
       db: new BatchStateDb([
         trustedMaintenanceForV4ReplayRows(pool, rows),
         rows.latest,
@@ -1456,6 +1485,7 @@ describe("FAME pool-state API contract", () => {
         ],
       },
       tableName: "PoolState",
+      registry: registryWithPools([reservePool, v4Pool]),
       db: new BatchStateDb([
         stateForPool(reservePool, 120, {
           reserve0: 1000n,
@@ -1502,6 +1532,7 @@ describe("FAME pool-state API contract", () => {
         ],
       },
       tableName: "PoolState",
+      registry: registryWithPools([pool]),
       db: new BatchStateDb([
         {
           ...rows.latest,
@@ -1545,6 +1576,7 @@ describe("FAME pool-state API contract", () => {
         ],
       },
       tableName: "PoolState",
+      registry: registryWithPools([pool]),
       db: new BatchStateDb([rows.latest]),
       producerMaxFreshnessBlocks: 120,
     });
@@ -1695,16 +1727,8 @@ describe("FAME pool-state API contract", () => {
   });
 
   test("documents producer-untrusted compact quote fixture examples", () => {
-    const [baselineProducerUntrusted, candidateProducerUntrusted] =
-      poolQuotesFixtureUnavailableExamples();
+    const [candidateProducerUntrusted] = poolQuotesFixtureUnavailableExamples();
 
-    expect(baselineProducerUntrusted).toMatchObject({
-      status: "unavailable",
-      reason: "producer-untrusted",
-      poolId: "slipstream-usdc-weth-100",
-      producerStatus: "trusted",
-      producerReason: null,
-    });
     expect(candidateProducerUntrusted).toMatchObject({
       status: "unavailable",
       reason: "producer-untrusted",
@@ -1737,6 +1761,7 @@ describe("FAME pool-state API contract", () => {
         ],
       },
       tableName: "PoolState",
+      registry: registryWithPools([reservePool, clPool]),
       db: new BatchStateDb([
         stateForPool(reservePool, 120, {
           reserve0: 1000n,
@@ -1927,6 +1952,7 @@ describe("FAME pool-state API contract", () => {
         ],
       },
       tableName: "PoolState",
+      registry: registryWithPools([pool]),
       db,
       producerMaxFreshnessBlocks: 120,
     });
@@ -1962,6 +1988,7 @@ describe("FAME pool-state API contract", () => {
         ],
       },
       tableName: "PoolState",
+      registry: registryWithPools([pool]),
       db: new BatchStateDb([
         trustedMaintenanceForReplayRows(pool, rows),
         rows.latest,
@@ -2003,6 +2030,7 @@ describe("FAME pool-state API contract", () => {
         ],
       },
       tableName: "PoolState",
+      registry: registryWithPools([pool]),
       db,
       producerMaxFreshnessBlocks: 120,
     });
@@ -2147,6 +2175,7 @@ describe("FAME pool-state API contract", () => {
         pools: [{ poolId: pool.id }],
       },
       tableName: "PoolState",
+      registry: registryWithPools([pool]),
       db: new BatchStateDb([rows.latest, ...rows.bitmapChunks]),
       producerMaxFreshnessBlocks: 120,
     });
@@ -2169,6 +2198,7 @@ describe("FAME pool-state API contract", () => {
         pools: [{ poolId: pool.id }],
       },
       tableName: "PoolState",
+      registry: registryWithPools([pool]),
       db,
       producerMaxFreshnessBlocks: 120,
     });
@@ -2199,6 +2229,7 @@ describe("FAME pool-state API contract", () => {
         pools: [{ poolId: pool.id }],
       },
       tableName: "PoolState",
+      registry: registryWithPools([pool]),
       db,
       producerMaxFreshnessBlocks: 120,
     });
@@ -2229,6 +2260,7 @@ describe("FAME pool-state API contract", () => {
         pools: [{ poolId: pool.id }],
       },
       tableName: "PoolState",
+      registry: registryWithPools([pool]),
       db,
       producerMaxFreshnessBlocks: 120,
     });
@@ -2265,6 +2297,7 @@ describe("FAME pool-state API contract", () => {
         pools: [{ poolId: pool.id }],
       },
       tableName: "PoolState",
+      registry: registryWithPools([pool]),
       db,
       producerMaxFreshnessBlocks: 120,
     });
@@ -2287,6 +2320,7 @@ describe("FAME pool-state API contract", () => {
         pools: [{ poolId: pool.id }],
       },
       tableName: "PoolState",
+      registry: registryWithPools([pool]),
       db: new BatchStateDb([
         {
           ...rows.latest,
@@ -2318,6 +2352,7 @@ describe("FAME pool-state API contract", () => {
         pools: [{ poolId: pool.id }],
       },
       tableName: "PoolState",
+      registry: registryWithPools([pool]),
       db: new BatchStateDb([
         {
           ...rows.latest,
@@ -2350,6 +2385,7 @@ describe("FAME pool-state API contract", () => {
         pools: [{ poolId: pool.id }],
       },
       tableName: "PoolState",
+      registry: registryWithPools([pool]),
       db,
       producerMaxFreshnessBlocks: 120,
     });
@@ -2380,6 +2416,7 @@ describe("FAME pool-state API contract", () => {
         pools: [{ poolId: pool.id }],
       },
       tableName: "PoolState",
+      registry: registryWithPools([pool]),
       db: new BatchStateDb([
         clHeadStateForPool(pool, 120),
         rows.latest,
@@ -2407,6 +2444,7 @@ describe("FAME pool-state API contract", () => {
         pools: [{ poolId: pool.id }],
       },
       tableName: "PoolState",
+      registry: registryWithPools([pool]),
       db: new BatchStateDb([clHeadStateForPool(pool, 120, "stale-registry")]),
       producerMaxFreshnessBlocks: 120,
     });
@@ -2427,6 +2465,7 @@ describe("FAME pool-state API contract", () => {
         pools: [{ poolId: pool.id }],
       },
       tableName: "PoolState",
+      registry: registryWithPools([pool]),
       db: new BatchStateDb([
         {
           ...clHeadStateForPool(pool, 120),
@@ -2452,6 +2491,7 @@ describe("FAME pool-state API contract", () => {
         pools: [{ poolId: pool.id }],
       },
       tableName: "PoolState",
+      registry: registryWithPools([pool]),
       db: new BatchStateDb([clHeadStateForPool(pool, 130)]),
       producerMaxFreshnessBlocks: 120,
     });

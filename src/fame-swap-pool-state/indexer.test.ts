@@ -657,38 +657,43 @@ function quotePool(
 
 function clHeadPool(id: string): FameClHeadSnapshotRegistryEntry {
   const entry = registryEntry(id);
-  if (entry.stateSurface !== "cl-head-snapshot" || entry.tickSpacing === null) {
+  if (entry.tickSpacing === null) {
     throw new Error(`${id} is not CL head-snapshot eligible.`);
   }
   return {
     ...entry,
-    stateSurface: entry.stateSurface,
+    capability: "market-state",
+    activationStatus:
+      entry.activationStatus === "tracked-only"
+        ? "cl-head-only"
+        : entry.activationStatus,
+    stateSurface: "cl-head-snapshot",
     tickSpacing: entry.tickSpacing,
+    unsupportedReason: null,
   };
 }
 
 function clReplayPool(): FameClReplayReducerRegistryEntry {
   const entry = registryEntry("slipstream-usdc-weth-100");
   if (
-    entry.replaySurface !== "cl-replay-v1" ||
-    entry.stateSurface !== "cl-head-snapshot" ||
     entry.poolAddress === null ||
     entry.factoryAddress === null ||
     entry.tickSpacing === null ||
-    entry.venue !== "aerodrome-slipstream" ||
-    entry.activationStatus !== "cl-compact-quote-active"
+    entry.venue !== "aerodrome-slipstream"
   ) {
     throw new Error("slipstream-usdc-weth-100 is not CL replay eligible.");
   }
   return {
     ...entry,
-    replaySurface: entry.replaySurface,
-    stateSurface: entry.stateSurface,
+    capability: "market-state",
+    activationStatus: "cl-compact-quote-active",
+    replaySurface: "cl-replay-v1",
+    stateSurface: "cl-head-snapshot",
     poolAddress: entry.poolAddress,
     factoryAddress: entry.factoryAddress,
     tickSpacing: entry.tickSpacing,
     venue: entry.venue,
-    activationStatus: entry.activationStatus,
+    unsupportedReason: null,
   };
 }
 
@@ -707,6 +712,7 @@ function clReplayCandidatePool(): FameClReplayReducerRegistryEntry {
   }
   return {
     ...entry,
+    capability: "market-state",
     activationStatus: "cl-replay-candidate",
     replaySurface: null,
     stateSurface: entry.stateSurface,
@@ -714,6 +720,7 @@ function clReplayCandidatePool(): FameClReplayReducerRegistryEntry {
     factoryAddress: entry.factoryAddress,
     tickSpacing: entry.tickSpacing,
     venue: entry.venue,
+    unsupportedReason: null,
   };
 }
 
@@ -733,7 +740,6 @@ function v4ClReplayPool(
   if (
     entry.venue !== "uniswap-v4" ||
     entry.venueFamily !== "UniswapV4" ||
-    entry.stateSurface !== "cl-head-snapshot" ||
     entry.poolAddress !== null ||
     entry.poolKey === null ||
     entry.stateViewAddress === null ||
@@ -743,13 +749,16 @@ function v4ClReplayPool(
   }
   return {
     ...entry,
+    capability: "market-state",
+    activationStatus: "unsupported",
     venue: entry.venue,
     venueFamily: entry.venueFamily,
-    stateSurface: entry.stateSurface,
+    stateSurface: "cl-head-snapshot",
     poolAddress: entry.poolAddress,
     poolKey: entry.poolKey,
     stateViewAddress: entry.stateViewAddress,
     tickSpacing: entry.tickSpacing,
+    unsupportedReason: null,
   };
 }
 

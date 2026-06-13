@@ -44,6 +44,7 @@ export type FamePoolStateUnsupportedReason =
   | "concentrated-liquidity"
   | "missing-fee-metadata"
   | "native-wrap"
+  | "non-direct-fame-pool"
   | "stable-pool"
   | "unsupported-venue";
 

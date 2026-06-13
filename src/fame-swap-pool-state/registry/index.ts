@@ -73,6 +73,7 @@ const unsupportedReasonValues = [
   "concentrated-liquidity",
   "missing-fee-metadata",
   "native-wrap",
+  "non-direct-fame-pool",
   "stable-pool",
   "unsupported-venue",
 ] as const satisfies readonly FamePoolStateUnsupportedReason[];
