@@ -9,6 +9,8 @@ topic: fame-cl-head-snapshot
 
 Add a bite-sized concentrated-liquidity head snapshot lane for FAME route dependencies. `society-bots` should index and serve complete current head state for eligible CL pools, while `www` keeps quote authority and falls back to live reads for quote output.
 
+Project identity note: `www` refers to the GitHub project `fame-lady-society/www`. On this machine, that companion checkout is cloned as `../fls-www`, not `../www`.
+
 ---
 
 ## Problem Frame

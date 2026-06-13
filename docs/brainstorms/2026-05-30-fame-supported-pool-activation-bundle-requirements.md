@@ -9,6 +9,8 @@ topic: fame-supported-pool-activation-bundle
 
 Build a repeatable activation lane for the FAME pool universe from `www`: every pool gets an explicit activation status, producer and consumer compact-quote contracts stay aligned, and CL reducer support is promoted only through evidence gates. The v1 proof promotes one additional supported CL pool through compact quote serving while preserving `www` route authority and live fallback.
 
+Project identity note: `www` refers to the GitHub project `fame-lady-society/www`. On this machine, that companion checkout is cloned as `../fls-www`, not `../www`.
+
 ---
 
 ## Problem Frame
@@ -19,7 +21,7 @@ Reserve constant-product pools can already be indexed and quoted through compact
 
 ```mermaid
 flowchart TB
-  Universe["www pool universe"]
+  Universe["www pool universe (GitHub fame-lady-society/www, local ../fls-www)"]
   Ledger["Shared activation ledger"]
   Registry["society-bots indexing registry"]
   Reducers["Protocol-family reducers"]
@@ -43,7 +45,7 @@ flowchart TB
 
 ## Current Baseline
 
-- The activation universe is the reviewed FAME pool artifact in `www`, not only the pools currently generated into the producer registry.
+- The activation universe is the reviewed FAME pool artifact in `www` (GitHub `fame-lady-society/www`, local `../fls-www`), not only the pools currently generated into the producer registry.
 - Reserve constant-product pools are compact-quote capable and remain in scope as already-supported quote surfaces.
 - The user-stated operating baseline has two reduced indexed CL quote pools working: one Aerodrome CL pool and one Uniswap V3 pool.
 - The v1 bundle should promote exactly one additional CL pool beyond the current compact CL baseline.
@@ -104,7 +106,7 @@ flowchart TB
 
 **Pool universe and activation ledger**
 
-- R1. The feature must use the `www` FAME pool artifact as the upstream pool universe for activation review.
+- R1. The feature must use the `www` FAME pool artifact from GitHub `fame-lady-society/www` (local checkout `../fls-www`) as the upstream pool universe for activation review.
 - R2. Every upstream pool must have exactly one current activation status: reserve compact quote active, CL compact quote active, CL replay candidate, CL head-only, tracked-only, blocked, or unsupported.
 - R3. The activation status must distinguish "not represented in the producer registry" from "represented but not quote-active."
 - R4. The blocked migrating pool class must remain visible as blocked rather than disappearing from inventory or being treated as unsupported.
@@ -198,7 +200,7 @@ flowchart TB
 
 ## Dependencies / Assumptions
 
-- The `www` pool artifact remains the authoritative reviewed FAME pool universe.
+- The `www` pool artifact remains the authoritative reviewed FAME pool universe; in local commands and file references on this machine, use `../fls-www`.
 - Reserve constant-product compact quotes remain healthy during CL activation work.
 - The current CL reduced-indexed quote baseline includes one Aerodrome CL pool and one Uniswap V3 pool, as stated by the user.
 - The next promoted pool can be selected during planning from the activation report and current replay/reducer readiness.
@@ -221,7 +223,7 @@ flowchart TB
 
 ## Sources / Research
 
-- Repo inventory from `../www` FAME pool artifact and `society-bots` generated registry.
+- Repo inventory from the `fame-lady-society/www` FAME pool artifact in local checkout `../fls-www` and the `society-bots` generated registry.
 - Existing FAME indexed-pool-state docs and delta CL replay requirements in this repo.
 - Fresh ideation artifact: `docs/ideation/2026-05-30-fame-supported-pool-compact-quote-activation-ideation.md`.
 - Uniswap V3 pool data guide: https://docs.uniswap.org/sdk/v3/guides/advanced/pool-data

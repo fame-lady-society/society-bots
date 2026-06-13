@@ -9,6 +9,8 @@ topic: cloudwatch-log-retention-hardening
 
 Add explicit, managed CloudWatch log groups for the active Lambda surfaces in `society-bots`. Every Lambda log group must have a deliberate retention class, with 30-day retention for Ethereum, mixed-chain, and user-facing app audit logs, and 7-day retention for replay-tick and Base operational/eventing logs.
 
+Project identity note: `www` refers to the GitHub project `fame-lady-society/www`. On this machine, that companion checkout is cloned as `../fls-www`, not `../www`.
+
 ---
 
 ## Problem Frame

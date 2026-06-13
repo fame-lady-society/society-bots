@@ -12,6 +12,8 @@ origin: docs/brainstorms/2026-05-23-cloudwatch-log-retention-hardening-requireme
 
 Introduce a CDK-owned log group path for the repo's active Lambda constructs, backed by an explicit retention-class helper and CDK assertions. Pair the infrastructure hardening with narrow pool-state log cleanup so replay diagnostics remain visible without raw tick payloads or routine high-volume INFO noise.
 
+Project identity note: `www` refers to the GitHub project `fame-lady-society/www`. On this machine, that companion checkout is cloned as `../fls-www`, not `../www`.
+
 ---
 
 ## Problem Frame

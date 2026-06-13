@@ -9,6 +9,8 @@ topic: fame-pool-state-release-readiness
 
 Define the release gates for the FAME pool-state indexer and authenticated quote helper API before PR merge and production consumption. The release is ready only when deployment configuration, local validation, API failure semantics, DynamoDB read completeness, indexer observability, live smoke evidence, and `www` route-lab parity all have clear pass/fail signals.
 
+Project identity note: `www` refers to the GitHub project `fame-lady-society/www`. On this machine, that companion checkout is cloned as `../fls-www`, not `../www`.
+
 ---
 
 ## Problem Frame
@@ -128,7 +130,7 @@ The riskiest failure modes are not quote math changes inside `society-bots`; `ww
 
 - GitHub secrets or environment variables can be provisioned for `FAME_POOL_STATE_SERVICE_TOKEN` in the workflows that deploy this stack.
 - A production-like deployed endpoint and service token will be available for smoke and route-lab validation before production quote consumption is enabled.
-- `www` route-lab indexed mode already exists or is available from the companion work described in `docs/fame-pool-state-handoff.md`.
+- `www` route-lab indexed mode already exists in `fame-lady-society/www` (local checkout `../fls-www`) or is available from the companion work described in `docs/fame-pool-state-handoff.md`.
 - The first release can rely on documented smoke/soak evidence rather than a fully automated deployment gate for every operational proof item.
 
 ---
@@ -143,4 +145,3 @@ The riskiest failure modes are not quote math changes inside `society-bots`; `ww
 - [Affects R8, R9][Technical] Decide the concrete alarm thresholds and destinations for indexer failure and freshness lag.
 - [Affects R10, R11][Needs research] Decide how long the initial schedule/RPC soak must run to be persuasive before production enablement.
 - [Affects R12, R13, R14][Cross-repo] Decide the exact route-lab command/output format reviewers should attach to the PR or release checklist.
-

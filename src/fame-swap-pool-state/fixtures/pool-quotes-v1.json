@@ -1,126 +1,32 @@
 {
   "schemaVersion": 1,
   "description": "Golden compact FAME pool quote response for reserve constant-product pools.",
+  "unavailableExamples": [
+    {
+      "status": "unavailable",
+      "requested": {
+        "poolId": "slipstream-basedflick-fame",
+        "tokenIn": "0x15e012abf9d32cd67fc6cf480ea0e318e9ed5926",
+        "tokenOut": "0xf307e242bfe1ec1ff01a4cef2fdaa81b10a52418",
+        "amountIn": "1000000"
+      },
+      "reason": "producer-untrusted",
+      "poolId": "slipstream-basedflick-fame",
+      "chainId": 8453,
+      "poolAddress": "0xbd7e5bb5a6251f6dde2cf56afa50ed0c8b4c2cdb",
+      "observedThroughBlock": 120,
+      "sourceRegistryId": "pool-state-registry-v4:0x7867763b3c520edb717f71186f8ee47364fb66871f82b9c8c830e7d911e3839b:0x44cd1807a871080e02630714058ccd2545746712c9b382ffe4411223feeaf218:0xb533796d3cec89d202f49e0245c9769cba8aa7c92ad537fe33cfc44597927c0f",
+      "maxFreshnessBlocks": 120,
+      "producerStatus": "warming",
+      "producerReason": "shadow-not-promoted"
+    }
+  ],
   "response": {
-    "sourceRegistryId": "pool-state-registry-v3:0x7867763b3c520edb717f71186f8ee47364fb66871f82b9c8c830e7d911e3839b:0x44cd1807a871080e02630714058ccd2545746712c9b382ffe4411223feeaf218",
+    "sourceRegistryId": "pool-state-registry-v4:0x7867763b3c520edb717f71186f8ee47364fb66871f82b9c8c830e7d911e3839b:0x44cd1807a871080e02630714058ccd2545746712c9b382ffe4411223feeaf218:0xb533796d3cec89d202f49e0245c9769cba8aa7c92ad537fe33cfc44597927c0f",
     "currentBlock": 125,
     "producerMaxFreshnessBlocks": 120,
     "effectiveMaxFreshnessBlocks": 120,
     "quotes": [
-      {
-        "status": "quoted",
-        "quoteKind": "constant-product-quote-v1",
-        "quoteModel": "constant-product-reserves",
-        "quoteModelVersion": 1,
-        "poolId": "aerodrome-v2-usdc-weth",
-        "chainId": 8453,
-        "poolAddress": "0xcdac0d6c6c59727a65f871236188350531885c43",
-        "token0": "0x4200000000000000000000000000000000000006",
-        "token1": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
-        "tokenIn": "0x4200000000000000000000000000000000000006",
-        "tokenOut": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
-        "venueFamily": "AerodromeV2",
-        "feeBps": 30,
-        "feeSource": "registry-fee",
-        "source": "reserve-pool-state",
-        "stateSource": "getReserves",
-        "amountIn": "500",
-        "amountOut": "831",
-        "observedThroughBlock": 120,
-        "sourceRegistryId": "pool-state-registry-v3:0x7867763b3c520edb717f71186f8ee47364fb66871f82b9c8c830e7d911e3839b:0x44cd1807a871080e02630714058ccd2545746712c9b382ffe4411223feeaf218",
-        "maxFreshnessBlocks": 120,
-        "priceImpact": {
-          "preSwapPriceX18": "2500000000000000000",
-          "postSwapPriceX18": "1112666666666666666",
-          "executionPriceX18": "1662000000000000000",
-          "marketImpactBps": 3352,
-          "method": "constant-product-reserves"
-        },
-        "protocolEvidence": {
-          "quote": {
-            "status": "available",
-            "source": "reserve-pool-state quote for aerodrome-v2-usdc-weth",
-            "value": "831"
-          },
-          "prePrice": {
-            "status": "available",
-            "source": "reserve-pool-state quote for aerodrome-v2-usdc-weth",
-            "value": "2500000000000000000"
-          },
-          "postPrice": {
-            "status": "available",
-            "source": "reserve-pool-state quote for aerodrome-v2-usdc-weth",
-            "value": "1112666666666666666"
-          },
-          "marketImpact": {
-            "status": "available",
-            "source": "reserve-pool-state quote for aerodrome-v2-usdc-weth",
-            "value": "3352"
-          },
-          "activeLiquidity": {
-            "status": "not_applicable",
-            "source": "reserve-pool-state quote for aerodrome-v2-usdc-weth",
-            "reason": "Constant-product reserve quote uses reserves, not active liquidity."
-          }
-        }
-      },
-      {
-        "status": "quoted",
-        "quoteKind": "constant-product-quote-v1",
-        "quoteModel": "constant-product-reserves",
-        "quoteModelVersion": 1,
-        "poolId": "aerodrome-v2-usdc-weth",
-        "chainId": 8453,
-        "poolAddress": "0xcdac0d6c6c59727a65f871236188350531885c43",
-        "token0": "0x4200000000000000000000000000000000000006",
-        "token1": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
-        "tokenIn": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
-        "tokenOut": "0x4200000000000000000000000000000000000006",
-        "venueFamily": "AerodromeV2",
-        "feeBps": 30,
-        "feeSource": "registry-fee",
-        "source": "reserve-pool-state",
-        "stateSource": "getReserves",
-        "amountIn": "500",
-        "amountOut": "166",
-        "observedThroughBlock": 120,
-        "sourceRegistryId": "pool-state-registry-v3:0x7867763b3c520edb717f71186f8ee47364fb66871f82b9c8c830e7d911e3839b:0x44cd1807a871080e02630714058ccd2545746712c9b382ffe4411223feeaf218",
-        "maxFreshnessBlocks": 120,
-        "priceImpact": {
-          "preSwapPriceX18": "400000000000000000",
-          "postSwapPriceX18": "278000000000000000",
-          "executionPriceX18": "332000000000000000",
-          "marketImpactBps": 1700,
-          "method": "constant-product-reserves"
-        },
-        "protocolEvidence": {
-          "quote": {
-            "status": "available",
-            "source": "reserve-pool-state quote for aerodrome-v2-usdc-weth",
-            "value": "166"
-          },
-          "prePrice": {
-            "status": "available",
-            "source": "reserve-pool-state quote for aerodrome-v2-usdc-weth",
-            "value": "400000000000000000"
-          },
-          "postPrice": {
-            "status": "available",
-            "source": "reserve-pool-state quote for aerodrome-v2-usdc-weth",
-            "value": "278000000000000000"
-          },
-          "marketImpact": {
-            "status": "available",
-            "source": "reserve-pool-state quote for aerodrome-v2-usdc-weth",
-            "value": "1700"
-          },
-          "activeLiquidity": {
-            "status": "not_applicable",
-            "source": "reserve-pool-state quote for aerodrome-v2-usdc-weth",
-            "reason": "Constant-product reserve quote uses reserves, not active liquidity."
-          }
-        }
-      },
       {
         "status": "quoted",
         "quoteKind": "constant-product-quote-v1",
@@ -141,7 +47,7 @@
         "amountIn": "500",
         "amountOut": "827",
         "observedThroughBlock": 120,
-        "sourceRegistryId": "pool-state-registry-v3:0x7867763b3c520edb717f71186f8ee47364fb66871f82b9c8c830e7d911e3839b:0x44cd1807a871080e02630714058ccd2545746712c9b382ffe4411223feeaf218",
+        "sourceRegistryId": "pool-state-registry-v4:0x7867763b3c520edb717f71186f8ee47364fb66871f82b9c8c830e7d911e3839b:0x44cd1807a871080e02630714058ccd2545746712c9b382ffe4411223feeaf218:0xb533796d3cec89d202f49e0245c9769cba8aa7c92ad537fe33cfc44597927c0f",
         "maxFreshnessBlocks": 120,
         "priceImpact": {
           "preSwapPriceX18": "2500000000000000000",
@@ -198,7 +104,7 @@
         "amountIn": "500",
         "amountOut": "165",
         "observedThroughBlock": 120,
-        "sourceRegistryId": "pool-state-registry-v3:0x7867763b3c520edb717f71186f8ee47364fb66871f82b9c8c830e7d911e3839b:0x44cd1807a871080e02630714058ccd2545746712c9b382ffe4411223feeaf218",
+        "sourceRegistryId": "pool-state-registry-v4:0x7867763b3c520edb717f71186f8ee47364fb66871f82b9c8c830e7d911e3839b:0x44cd1807a871080e02630714058ccd2545746712c9b382ffe4411223feeaf218:0xb533796d3cec89d202f49e0245c9769cba8aa7c92ad537fe33cfc44597927c0f",
         "maxFreshnessBlocks": 120,
         "priceImpact": {
           "preSwapPriceX18": "400000000000000000",
@@ -255,7 +161,7 @@
         "amountIn": "500",
         "amountOut": "827",
         "observedThroughBlock": 120,
-        "sourceRegistryId": "pool-state-registry-v3:0x7867763b3c520edb717f71186f8ee47364fb66871f82b9c8c830e7d911e3839b:0x44cd1807a871080e02630714058ccd2545746712c9b382ffe4411223feeaf218",
+        "sourceRegistryId": "pool-state-registry-v4:0x7867763b3c520edb717f71186f8ee47364fb66871f82b9c8c830e7d911e3839b:0x44cd1807a871080e02630714058ccd2545746712c9b382ffe4411223feeaf218:0xb533796d3cec89d202f49e0245c9769cba8aa7c92ad537fe33cfc44597927c0f",
         "maxFreshnessBlocks": 120,
         "priceImpact": {
           "preSwapPriceX18": "2500000000000000000",
@@ -312,7 +218,7 @@
         "amountIn": "500",
         "amountOut": "165",
         "observedThroughBlock": 120,
-        "sourceRegistryId": "pool-state-registry-v3:0x7867763b3c520edb717f71186f8ee47364fb66871f82b9c8c830e7d911e3839b:0x44cd1807a871080e02630714058ccd2545746712c9b382ffe4411223feeaf218",
+        "sourceRegistryId": "pool-state-registry-v4:0x7867763b3c520edb717f71186f8ee47364fb66871f82b9c8c830e7d911e3839b:0x44cd1807a871080e02630714058ccd2545746712c9b382ffe4411223feeaf218:0xb533796d3cec89d202f49e0245c9769cba8aa7c92ad537fe33cfc44597927c0f",
         "maxFreshnessBlocks": 120,
         "priceImpact": {
           "preSwapPriceX18": "400000000000000000",
@@ -345,120 +251,6 @@
           "activeLiquidity": {
             "status": "not_applicable",
             "source": "reserve-pool-state quote for scale-equalizer-scale-fame",
-            "reason": "Constant-product reserve quote uses reserves, not active liquidity."
-          }
-        }
-      },
-      {
-        "status": "quoted",
-        "quoteKind": "constant-product-quote-v1",
-        "quoteModel": "constant-product-reserves",
-        "quoteModelVersion": 1,
-        "poolId": "scale-equalizer-usdc-scale",
-        "chainId": 8453,
-        "poolAddress": "0xd467b1bb20e9c5569ad8bc91d2236a8ceb574075",
-        "token0": "0x54016a4848a38f257b6e96331f7404073fd9c32c",
-        "token1": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
-        "tokenIn": "0x54016a4848a38f257b6e96331f7404073fd9c32c",
-        "tokenOut": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
-        "venueFamily": "Solidly",
-        "feeBps": 100,
-        "feeSource": "registry-fee",
-        "source": "reserve-pool-state",
-        "stateSource": "getReserves",
-        "amountIn": "500",
-        "amountOut": "827",
-        "observedThroughBlock": 120,
-        "sourceRegistryId": "pool-state-registry-v3:0x7867763b3c520edb717f71186f8ee47364fb66871f82b9c8c830e7d911e3839b:0x44cd1807a871080e02630714058ccd2545746712c9b382ffe4411223feeaf218",
-        "maxFreshnessBlocks": 120,
-        "priceImpact": {
-          "preSwapPriceX18": "2500000000000000000",
-          "postSwapPriceX18": "1115333333333333333",
-          "executionPriceX18": "1654000000000000000",
-          "marketImpactBps": 3384,
-          "method": "constant-product-reserves"
-        },
-        "protocolEvidence": {
-          "quote": {
-            "status": "available",
-            "source": "reserve-pool-state quote for scale-equalizer-usdc-scale",
-            "value": "827"
-          },
-          "prePrice": {
-            "status": "available",
-            "source": "reserve-pool-state quote for scale-equalizer-usdc-scale",
-            "value": "2500000000000000000"
-          },
-          "postPrice": {
-            "status": "available",
-            "source": "reserve-pool-state quote for scale-equalizer-usdc-scale",
-            "value": "1115333333333333333"
-          },
-          "marketImpact": {
-            "status": "available",
-            "source": "reserve-pool-state quote for scale-equalizer-usdc-scale",
-            "value": "3384"
-          },
-          "activeLiquidity": {
-            "status": "not_applicable",
-            "source": "reserve-pool-state quote for scale-equalizer-usdc-scale",
-            "reason": "Constant-product reserve quote uses reserves, not active liquidity."
-          }
-        }
-      },
-      {
-        "status": "quoted",
-        "quoteKind": "constant-product-quote-v1",
-        "quoteModel": "constant-product-reserves",
-        "quoteModelVersion": 1,
-        "poolId": "scale-equalizer-usdc-scale",
-        "chainId": 8453,
-        "poolAddress": "0xd467b1bb20e9c5569ad8bc91d2236a8ceb574075",
-        "token0": "0x54016a4848a38f257b6e96331f7404073fd9c32c",
-        "token1": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
-        "tokenIn": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
-        "tokenOut": "0x54016a4848a38f257b6e96331f7404073fd9c32c",
-        "venueFamily": "Solidly",
-        "feeBps": 100,
-        "feeSource": "registry-fee",
-        "source": "reserve-pool-state",
-        "stateSource": "getReserves",
-        "amountIn": "500",
-        "amountOut": "165",
-        "observedThroughBlock": 120,
-        "sourceRegistryId": "pool-state-registry-v3:0x7867763b3c520edb717f71186f8ee47364fb66871f82b9c8c830e7d911e3839b:0x44cd1807a871080e02630714058ccd2545746712c9b382ffe4411223feeaf218",
-        "maxFreshnessBlocks": 120,
-        "priceImpact": {
-          "preSwapPriceX18": "400000000000000000",
-          "postSwapPriceX18": "278333333333333333",
-          "executionPriceX18": "330000000000000000",
-          "marketImpactBps": 1750,
-          "method": "constant-product-reserves"
-        },
-        "protocolEvidence": {
-          "quote": {
-            "status": "available",
-            "source": "reserve-pool-state quote for scale-equalizer-usdc-scale",
-            "value": "165"
-          },
-          "prePrice": {
-            "status": "available",
-            "source": "reserve-pool-state quote for scale-equalizer-usdc-scale",
-            "value": "400000000000000000"
-          },
-          "postPrice": {
-            "status": "available",
-            "source": "reserve-pool-state quote for scale-equalizer-usdc-scale",
-            "value": "278333333333333333"
-          },
-          "marketImpact": {
-            "status": "available",
-            "source": "reserve-pool-state quote for scale-equalizer-usdc-scale",
-            "value": "1750"
-          },
-          "activeLiquidity": {
-            "status": "not_applicable",
-            "source": "reserve-pool-state quote for scale-equalizer-usdc-scale",
             "reason": "Constant-product reserve quote uses reserves, not active liquidity."
           }
         }
@@ -483,7 +275,7 @@
         "amountIn": "500",
         "amountOut": "827",
         "observedThroughBlock": 120,
-        "sourceRegistryId": "pool-state-registry-v3:0x7867763b3c520edb717f71186f8ee47364fb66871f82b9c8c830e7d911e3839b:0x44cd1807a871080e02630714058ccd2545746712c9b382ffe4411223feeaf218",
+        "sourceRegistryId": "pool-state-registry-v4:0x7867763b3c520edb717f71186f8ee47364fb66871f82b9c8c830e7d911e3839b:0x44cd1807a871080e02630714058ccd2545746712c9b382ffe4411223feeaf218:0xb533796d3cec89d202f49e0245c9769cba8aa7c92ad537fe33cfc44597927c0f",
         "maxFreshnessBlocks": 120,
         "priceImpact": {
           "preSwapPriceX18": "2500000000000000000",
@@ -540,7 +332,7 @@
         "amountIn": "500",
         "amountOut": "165",
         "observedThroughBlock": 120,
-        "sourceRegistryId": "pool-state-registry-v3:0x7867763b3c520edb717f71186f8ee47364fb66871f82b9c8c830e7d911e3839b:0x44cd1807a871080e02630714058ccd2545746712c9b382ffe4411223feeaf218",
+        "sourceRegistryId": "pool-state-registry-v4:0x7867763b3c520edb717f71186f8ee47364fb66871f82b9c8c830e7d911e3839b:0x44cd1807a871080e02630714058ccd2545746712c9b382ffe4411223feeaf218:0xb533796d3cec89d202f49e0245c9769cba8aa7c92ad537fe33cfc44597927c0f",
         "maxFreshnessBlocks": 120,
         "priceImpact": {
           "preSwapPriceX18": "400000000000000000",
@@ -597,7 +389,7 @@
         "amountIn": "500",
         "amountOut": "831",
         "observedThroughBlock": 120,
-        "sourceRegistryId": "pool-state-registry-v3:0x7867763b3c520edb717f71186f8ee47364fb66871f82b9c8c830e7d911e3839b:0x44cd1807a871080e02630714058ccd2545746712c9b382ffe4411223feeaf218",
+        "sourceRegistryId": "pool-state-registry-v4:0x7867763b3c520edb717f71186f8ee47364fb66871f82b9c8c830e7d911e3839b:0x44cd1807a871080e02630714058ccd2545746712c9b382ffe4411223feeaf218:0xb533796d3cec89d202f49e0245c9769cba8aa7c92ad537fe33cfc44597927c0f",
         "maxFreshnessBlocks": 120,
         "priceImpact": {
           "preSwapPriceX18": "2500000000000000000",
@@ -654,7 +446,7 @@
         "amountIn": "500",
         "amountOut": "166",
         "observedThroughBlock": 120,
-        "sourceRegistryId": "pool-state-registry-v3:0x7867763b3c520edb717f71186f8ee47364fb66871f82b9c8c830e7d911e3839b:0x44cd1807a871080e02630714058ccd2545746712c9b382ffe4411223feeaf218",
+        "sourceRegistryId": "pool-state-registry-v4:0x7867763b3c520edb717f71186f8ee47364fb66871f82b9c8c830e7d911e3839b:0x44cd1807a871080e02630714058ccd2545746712c9b382ffe4411223feeaf218:0xb533796d3cec89d202f49e0245c9769cba8aa7c92ad537fe33cfc44597927c0f",
         "maxFreshnessBlocks": 120,
         "priceImpact": {
           "preSwapPriceX18": "400000000000000000",
@@ -687,120 +479,6 @@
           "activeLiquidity": {
             "status": "not_applicable",
             "source": "reserve-pool-state quote for uniswap-v2-fame-direct",
-            "reason": "Constant-product reserve quote uses reserves, not active liquidity."
-          }
-        }
-      },
-      {
-        "status": "quoted",
-        "quoteKind": "constant-product-quote-v1",
-        "quoteModel": "constant-product-reserves",
-        "quoteModelVersion": 1,
-        "poolId": "uniswap-v2-usdc-weth",
-        "chainId": 8453,
-        "poolAddress": "0x88a43bbdf9d098eec7bceda4e2494615dfd9bb9c",
-        "token0": "0x4200000000000000000000000000000000000006",
-        "token1": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
-        "tokenIn": "0x4200000000000000000000000000000000000006",
-        "tokenOut": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
-        "venueFamily": "UniswapV2",
-        "feeBps": 30,
-        "feeSource": "registry-fee",
-        "source": "reserve-pool-state",
-        "stateSource": "getReserves",
-        "amountIn": "500",
-        "amountOut": "831",
-        "observedThroughBlock": 120,
-        "sourceRegistryId": "pool-state-registry-v3:0x7867763b3c520edb717f71186f8ee47364fb66871f82b9c8c830e7d911e3839b:0x44cd1807a871080e02630714058ccd2545746712c9b382ffe4411223feeaf218",
-        "maxFreshnessBlocks": 120,
-        "priceImpact": {
-          "preSwapPriceX18": "2500000000000000000",
-          "postSwapPriceX18": "1112666666666666666",
-          "executionPriceX18": "1662000000000000000",
-          "marketImpactBps": 3352,
-          "method": "constant-product-reserves"
-        },
-        "protocolEvidence": {
-          "quote": {
-            "status": "available",
-            "source": "reserve-pool-state quote for uniswap-v2-usdc-weth",
-            "value": "831"
-          },
-          "prePrice": {
-            "status": "available",
-            "source": "reserve-pool-state quote for uniswap-v2-usdc-weth",
-            "value": "2500000000000000000"
-          },
-          "postPrice": {
-            "status": "available",
-            "source": "reserve-pool-state quote for uniswap-v2-usdc-weth",
-            "value": "1112666666666666666"
-          },
-          "marketImpact": {
-            "status": "available",
-            "source": "reserve-pool-state quote for uniswap-v2-usdc-weth",
-            "value": "3352"
-          },
-          "activeLiquidity": {
-            "status": "not_applicable",
-            "source": "reserve-pool-state quote for uniswap-v2-usdc-weth",
-            "reason": "Constant-product reserve quote uses reserves, not active liquidity."
-          }
-        }
-      },
-      {
-        "status": "quoted",
-        "quoteKind": "constant-product-quote-v1",
-        "quoteModel": "constant-product-reserves",
-        "quoteModelVersion": 1,
-        "poolId": "uniswap-v2-usdc-weth",
-        "chainId": 8453,
-        "poolAddress": "0x88a43bbdf9d098eec7bceda4e2494615dfd9bb9c",
-        "token0": "0x4200000000000000000000000000000000000006",
-        "token1": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
-        "tokenIn": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
-        "tokenOut": "0x4200000000000000000000000000000000000006",
-        "venueFamily": "UniswapV2",
-        "feeBps": 30,
-        "feeSource": "registry-fee",
-        "source": "reserve-pool-state",
-        "stateSource": "getReserves",
-        "amountIn": "500",
-        "amountOut": "166",
-        "observedThroughBlock": 120,
-        "sourceRegistryId": "pool-state-registry-v3:0x7867763b3c520edb717f71186f8ee47364fb66871f82b9c8c830e7d911e3839b:0x44cd1807a871080e02630714058ccd2545746712c9b382ffe4411223feeaf218",
-        "maxFreshnessBlocks": 120,
-        "priceImpact": {
-          "preSwapPriceX18": "400000000000000000",
-          "postSwapPriceX18": "278000000000000000",
-          "executionPriceX18": "332000000000000000",
-          "marketImpactBps": 1700,
-          "method": "constant-product-reserves"
-        },
-        "protocolEvidence": {
-          "quote": {
-            "status": "available",
-            "source": "reserve-pool-state quote for uniswap-v2-usdc-weth",
-            "value": "166"
-          },
-          "prePrice": {
-            "status": "available",
-            "source": "reserve-pool-state quote for uniswap-v2-usdc-weth",
-            "value": "400000000000000000"
-          },
-          "postPrice": {
-            "status": "available",
-            "source": "reserve-pool-state quote for uniswap-v2-usdc-weth",
-            "value": "278000000000000000"
-          },
-          "marketImpact": {
-            "status": "available",
-            "source": "reserve-pool-state quote for uniswap-v2-usdc-weth",
-            "value": "1700"
-          },
-          "activeLiquidity": {
-            "status": "not_applicable",
-            "source": "reserve-pool-state quote for uniswap-v2-usdc-weth",
             "reason": "Constant-product reserve quote uses reserves, not active liquidity."
           }
         }

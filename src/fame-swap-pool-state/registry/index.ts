@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { isAddress, isHex, type Address, type Hex } from "viem";
 import {
   FAME_POOL_STATE_REGISTRY_SCHEMA_VERSION,
+  type FamePoolActivationStatus,
   type FamePoolStateCapability,
   type FamePoolStateFeeDescriptor,
   type FamePoolStateQuoteModel,
@@ -44,6 +45,17 @@ const capabilityValues = [
   "tracked-only",
 ] as const satisfies readonly FamePoolStateCapability[];
 
+const activationStatusValues = [
+  "reserve-compact-quote-active",
+  "cl-compact-quote-active",
+  "cl-replay-candidate",
+  "cl-head-only",
+  "tracked-only",
+  "blocked",
+  "unsupported",
+  "producer-unrepresented",
+] as const satisfies readonly FamePoolActivationStatus[];
+
 const quoteModelValues = [
   "constant-product-reserves",
 ] as const satisfies readonly FamePoolStateQuoteModel[];
@@ -61,6 +73,7 @@ const unsupportedReasonValues = [
   "concentrated-liquidity",
   "missing-fee-metadata",
   "native-wrap",
+  "non-direct-fame-pool",
   "stable-pool",
   "unsupported-venue",
 ] as const satisfies readonly FamePoolStateUnsupportedReason[];
@@ -220,6 +233,10 @@ function parseSource(
       field(record, "solverRoutesContentHash", path),
       `${path}.solverRoutesContentHash`,
     ),
+    activationLedgerHash: parseHex(
+      field(record, "activationLedgerHash", path),
+      `${path}.activationLedgerHash`,
+    ),
   };
 }
 
@@ -262,6 +279,10 @@ function parseEntry(value: unknown, path: string): FamePoolStateRegistryEntry {
       venueFamilyValues,
     ),
     router: parseAddress(field(record, "router", path), `${path}.router`),
+    factoryAddress: parseAddressOrNull(
+      field(record, "factoryAddress", path),
+      `${path}.factoryAddress`,
+    ),
     poolAddress: parseAddressOrNull(
       field(record, "poolAddress", path),
       `${path}.poolAddress`,
@@ -280,6 +301,11 @@ function parseEntry(value: unknown, path: string): FamePoolStateRegistryEntry {
       `${path}.stateViewAddress`,
     ),
     capability,
+    activationStatus: parseEnum(
+      field(record, "activationStatus", path),
+      `${path}.activationStatus`,
+      activationStatusValues,
+    ),
     stateSurface: parseNullableEnum(
       field(record, "stateSurface", path),
       `${path}.stateSurface`,
@@ -302,7 +328,26 @@ function parseEntry(value: unknown, path: string): FamePoolStateRegistryEntry {
     ),
   };
 
+  if (entry.activationStatus === "producer-unrepresented") {
+    registryError(
+      path,
+      "producer-unrepresented activation cannot have a producer registry row",
+    );
+  }
+  if (entry.activationStatus === "blocked") {
+    registryError(
+      path,
+      "blocked activation cannot have a producer registry row",
+    );
+  }
+
   if (entry.capability === "quote-model") {
+    if (entry.activationStatus !== "reserve-compact-quote-active") {
+      registryError(
+        path,
+        "quote-model pool must be reserve compact quote active",
+      );
+    }
     if (entry.fee.status !== "available") {
       registryError(path, "quote-model pool must have fee metadata");
     }
@@ -328,6 +373,17 @@ function parseEntry(value: unknown, path: string): FamePoolStateRegistryEntry {
       registryError(path, "quote-model pool cannot have stateViewAddress");
     }
   } else if (entry.capability === "market-state") {
+    if (
+      entry.activationStatus !== "cl-head-only" &&
+      entry.activationStatus !== "cl-replay-candidate" &&
+      entry.activationStatus !== "cl-compact-quote-active" &&
+      entry.activationStatus !== "unsupported"
+    ) {
+      registryError(
+        path,
+        "market-state pool must use CL inventory or unsupported activation status",
+      );
+    }
     if (entry.fee.status !== "available") {
       registryError(path, "market-state pool must have fee metadata");
     }
@@ -344,6 +400,12 @@ function parseEntry(value: unknown, path: string): FamePoolStateRegistryEntry {
       registryError(path, "market-state pool must have tickSpacing");
     }
     if (entry.venue === "uniswap-v4") {
+      if (entry.factoryAddress !== null) {
+        registryError(
+          path,
+          "Uniswap V4 market-state pool cannot have factoryAddress",
+        );
+      }
       if (entry.poolKey === null) {
         registryError(path, "Uniswap V4 market-state pool must have poolKey");
       }
@@ -358,16 +420,25 @@ function parseEntry(value: unknown, path: string): FamePoolStateRegistryEntry {
         path,
         "address-backed market-state pool must have poolAddress",
       );
+    } else if (
+      (entry.venue === "aerodrome-slipstream" ||
+        entry.venue === "aerodrome-slipstream2") &&
+      entry.factoryAddress === null
+    ) {
+      registryError(
+        path,
+        "Slipstream market-state pool must have factoryAddress",
+      );
     }
     if (entry.replaySurface !== null) {
-      if (entry.id !== "slipstream-usdc-weth-100") {
+      if (entry.activationStatus !== "cl-compact-quote-active") {
         registryError(
           path,
-          "only slipstream-usdc-weth-100 can have replaySurface",
+          "replaySurface requires cl-compact-quote-active activationStatus",
         );
       }
       if (entry.venue !== "aerodrome-slipstream") {
-        registryError(path, "replaySurface pool must be Slipstream");
+        registryError(path, "replaySurface pool must be Slipstream v1");
       }
       if (entry.poolAddress === null) {
         registryError(path, "replaySurface pool must have poolAddress");
@@ -379,7 +450,32 @@ function parseEntry(value: unknown, path: string): FamePoolStateRegistryEntry {
         );
       }
     }
+    if (
+      entry.activationStatus === "cl-compact-quote-active" &&
+      entry.replaySurface !== "cl-replay-v1"
+    ) {
+      registryError(
+        path,
+        "cl-compact-quote-active pool must have cl-replay-v1",
+      );
+    }
+    if (
+      entry.activationStatus === "cl-replay-candidate" &&
+      entry.replaySurface !== null
+    ) {
+      registryError(path, "cl-replay-candidate pool cannot have replaySurface");
+    }
   } else {
+    if (
+      entry.activationStatus === "reserve-compact-quote-active" ||
+      entry.activationStatus === "cl-compact-quote-active" ||
+      entry.activationStatus === "cl-replay-candidate"
+    ) {
+      registryError(
+        path,
+        "tracked-only pool cannot use compact quote or candidate activation status",
+      );
+    }
     if (entry.quoteModel !== null) {
       registryError(path, "tracked-only pool cannot have quoteModel");
     }
@@ -427,18 +523,17 @@ function assertUniquePools(pools: readonly FamePoolStateRegistryEntry[]): void {
   }
 }
 
-function assertReplaySurfaceScope(
+function assertActivationSurfaceScope(
   pools: readonly FamePoolStateRegistryEntry[],
 ): void {
   const replayPools = pools.filter((pool) => pool.replaySurface !== null);
-  if (
-    replayPools.length !== 1 ||
-    replayPools[0]?.id !== "slipstream-usdc-weth-100" ||
-    replayPools[0].replaySurface !== "cl-replay-v1"
-  ) {
+  const activeReplayPools = pools.filter(
+    (pool) => pool.activationStatus === "cl-compact-quote-active",
+  );
+  if (replayPools.length !== activeReplayPools.length) {
     registryError(
       "pools",
-      "expected exactly slipstream-usdc-weth-100 to have cl-replay-v1; only slipstream-usdc-weth-100 can have replaySurface",
+      "cl compact quote activation must match replaySurface rows",
     );
   }
 }
@@ -472,7 +567,7 @@ export function parseFamePoolStateRegistry(
     pools: parseArray(field(record, "pools", "$"), "$.pools", parseEntry),
   };
   assertUniquePools(registry.pools);
-  assertReplaySurfaceScope(registry.pools);
+  assertActivationSurfaceScope(registry.pools);
   return registry;
 }
 
@@ -512,3 +607,16 @@ export function getFamePoolStateRegistryEntry(
     registryAddressKey(input.chainId, input.poolAddress),
   );
 }
+
+export {
+  FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
+  FAME_V4_ZORA_ETH_QUOTE_LANE_POOL_ID,
+  FAME_V4_ZORA_ETH_QUOTE_LANE_MANIFEST,
+  FAME_V4_ZORA_ETH_REVIEWED_POOL_SHAPE,
+  FAME_V4_ZORA_QUOTE_LANE_MANIFESTS,
+  FAME_V4_ZORA_QUOTE_LANE_POOL_IDS,
+  FAME_V4_ZORA_QUOTE_LANE_MANIFEST,
+  FAME_V4_ZORA_REVIEWED_POOL_SHAPE,
+  classifyV4ZoraQuoteLane,
+  fameV4ZoraQuoteLaneManifestForPool,
+} from "../v4-zora-manifests.ts";

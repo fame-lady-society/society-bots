@@ -5,7 +5,11 @@ import {
   HttpLambdaResponseType,
 } from "aws-cdk-lib/aws-apigatewayv2-authorizers";
 import { HttpLambdaIntegration } from "aws-cdk-lib/aws-apigatewayv2-integrations";
-import { FamePoolState } from "./fame-pool-state.js";
+import {
+  FamePoolState,
+  famePoolStateClReplayMaintenanceModeFromEnv,
+  famePoolStateClReplayTrustPromotionFromEnv,
+} from "./fame-pool-state.js";
 
 export class FamePoolStateDevStack extends cdk.Stack {
   constructor(scope: cdk.App, id: string, props?: cdk.StackProps) {
@@ -14,13 +18,12 @@ export class FamePoolStateDevStack extends cdk.Stack {
     const poolState = new FamePoolState(this, "FamePoolState", {
       baseRpcsJson: process.env.BASE_RPCS_JSON,
       serviceToken: process.env.FAME_POOL_STATE_DEV_SERVICE_TOKEN ?? "",
-      clReplayMaintenanceMode:
-        process.env.FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE === "steady-state" ||
-        process.env.FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE === "repair"
-          ? process.env.FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE
-          : "checkpoint",
-      clReplayTrustPromotion:
-        process.env.FAME_POOL_STATE_CL_REPLAY_TRUST_PROMOTION === "true",
+      clReplayMaintenanceMode: famePoolStateClReplayMaintenanceModeFromEnv(
+        process.env.FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE,
+      ),
+      clReplayTrustPromotion: famePoolStateClReplayTrustPromotionFromEnv(
+        process.env.FAME_POOL_STATE_CL_REPLAY_TRUST_PROMOTION,
+      ),
       clReplayMaxRangeBlocks: Number(
         process.env.FAME_POOL_STATE_CL_REPLAY_MAX_RANGE_BLOCKS ?? "1000",
       ),

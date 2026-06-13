@@ -1,6 +1,6 @@
 import type { Address, Hex } from "viem";
 
-export const FAME_POOL_STATE_REGISTRY_SCHEMA_VERSION = 3;
+export const FAME_POOL_STATE_REGISTRY_SCHEMA_VERSION = 4;
 
 export type FamePoolStateVenue =
   | "aerodrome-slipstream"
@@ -26,6 +26,15 @@ export type FamePoolStateCapability =
   | "market-state"
   | "quote-model"
   | "tracked-only";
+export type FamePoolActivationStatus =
+  | "reserve-compact-quote-active"
+  | "cl-compact-quote-active"
+  | "cl-replay-candidate"
+  | "cl-head-only"
+  | "tracked-only"
+  | "blocked"
+  | "unsupported"
+  | "producer-unrepresented";
 export type FamePoolStateQuoteModel = "constant-product-reserves";
 export type FamePoolStateReplaySurface = "cl-replay-v1";
 export type FamePoolStateSurface =
@@ -35,8 +44,36 @@ export type FamePoolStateUnsupportedReason =
   | "concentrated-liquidity"
   | "missing-fee-metadata"
   | "native-wrap"
+  | "non-direct-fame-pool"
   | "stable-pool"
   | "unsupported-venue";
+
+export type FamePoolStateV4ZoraQuoteLaneStatus =
+  | "target-eligible"
+  | "target-blocked"
+  | "non-target-v4-unsupported"
+  | "not-uniswap-v4";
+
+export type FamePoolStateV4ZoraProvenanceSource =
+  | "zora-factory-event"
+  | "zora-factory-transaction-trace";
+
+export type FamePoolStateV4ZoraProvenanceEvidence =
+  | {
+      status: "verified";
+      source: FamePoolStateV4ZoraProvenanceSource;
+      chainId: 8453;
+      factoryAddress: Address;
+      coinAddress: Address;
+      poolKey: Hex;
+      poolId: Hex;
+      transactionHash: Hex;
+      eventName: string | null;
+    }
+  | {
+      status: "missing";
+      reason: string;
+    };
 
 export type FamePoolStateFeeDescriptor =
   | {
@@ -58,6 +95,7 @@ export interface FamePoolStateRegistrySource {
   poolsContentHash: Hex;
   solverRoutesJsonHash: Hex;
   solverRoutesContentHash: Hex;
+  activationLedgerHash: Hex;
 }
 
 export interface FamePoolStateRegistryDirection {
@@ -71,6 +109,7 @@ export interface FamePoolStateRegistryEntry {
   venue: FamePoolStateVenue;
   venueFamily: FamePoolStateVenueFamily;
   router: Address;
+  factoryAddress: Address | null;
   poolAddress: Address | null;
   poolKey: Hex | null;
   token0: Address;
@@ -80,6 +119,7 @@ export interface FamePoolStateRegistryEntry {
   tickSpacing: number | null;
   stateViewAddress: Address | null;
   capability: FamePoolStateCapability;
+  activationStatus: FamePoolActivationStatus;
   stateSurface: FamePoolStateSurface | null;
   replaySurface: FamePoolStateReplaySurface | null;
   quoteModel: FamePoolStateQuoteModel | null;

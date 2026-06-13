@@ -13,6 +13,8 @@ deepened: 2026-05-29
 
 Implement a shadow-first delta maintenance lane for FAME CL replay state. The plan keeps full snapshots as the seed, checkpoint, and repair artifact, adds a distinct replay-maintenance lifecycle, and only lets compact CL quote rows trust reducer-maintained state after deterministic fixtures and drift evidence prove it is fresh and clean.
 
+Project identity note: `www` refers to the GitHub project `fame-lady-society/www`. On this machine, that companion checkout is cloned as `../fls-www`, not `../www`.
+
 ---
 
 ## Problem Frame

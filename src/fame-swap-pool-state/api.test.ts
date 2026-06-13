@@ -10,31 +10,48 @@ import {
   type FamePoolQuoteRequest,
 } from "./cl-quote.ts";
 import {
+  clReplayCandidateStateRowsFromSnapshot,
   clReplayStateRowsFromSnapshot,
+  v4ClReplayStateRowsFromSnapshot,
   latestClHeadStateFromSnapshot,
   latestClReplayMaintenanceStateKey,
+  latestV4ClReplayMaintenanceStateKey,
   latestPoolStateKey,
   latestStateFromReserves,
   sourceRegistryIdFor,
   type FameClHeadLatestState,
   type FameClHeadSnapshotRegistryEntry,
   type FameClReplayBitmapChunkState,
+  type FameClReplayCandidateBitmapChunkState,
+  type FameClReplayCandidateLatestState,
+  type FameClReplayCandidateTickChunkState,
   type FameClReplayLatestState,
   type FameClReplayMaintenanceState,
   type FameClReplayRegistryEntry,
   type FameClReplayTickChunkState,
+  type FameV4ClReplayBitmapChunkState,
+  type FameV4ClReplayLatestState,
+  type FameV4ClReplayMaintenanceState,
+  type FameV4ClReplayRegistryEntry,
+  type FameV4ReviewedPoolEvidence,
+  type FameV4ClReplayTickChunkState,
+  type FameV4ZoraVerifiedProvenance,
   type FamePoolLatestState,
   type PoolStateDocumentClient,
   type PoolStateDynamoResponse,
 } from "./dynamodb/pool-state.ts";
 import { famePoolStateRegistry } from "./registry/index.ts";
-import type { FamePoolStateRegistryEntry } from "./types.ts";
+import { fameV4ZoraQuoteLaneManifestForPool } from "./v4-zora-manifests.ts";
+import type {
+  FamePoolStateRegistryEntry,
+  FamePoolStateRegistryFile,
+} from "./types.ts";
 
 type SentCommand = Parameters<PoolStateDocumentClient["send"]>[0];
 
 const ADDRESS_A = "0x0000000000000000000000000000000000000001" as Address;
 const POOL_QUOTES_V1_FIXTURE_SHA256 =
-  "492e125de5f865f2ef88dd63d5965bd835c3c068d2565cfd355ef93fb28fe763";
+  "3218b241ffb1752f824c2eb58fc84dfad876927e3fc8716afc1c13a70a424594";
 
 class BatchStateDb implements PoolStateDocumentClient {
   public readCount = 0;
@@ -44,9 +61,16 @@ class BatchStateDb implements PoolStateDocumentClient {
     states: readonly (
       | FameClHeadLatestState
       | FameClReplayBitmapChunkState
+      | FameClReplayCandidateBitmapChunkState
+      | FameClReplayCandidateLatestState
+      | FameClReplayCandidateTickChunkState
       | FameClReplayLatestState
       | FameClReplayMaintenanceState
       | FameClReplayTickChunkState
+      | FameV4ClReplayBitmapChunkState
+      | FameV4ClReplayLatestState
+      | FameV4ClReplayMaintenanceState
+      | FameV4ClReplayTickChunkState
       | FamePoolLatestState
     )[],
   ) {
@@ -105,9 +129,16 @@ function recordFromState(
   state:
     | FameClHeadLatestState
     | FameClReplayBitmapChunkState
+    | FameClReplayCandidateBitmapChunkState
+    | FameClReplayCandidateLatestState
+    | FameClReplayCandidateTickChunkState
     | FameClReplayLatestState
     | FameClReplayMaintenanceState
     | FameClReplayTickChunkState
+    | FameV4ClReplayBitmapChunkState
+    | FameV4ClReplayLatestState
+    | FameV4ClReplayMaintenanceState
+    | FameV4ClReplayTickChunkState
     | FamePoolLatestState,
 ): Record<string, unknown> {
   return { ...state };
@@ -151,19 +182,30 @@ function quoteModelPools(): (FamePoolStateRegistryEntry & {
   );
 }
 
+function registryWithPools(
+  pools: readonly FamePoolStateRegistryEntry[],
+): FamePoolStateRegistryFile {
+  return {
+    ...famePoolStateRegistry,
+    pools: [...pools],
+  };
+}
+
 function clHeadPool(id: string): FameClHeadSnapshotRegistryEntry {
   const entry = famePoolStateRegistry.pools.find((pool) => pool.id === id);
-  if (
-    !entry ||
-    entry.stateSurface !== "cl-head-snapshot" ||
-    entry.tickSpacing === null
-  ) {
+  if (!entry || entry.tickSpacing === null) {
     throw new Error(`Missing CL head pool ${id}.`);
   }
   return {
     ...entry,
-    stateSurface: entry.stateSurface,
+    capability: "market-state",
+    activationStatus:
+      entry.activationStatus === "tracked-only"
+        ? "cl-head-only"
+        : entry.activationStatus,
+    stateSurface: "cl-head-snapshot",
     tickSpacing: entry.tickSpacing,
+    unsupportedReason: null,
   };
 }
 
@@ -173,13 +215,138 @@ function clReplayPool(): FameClReplayRegistryEntry {
   );
   if (
     !entry ||
+    entry.poolAddress === null ||
+    entry.tickSpacing === null ||
+    entry.venue !== "aerodrome-slipstream"
+  ) {
+    throw new Error("Missing CL replay pool.");
+  }
+  return {
+    ...entry,
+    capability: "market-state",
+    activationStatus: "cl-compact-quote-active",
+    replaySurface: "cl-replay-v1",
+    stateSurface: "cl-head-snapshot",
+    poolAddress: entry.poolAddress,
+    tickSpacing: entry.tickSpacing,
+    venue: entry.venue,
+    unsupportedReason: null,
+  };
+}
+
+function clReplayCandidatePool(): FameClReplayRegistryEntry {
+  const entry = famePoolStateRegistry.pools.find(
+    (pool) => pool.id === "slipstream-basedflick-fame",
+  );
+  if (
+    !entry ||
+    entry.stateSurface !== "cl-head-snapshot" ||
+    entry.poolAddress === null ||
+    entry.tickSpacing === null ||
+    entry.venue !== "aerodrome-slipstream"
+  ) {
+    throw new Error("Missing CL replay candidate pool.");
+  }
+  return {
+    ...entry,
+    capability: "market-state",
+    activationStatus: "cl-replay-candidate",
+    replaySurface: null,
+    stateSurface: entry.stateSurface,
+    poolAddress: entry.poolAddress,
+    tickSpacing: entry.tickSpacing,
+    venue: entry.venue,
+    unsupportedReason: null,
+  };
+}
+
+function v4ClReplayPool(
+  poolId = "uniswap-v4-basedflick-zora",
+): FameV4ClReplayRegistryEntry {
+  const entry = famePoolStateRegistry.pools.find(
+    (pool) => pool.id === poolId,
+  );
+  if (
+    !entry ||
+    entry.venue !== "uniswap-v4" ||
+    entry.venueFamily !== "UniswapV4" ||
+    entry.poolAddress !== null ||
+    entry.poolKey === null ||
+    entry.stateViewAddress === null ||
+    entry.tickSpacing === null
+  ) {
+    throw new Error("Missing V4 replay pool.");
+  }
+  return {
+    ...entry,
+    capability: "market-state",
+    activationStatus: "unsupported",
+    venue: entry.venue,
+    venueFamily: entry.venueFamily,
+    stateSurface: "cl-head-snapshot",
+    poolAddress: entry.poolAddress,
+    poolKey: entry.poolKey,
+    stateViewAddress: entry.stateViewAddress,
+    tickSpacing: entry.tickSpacing,
+    unsupportedReason: null,
+  };
+}
+
+function verifiedV4ZoraProvenance(
+  pool: FameV4ClReplayRegistryEntry,
+): FameV4ZoraVerifiedProvenance {
+  return {
+    status: "verified",
+    source: "zora-factory-event",
+    chainId: 8453,
+    factoryAddress: "0x0000000000000000000000000000000000000003",
+    coinAddress: pool.token1,
+    poolKey: pool.poolKey,
+    poolId: pool.poolKey,
+    transactionHash:
+      "0x7777777777777777777777777777777777777777777777777777777777777777",
+    eventName: "CoinCreatedV4",
+  };
+}
+
+function reviewedV4PoolEvidence(
+  pool: FameV4ClReplayRegistryEntry,
+): FameV4ReviewedPoolEvidence {
+  const manifest = fameV4ZoraQuoteLaneManifestForPool(pool.id);
+  if (manifest === null) {
+    throw new Error(`Missing reviewed V4 manifest for ${pool.id}.`);
+  }
+  const shape = manifest.reviewedPoolShape;
+  return {
+    status: "verified",
+    source: "reviewed-v4-manifest",
+    kind: manifest.provenanceRequired
+      ? "zora-protocol-pool"
+      : "zero-hook-static-fee",
+    manifestVersion: manifest.version,
+    poolId: manifest.poolId,
+    poolKey: shape.poolKey,
+    staticFee: shape.fee.toString(),
+    hookAddress: shape.hooks,
+    hookData: shape.hookData,
+    protocolFeeStatus: "zero",
+  };
+}
+
+function selectedActiveClReplayPool(): FameClReplayRegistryEntry {
+  const entry = famePoolStateRegistry.pools.find(
+    (pool) => pool.id === "slipstream-basedflick-fame",
+  );
+  if (
+    !entry ||
+    entry.activationStatus !== "cl-compact-quote-active" ||
     entry.replaySurface !== "cl-replay-v1" ||
     entry.stateSurface !== "cl-head-snapshot" ||
     entry.poolAddress === null ||
     entry.tickSpacing === null ||
     entry.venue !== "aerodrome-slipstream"
   ) {
-    throw new Error("Missing CL replay pool.");
+    throw new Error("Missing active selected CL replay pool.");
   }
   return {
     ...entry,
@@ -266,6 +433,41 @@ function clReplayRowsForPool(pool: FameClReplayRegistryEntry) {
   });
 }
 
+function v4ClReplayRowsForPool(pool: FameV4ClReplayRegistryEntry) {
+  const manifest = fameV4ZoraQuoteLaneManifestForPool(pool.id);
+  if (manifest === null) {
+    throw new Error(`Missing reviewed V4 manifest for ${pool.id}.`);
+  }
+  return v4ClReplayStateRowsFromSnapshot({
+    pool,
+    sqrtPriceX96: 2n ** 96n,
+    tick: -17_400,
+    liquidity: 8_888n,
+    lpFee: BigInt(manifest.reviewedPoolShape.fee),
+    protocolFee: 0n,
+    observedThroughBlock: 120,
+    blockHash:
+      "0x4444444444444444444444444444444444444444444444444444444444444444",
+    parentHash:
+      "0x5555555555555555555555555555555555555555555555555555555555555555",
+    snapshotId: "unit-v4-cl-replay",
+    stateHash:
+      "0x6666666666666666666666666666666666666666666666666666666666666666",
+    reviewedPoolEvidence: reviewedV4PoolEvidence(pool),
+    ...(manifest.provenanceRequired
+      ? { zoraProvenance: verifiedV4ZoraProvenance(pool) }
+      : {}),
+    sourceRegistryId: sourceRegistryIdFor(famePoolStateRegistry.source),
+    updatedAt: "2026-05-21T00:00:00.000Z",
+    bitmapWords: [{ wordPosition: -1, bitmap: 1n << 169n }],
+    initializedTicks: [
+      { tick: -17_400, liquidityGross: 30n, liquidityNet: 10n },
+    ],
+    bitmapChunkSize: 1,
+    tickChunkSize: 1,
+  });
+}
+
 function quoteClReplayRowsForPool(pool: FameClReplayRegistryEntry) {
   return clReplayStateRowsFromSnapshot({
     pool,
@@ -279,6 +481,83 @@ function quoteClReplayRowsForPool(pool: FameClReplayRegistryEntry) {
     parentHash:
       "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     snapshotId: "unit-cl-quote",
+    stateHash:
+      "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    sourceRegistryId: sourceRegistryIdFor(famePoolStateRegistry.source),
+    updatedAt: "2026-05-20T00:00:00.000Z",
+    bitmapWords: [
+      { wordPosition: -1, bitmap: 1n << 255n },
+      { wordPosition: 0, bitmap: 2n },
+    ],
+    initializedTicks: [
+      { tick: -100, liquidityGross: 1_000n, liquidityNet: -1_000n },
+      { tick: 100, liquidityGross: 1_000n, liquidityNet: 1_000n },
+    ],
+    bitmapChunkSize: 1,
+    tickChunkSize: 1,
+  });
+}
+
+function quoteV4ClReplayRowsForPool(
+  pool: FameV4ClReplayRegistryEntry,
+  options: {
+    protocolFee?: bigint;
+    zoraProvenance?: FameV4ZoraVerifiedProvenance;
+  } = {},
+) {
+  const manifest = fameV4ZoraQuoteLaneManifestForPool(pool.id);
+  if (manifest === null) {
+    throw new Error(`Missing reviewed V4 manifest for ${pool.id}.`);
+  }
+  return v4ClReplayStateRowsFromSnapshot({
+    pool,
+    sqrtPriceX96: 2n ** 96n,
+    tick: 0,
+    liquidity: 1_000_000_000_000_000_000n,
+    lpFee: BigInt(manifest.reviewedPoolShape.fee),
+    protocolFee: options.protocolFee ?? 0n,
+    observedThroughBlock: 120,
+    blockHash:
+      "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    parentHash:
+      "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    snapshotId: "unit-v4-cl-quote",
+    stateHash:
+      "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    reviewedPoolEvidence: reviewedV4PoolEvidence(pool),
+    ...(options.zoraProvenance !== undefined
+      ? { zoraProvenance: options.zoraProvenance }
+      : manifest.provenanceRequired
+        ? { zoraProvenance: verifiedV4ZoraProvenance(pool) }
+        : {}),
+    sourceRegistryId: sourceRegistryIdFor(famePoolStateRegistry.source),
+    updatedAt: "2026-05-21T00:00:00.000Z",
+    bitmapWords: [
+      { wordPosition: -1, bitmap: 1n << 255n },
+      { wordPosition: 0, bitmap: 2n },
+    ],
+    initializedTicks: [
+      { tick: -100, liquidityGross: 1_000n, liquidityNet: -1_000n },
+      { tick: 100, liquidityGross: 1_000n, liquidityNet: 1_000n },
+    ],
+    bitmapChunkSize: 1,
+    tickChunkSize: 1,
+  });
+}
+
+function quoteClReplayCandidateRowsForPool(pool: FameClReplayRegistryEntry) {
+  return clReplayCandidateStateRowsFromSnapshot({
+    pool,
+    sqrtPriceX96: 2n ** 96n,
+    tick: 0,
+    liquidity: 1_000_000_000_000_000_000n,
+    fee: 100n,
+    observedThroughBlock: 120,
+    blockHash:
+      "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    parentHash:
+      "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    candidateId: "unit-cl-candidate",
     stateHash:
       "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
     sourceRegistryId: sourceRegistryIdFor(famePoolStateRegistry.source),
@@ -323,12 +602,89 @@ function trustedMaintenanceForReplayRows(
   };
 }
 
+function trustedMaintenanceForReplayCandidateRows(
+  pool: FameClReplayRegistryEntry,
+  rows: ReturnType<typeof clReplayCandidateStateRowsFromSnapshot>,
+): FameClReplayMaintenanceState {
+  return {
+    ...latestClReplayMaintenanceStateKey(pool),
+    stateKind: "cl-replay-maintenance-v1",
+    poolId: pool.id,
+    chainId: pool.chainId,
+    poolAddress: pool.poolAddress,
+    status: "trusted",
+    cursorBlock: rows.latest.observedThroughBlock,
+    cursorBlockHash: rows.latest.blockHash,
+    cursorTransactionIndex: Number.MAX_SAFE_INTEGER,
+    cursorLogIndex: Number.MAX_SAFE_INTEGER,
+    targetBlock: rows.latest.observedThroughBlock,
+    targetBlockHash: rows.latest.blockHash,
+    stateHash: rows.latest.stateHash,
+    sourceRegistryId: rows.latest.sourceRegistryId,
+    updatedAt: "2026-05-20T00:00:00.000Z",
+    lastCheckpointBlock: rows.latest.observedThroughBlock,
+    lastCheckpointBlockHash: rows.latest.blockHash,
+    reason: null,
+    candidateId: rows.latest.candidateId,
+  };
+}
+
+function trustedMaintenanceForV4ReplayRows(
+  pool: FameV4ClReplayRegistryEntry,
+  rows: ReturnType<typeof v4ClReplayStateRowsFromSnapshot>,
+): FameV4ClReplayMaintenanceState {
+  return {
+    ...latestV4ClReplayMaintenanceStateKey(pool),
+    stateKind: "v4-cl-replay-maintenance-v1",
+    poolId: pool.id,
+    chainId: pool.chainId,
+    poolKey: pool.poolKey,
+    stateViewAddress: pool.stateViewAddress,
+    status: "trusted",
+    cursorBlock: rows.latest.observedThroughBlock,
+    cursorBlockHash: rows.latest.blockHash,
+    cursorTransactionIndex: Number.MAX_SAFE_INTEGER,
+    cursorLogIndex: Number.MAX_SAFE_INTEGER,
+    targetBlock: rows.latest.observedThroughBlock,
+    targetBlockHash: rows.latest.blockHash,
+    stateHash: rows.latest.stateHash,
+    sourceRegistryId: rows.latest.sourceRegistryId,
+    updatedAt: "2026-05-21T00:00:00.000Z",
+    lastCheckpointBlock: rows.latest.observedThroughBlock,
+    lastCheckpointBlockHash: rows.latest.blockHash,
+    reason: null,
+    candidateId: rows.latest.snapshotId,
+  };
+}
+
 function warmingMaintenanceForReplayRows(
   pool: FameClReplayRegistryEntry,
   rows: ReturnType<typeof clReplayStateRowsFromSnapshot>,
 ): FameClReplayMaintenanceState {
   return {
     ...trustedMaintenanceForReplayRows(pool, rows),
+    status: "warming",
+    reason: "shadow-not-promoted",
+  };
+}
+
+function warmingMaintenanceForV4ReplayRows(
+  pool: FameV4ClReplayRegistryEntry,
+  rows: ReturnType<typeof v4ClReplayStateRowsFromSnapshot>,
+): FameV4ClReplayMaintenanceState {
+  return {
+    ...trustedMaintenanceForV4ReplayRows(pool, rows),
+    status: "warming",
+    reason: "shadow-not-promoted",
+  };
+}
+
+function warmingMaintenanceForReplayCandidateRows(
+  pool: FameClReplayRegistryEntry,
+  rows: ReturnType<typeof clReplayCandidateStateRowsFromSnapshot>,
+): FameClReplayMaintenanceState {
+  return {
+    ...trustedMaintenanceForReplayCandidateRows(pool, rows),
     status: "warming",
     reason: "shadow-not-promoted",
   };
@@ -383,6 +739,16 @@ function poolQuotesFixtureResponse(): Record<string, unknown> {
   const parsed: unknown = JSON.parse(readFileSync(fixtureUrl, "utf8"));
   const fixture = parseFixtureObject(parsed, "$");
   return parseFixtureObject(fixture.response, "$.response");
+}
+
+function poolQuotesFixtureUnavailableExamples(): Record<string, unknown>[] {
+  const fixtureUrl = new URL("./fixtures/pool-quotes-v1.json", import.meta.url);
+  const parsed: unknown = JSON.parse(readFileSync(fixtureUrl, "utf8"));
+  const fixture = parseFixtureObject(parsed, "$");
+  return parseFixtureQuotes(
+    fixture.unavailableExamples,
+    "$.unavailableExamples",
+  );
 }
 
 function fixtureQuoteRequests(
@@ -483,12 +849,12 @@ describe("FAME pool-state API contract", () => {
       expect.objectContaining({
         status: "unsupported",
         poolId: "scale-equalizer-usdc-frxusd",
-        unsupportedReason: "stable-pool",
+        unsupportedReason: "non-direct-fame-pool",
       }),
       expect.objectContaining({
         status: "unsupported",
         poolId: "uniswap-v4-usdc-eth",
-        unsupportedReason: "concentrated-liquidity",
+        unsupportedReason: "non-direct-fame-pool",
       }),
     ]);
   });
@@ -502,6 +868,7 @@ describe("FAME pool-state API contract", () => {
         pools: [{ poolId: pool.id }],
       },
       tableName: "PoolState",
+      registry: registryWithPools([pool]),
       db: new BatchStateDb([clHeadStateForPool(pool, 120)]),
       producerMaxFreshnessBlocks: 120,
     });
@@ -532,6 +899,7 @@ describe("FAME pool-state API contract", () => {
         pools: [{ poolId: pool.id }],
       },
       tableName: "PoolState",
+      registry: registryWithPools([pool]),
       db: new BatchStateDb([
         trustedMaintenanceForReplayRows(pool, rows),
         rows.latest,
@@ -581,8 +949,40 @@ describe("FAME pool-state API contract", () => {
     });
   });
 
+  test("returns selected active CL replay state for indexed route-lab requests", async () => {
+    const pool = selectedActiveClReplayPool();
+    const rows = clReplayRowsForPool(pool);
+    const response = await handleFamePoolStateBatchRequest({
+      request: {
+        currentBlock: 125,
+        stateSurfaces: ["cl-replay-v1"],
+        pools: [{ poolId: pool.id }],
+      },
+      tableName: "PoolState",
+      registry: registryWithPools([pool]),
+      db: new BatchStateDb([
+        trustedMaintenanceForReplayRows(pool, rows),
+        rows.latest,
+        ...rows.bitmapChunks,
+        ...rows.tickChunks,
+      ]),
+      producerMaxFreshnessBlocks: 120,
+    });
+
+    expect(response.pools[0]).toMatchObject({
+      status: "fresh",
+      stateKind: "cl-replay-v1",
+      poolId: pool.id,
+      poolAddress: pool.poolAddress,
+      snapshotId: "unit-cl-replay",
+      sourceRegistryId: sourceRegistryIdFor(famePoolStateRegistry.source),
+      bitmapWordCount: 2,
+      initializedTickCount: 2,
+    });
+  });
+
   test("returns compact CL quotes without raw replay arrays", async () => {
-    const pool = clReplayPool();
+    const pool = selectedActiveClReplayPool();
     const rows = quoteClReplayRowsForPool(pool);
     const response = await handleFamePoolQuoteBatchRequest({
       request: {
@@ -663,6 +1063,631 @@ describe("FAME pool-state API contract", () => {
     });
   });
 
+  test("returns selected compact CL quotes from trusted replay state", async () => {
+    const pool = selectedActiveClReplayPool();
+    const rows = quoteClReplayRowsForPool(pool);
+    const response = await handleFamePoolQuoteBatchRequest({
+      request: {
+        currentBlock: 125,
+        quotes: [
+          {
+            poolId: pool.id,
+            tokenIn: pool.token0,
+            tokenOut: pool.token1,
+            amountIn: "1000000",
+          },
+          {
+            poolId: pool.id,
+            tokenIn: pool.token1,
+            tokenOut: pool.token0,
+            amountIn: "1000000",
+          },
+        ],
+      },
+      tableName: "PoolState",
+      db: new BatchStateDb([
+        trustedMaintenanceForReplayRows(pool, rows),
+        rows.latest,
+        ...rows.bitmapChunks,
+        ...rows.tickChunks,
+      ]),
+      producerMaxFreshnessBlocks: 120,
+    });
+
+    expect(response.quotes).toEqual([
+      expect.objectContaining({
+        status: "quoted",
+        quoteKind: "cl-quote-v1",
+        poolId: pool.id,
+        poolAddress: pool.poolAddress,
+        tokenIn: pool.token0,
+        tokenOut: pool.token1,
+        amountIn: "1000000",
+        amountOut: "999899",
+        snapshotId: "unit-cl-quote",
+        stateHash:
+          "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        sourceRegistryId: sourceRegistryIdFor(famePoolStateRegistry.source),
+      }),
+      expect.objectContaining({
+        status: "quoted",
+        quoteKind: "cl-quote-v1",
+        poolId: pool.id,
+        tokenIn: pool.token1,
+        tokenOut: pool.token0,
+        amountIn: "1000000",
+        amountOut: "999899",
+        snapshotId: "unit-cl-quote",
+      }),
+    ]);
+    for (const quote of response.quotes) {
+      expect(quote).not.toHaveProperty("bitmapWords");
+      expect(quote).not.toHaveProperty("initializedTicks");
+    }
+  });
+
+  test("returns targeted V4 compact CL quotes with PoolKey evidence", async () => {
+    const pool = v4ClReplayPool();
+    const rows = quoteV4ClReplayRowsForPool(pool);
+    const response = await handleFamePoolQuoteBatchRequest({
+      request: {
+        currentBlock: 125,
+        quotes: [
+          {
+            poolId: pool.id,
+            tokenIn: pool.token0,
+            tokenOut: pool.token1,
+            amountIn: "1000000",
+          },
+          {
+            poolId: pool.id,
+            tokenIn: pool.token1,
+            tokenOut: pool.token0,
+            amountIn: "1000000",
+          },
+        ],
+      },
+      tableName: "PoolState",
+      registry: registryWithPools([pool]),
+      db: new BatchStateDb([
+        trustedMaintenanceForV4ReplayRows(pool, rows),
+        rows.latest,
+        ...rows.bitmapChunks,
+        ...rows.tickChunks,
+      ]),
+      producerMaxFreshnessBlocks: 120,
+    });
+
+    expect(response.quotes).toHaveLength(2);
+    for (const quote of response.quotes) {
+      expect(quote).toMatchObject({
+        status: "quoted",
+        quoteKind: "cl-quote-v1",
+        poolId: pool.id,
+        poolAddress: null,
+        poolKey: pool.poolKey,
+        stateViewAddress: pool.stateViewAddress,
+        venueFamily: "UniswapV4",
+        source: "uniswap-v4-state-view",
+        fee: "30000",
+        lpFee: "30000",
+        protocolFee: "0",
+        protocolFeeStatus: "zero",
+        staticFee: "30000",
+        feeSource: "v4-slot0",
+        hookData: "0x",
+        hookDataStatus: "empty",
+        observedThroughBlock: 120,
+        snapshotId: "unit-v4-cl-quote",
+        sourceRegistryId: sourceRegistryIdFor(famePoolStateRegistry.source),
+        maxFreshnessBlocks: 120,
+        zoraProvenance: expect.objectContaining({
+          status: "verified",
+          coinAddress: pool.token1,
+          poolKey: pool.poolKey,
+        }),
+      });
+      expect(quote).not.toHaveProperty("bitmapWords");
+      expect(quote).not.toHaveProperty("initializedTicks");
+      if (quote.status !== "quoted") {
+        throw new Error("Expected quoted V4 CL quote.");
+      }
+      expect(BigInt(quote.amountOut)).toBeGreaterThan(0n);
+    }
+  });
+
+  test("returns no-hook ZORA/ETH V4 compact CL quotes without provenance", async () => {
+    const pool = v4ClReplayPool("uniswap-v4-zora-eth");
+    const rows = quoteV4ClReplayRowsForPool(pool);
+    const response = await handleFamePoolQuoteBatchRequest({
+      request: {
+        currentBlock: 125,
+        quotes: [
+          {
+            poolId: pool.id,
+            tokenIn: pool.token0,
+            tokenOut: pool.token1,
+            amountIn: "1000000",
+          },
+          {
+            poolId: pool.id,
+            tokenIn: pool.token1,
+            tokenOut: pool.token0,
+            amountIn: "1000000",
+          },
+        ],
+      },
+      tableName: "PoolState",
+      registry: registryWithPools([pool]),
+      db: new BatchStateDb([
+        trustedMaintenanceForV4ReplayRows(pool, rows),
+        rows.latest,
+        ...rows.bitmapChunks,
+        ...rows.tickChunks,
+      ]),
+      producerMaxFreshnessBlocks: 120,
+    });
+
+    expect(response.quotes).toHaveLength(2);
+    for (const quote of response.quotes) {
+      expect(quote).toMatchObject({
+        status: "quoted",
+        quoteKind: "cl-quote-v1",
+        poolId: pool.id,
+        poolAddress: null,
+        poolKey: pool.poolKey,
+        stateViewAddress: pool.stateViewAddress,
+        venueFamily: "UniswapV4",
+        source: "uniswap-v4-state-view",
+        fee: "3000",
+        lpFee: "3000",
+        protocolFee: "0",
+        protocolFeeStatus: "zero",
+        staticFee: "3000",
+        feeSource: "v4-slot0",
+        hookAddress: "0x0000000000000000000000000000000000000000",
+        hookData: "0x",
+        hookDataStatus: "empty",
+        reviewedPoolEvidence: expect.objectContaining({
+          kind: "zero-hook-static-fee",
+          poolId: "uniswap-v4-zora-eth",
+          staticFee: "3000",
+          hookAddress: "0x0000000000000000000000000000000000000000",
+          hookData: "0x",
+          protocolFeeStatus: "zero",
+        }),
+      });
+      expect(quote).not.toHaveProperty("zoraProvenance");
+      if (quote.status !== "quoted") {
+        throw new Error("Expected quoted ZORA/ETH V4 CL quote.");
+      }
+      expect(BigInt(quote.amountOut)).toBeGreaterThan(0n);
+    }
+  });
+
+  test("returns producer-untrusted for V4 latest rows without trusted maintenance", async () => {
+    const pool = v4ClReplayPool();
+    const rows = quoteV4ClReplayRowsForPool(pool);
+    const response = await handleFamePoolQuoteBatchRequest({
+      request: {
+        currentBlock: 125,
+        quotes: [
+          {
+            poolId: pool.id,
+            tokenIn: pool.token0,
+            tokenOut: pool.token1,
+            amountIn: "1000000",
+          },
+        ],
+      },
+      tableName: "PoolState",
+      registry: registryWithPools([pool]),
+      db: new BatchStateDb([
+        warmingMaintenanceForV4ReplayRows(pool, rows),
+        rows.latest,
+        ...rows.bitmapChunks,
+        ...rows.tickChunks,
+      ]),
+      producerMaxFreshnessBlocks: 120,
+    });
+
+    expect(response.quotes[0]).toMatchObject({
+      status: "unavailable",
+      reason: "producer-untrusted",
+      poolId: pool.id,
+      poolAddress: null,
+      poolKey: pool.poolKey,
+      stateViewAddress: pool.stateViewAddress,
+      observedThroughBlock: 120,
+      sourceRegistryId: sourceRegistryIdFor(famePoolStateRegistry.source),
+      producerStatus: "warming",
+      producerReason: "shadow-not-promoted",
+    });
+  });
+
+  test("returns V4 source-registry mismatch unavailable rows with PoolKey metadata", async () => {
+    const pool = v4ClReplayPool();
+    const rows = quoteV4ClReplayRowsForPool(pool);
+    const response = await handleFamePoolQuoteBatchRequest({
+      request: {
+        currentBlock: 125,
+        quotes: [
+          {
+            poolId: pool.id,
+            tokenIn: pool.token0,
+            tokenOut: pool.token1,
+            amountIn: "1000000",
+          },
+        ],
+      },
+      tableName: "PoolState",
+      registry: registryWithPools([pool]),
+      db: new BatchStateDb([
+        {
+          ...rows.latest,
+          sourceRegistryId: "stale-registry",
+        },
+      ]),
+      producerMaxFreshnessBlocks: 120,
+    });
+
+    expect(response.quotes[0]).toMatchObject({
+      status: "unavailable",
+      reason: "source-registry-mismatch",
+      poolId: pool.id,
+      poolAddress: null,
+      poolKey: pool.poolKey,
+      stateViewAddress: pool.stateViewAddress,
+      observedThroughBlock: 120,
+      sourceRegistryId: "stale-registry",
+      maxFreshnessBlocks: 120,
+    });
+  });
+
+  test("returns stale V4 unavailable rows with PoolKey metadata", async () => {
+    const pool = v4ClReplayPool();
+    const rows = quoteV4ClReplayRowsForPool(pool);
+    const response = await handleFamePoolQuoteBatchRequest({
+      request: {
+        currentBlock: 125,
+        maxFreshnessBlocks: 10,
+        quotes: [
+          {
+            poolId: pool.id,
+            tokenIn: pool.token0,
+            tokenOut: pool.token1,
+            amountIn: "1000000",
+          },
+        ],
+      },
+      tableName: "PoolState",
+      registry: registryWithPools([pool]),
+      db: new BatchStateDb([
+        {
+          ...rows.latest,
+          observedThroughBlock: 100,
+        },
+      ]),
+      producerMaxFreshnessBlocks: 120,
+    });
+
+    expect(response.quotes[0]).toMatchObject({
+      status: "unavailable",
+      reason: "stale-indexed-state",
+      poolId: pool.id,
+      poolAddress: null,
+      poolKey: pool.poolKey,
+      stateViewAddress: pool.stateViewAddress,
+      observedThroughBlock: 100,
+      sourceRegistryId: sourceRegistryIdFor(famePoolStateRegistry.source),
+      maxFreshnessBlocks: 10,
+    });
+  });
+
+  test("returns future V4 unavailable rows as stale with PoolKey metadata", async () => {
+    const pool = v4ClReplayPool();
+    const rows = quoteV4ClReplayRowsForPool(pool);
+    const response = await handleFamePoolQuoteBatchRequest({
+      request: {
+        currentBlock: 125,
+        quotes: [
+          {
+            poolId: pool.id,
+            tokenIn: pool.token0,
+            tokenOut: pool.token1,
+            amountIn: "1000000",
+          },
+        ],
+      },
+      tableName: "PoolState",
+      registry: registryWithPools([pool]),
+      db: new BatchStateDb([
+        {
+          ...rows.latest,
+          observedThroughBlock: 130,
+        },
+      ]),
+      producerMaxFreshnessBlocks: 120,
+    });
+
+    expect(response.quotes[0]).toMatchObject({
+      status: "unavailable",
+      reason: "stale-indexed-state",
+      poolId: pool.id,
+      poolAddress: null,
+      poolKey: pool.poolKey,
+      stateViewAddress: pool.stateViewAddress,
+      observedThroughBlock: 130,
+      sourceRegistryId: sourceRegistryIdFor(famePoolStateRegistry.source),
+      maxFreshnessBlocks: 120,
+    });
+  });
+
+  test("returns V4 token-direction mismatch unavailable rows with PoolKey metadata", async () => {
+    const pool = v4ClReplayPool();
+    const rows = quoteV4ClReplayRowsForPool(pool);
+    const response = await handleFamePoolQuoteBatchRequest({
+      request: {
+        currentBlock: 125,
+        quotes: [
+          {
+            poolId: pool.id,
+            tokenIn: ADDRESS_A,
+            tokenOut: pool.token1,
+            amountIn: "1000000",
+          },
+        ],
+      },
+      tableName: "PoolState",
+      registry: registryWithPools([pool]),
+      db: new BatchStateDb([
+        trustedMaintenanceForV4ReplayRows(pool, rows),
+        rows.latest,
+        ...rows.bitmapChunks,
+        ...rows.tickChunks,
+      ]),
+      producerMaxFreshnessBlocks: 120,
+    });
+
+    expect(response.quotes[0]).toMatchObject({
+      status: "unavailable",
+      reason: "token-direction-mismatch",
+      poolId: pool.id,
+      poolAddress: null,
+      poolKey: pool.poolKey,
+      stateViewAddress: pool.stateViewAddress,
+      observedThroughBlock: 120,
+      sourceRegistryId: sourceRegistryIdFor(famePoolStateRegistry.source),
+      maxFreshnessBlocks: 120,
+    });
+  });
+
+  test("returns row-scoped V4 fee-model unavailability without blocking reserve quotes", async () => {
+    const reservePool = quotePool("uniswap-v2-fame-direct");
+    const v4Pool = v4ClReplayPool();
+    const v4Rows = quoteV4ClReplayRowsForPool(v4Pool, { protocolFee: 1n });
+    const response = await handleFamePoolQuoteBatchRequest({
+      request: {
+        currentBlock: 125,
+        quotes: [
+          {
+            poolId: reservePool.id,
+            tokenIn: reservePool.token0,
+            tokenOut: reservePool.token1,
+            amountIn: "500",
+          },
+          {
+            poolId: v4Pool.id,
+            tokenIn: v4Pool.token0,
+            tokenOut: v4Pool.token1,
+            amountIn: "1000000",
+          },
+        ],
+      },
+      tableName: "PoolState",
+      registry: registryWithPools([reservePool, v4Pool]),
+      db: new BatchStateDb([
+        stateForPool(reservePool, 120, {
+          reserve0: 1000n,
+          reserve1: 2500n,
+          sourceRegistryId: sourceRegistryIdFor(famePoolStateRegistry.source),
+        }),
+        v4Rows.latest,
+      ]),
+      producerMaxFreshnessBlocks: 120,
+    });
+
+    expect(response.quotes).toEqual([
+      expect.objectContaining({
+        status: "quoted",
+        quoteKind: "constant-product-quote-v1",
+        poolId: reservePool.id,
+        amountOut: "831",
+      }),
+      expect.objectContaining({
+        status: "unavailable",
+        reason: "fee-model-mismatch",
+        poolId: v4Pool.id,
+        poolAddress: null,
+        poolKey: v4Pool.poolKey,
+        stateViewAddress: v4Pool.stateViewAddress,
+        observedThroughBlock: 120,
+      }),
+    ]);
+  });
+
+  test("returns V4 shape mismatch unavailable rows for PoolKey drift", async () => {
+    const pool = v4ClReplayPool();
+    const rows = quoteV4ClReplayRowsForPool(pool);
+    const response = await handleFamePoolQuoteBatchRequest({
+      request: {
+        currentBlock: 125,
+        quotes: [
+          {
+            poolId: pool.id,
+            tokenIn: pool.token0,
+            tokenOut: pool.token1,
+            amountIn: "1000000",
+          },
+        ],
+      },
+      tableName: "PoolState",
+      registry: registryWithPools([pool]),
+      db: new BatchStateDb([
+        {
+          ...rows.latest,
+          poolKey:
+            "0x8888888888888888888888888888888888888888888888888888888888888888",
+        },
+      ]),
+      producerMaxFreshnessBlocks: 120,
+    });
+
+    expect(response.quotes[0]).toMatchObject({
+      status: "unavailable",
+      reason: "v4-shape-mismatch",
+      poolId: pool.id,
+      poolAddress: null,
+      poolKey:
+        "0x8888888888888888888888888888888888888888888888888888888888888888",
+      stateViewAddress: pool.stateViewAddress,
+      observedThroughBlock: 120,
+    });
+  });
+
+  test("returns V4 missing-provenance unavailable rows for unbound provenance", async () => {
+    const pool = v4ClReplayPool();
+    const rows = quoteV4ClReplayRowsForPool(pool, {
+      zoraProvenance: {
+        ...verifiedV4ZoraProvenance(pool),
+        coinAddress: ADDRESS_A,
+      },
+    });
+    const response = await handleFamePoolQuoteBatchRequest({
+      request: {
+        currentBlock: 125,
+        quotes: [
+          {
+            poolId: pool.id,
+            tokenIn: pool.token0,
+            tokenOut: pool.token1,
+            amountIn: "1000000",
+          },
+        ],
+      },
+      tableName: "PoolState",
+      registry: registryWithPools([pool]),
+      db: new BatchStateDb([rows.latest]),
+      producerMaxFreshnessBlocks: 120,
+    });
+
+    expect(response.quotes[0]).toMatchObject({
+      status: "unavailable",
+      reason: "missing-provenance",
+      poolId: pool.id,
+      poolAddress: null,
+      poolKey: pool.poolKey,
+      stateViewAddress: pool.stateViewAddress,
+      observedThroughBlock: 120,
+    });
+  });
+
+  test("does not serve compact CL quotes from candidate-only replay state", async () => {
+    const pool = clReplayCandidatePool();
+    const rows = quoteClReplayCandidateRowsForPool(pool);
+    const response = await handleFamePoolQuoteBatchRequest({
+      request: {
+        currentBlock: 125,
+        quotes: [
+          {
+            poolId: pool.id,
+            tokenIn: pool.token0,
+            tokenOut: pool.token1,
+            amountIn: "1000000",
+          },
+        ],
+      },
+      tableName: "PoolState",
+      registry: {
+        ...famePoolStateRegistry,
+        pools: famePoolStateRegistry.pools.map((entry) =>
+          entry.id === pool.id ? pool : entry,
+        ),
+      },
+      db: new BatchStateDb([
+        trustedMaintenanceForReplayCandidateRows(pool, rows),
+        rows.latest,
+        ...rows.bitmapChunks,
+        ...rows.tickChunks,
+      ]),
+      producerMaxFreshnessBlocks: 120,
+    });
+
+    expect(response.quotes[0]).toMatchObject({
+      status: "unavailable",
+      reason: "unsupported-pool",
+      poolId: pool.id,
+      poolAddress: pool.poolAddress,
+    });
+  });
+
+  test("returns unavailable selected quotes before seed or trusted maintenance", async () => {
+    const pool = selectedActiveClReplayPool();
+    const rows = quoteClReplayRowsForPool(pool);
+    const missingResponse = await handleFamePoolQuoteBatchRequest({
+      request: {
+        currentBlock: 125,
+        quotes: [
+          {
+            poolId: pool.id,
+            tokenIn: pool.token0,
+            tokenOut: pool.token1,
+            amountIn: "1000000",
+          },
+        ],
+      },
+      tableName: "PoolState",
+      db: new BatchStateDb([]),
+      producerMaxFreshnessBlocks: 120,
+    });
+    const untrustedResponse = await handleFamePoolQuoteBatchRequest({
+      request: {
+        currentBlock: 125,
+        quotes: [
+          {
+            poolId: pool.id,
+            tokenIn: pool.token0,
+            tokenOut: pool.token1,
+            amountIn: "1000000",
+          },
+        ],
+      },
+      tableName: "PoolState",
+      db: new BatchStateDb([
+        warmingMaintenanceForReplayRows(pool, rows),
+        rows.latest,
+        ...rows.bitmapChunks,
+        ...rows.tickChunks,
+      ]),
+      producerMaxFreshnessBlocks: 120,
+    });
+
+    expect(missingResponse.quotes[0]).toMatchObject({
+      status: "unavailable",
+      reason: "missing-indexed-state",
+      poolId: pool.id,
+      poolAddress: pool.poolAddress,
+    });
+    expect(untrustedResponse.quotes[0]).toMatchObject({
+      status: "unavailable",
+      reason: "producer-untrusted",
+      poolId: pool.id,
+      observedThroughBlock: 120,
+      producerStatus: "warming",
+      producerReason: "shadow-not-promoted",
+    });
+  });
+
   test("matches the golden compact reserve quote fixture for every quote-model pool", async () => {
     const fixtureBytes = readFileSync(
       new URL("./fixtures/pool-quotes-v1.json", import.meta.url),
@@ -701,6 +1726,18 @@ describe("FAME pool-state API contract", () => {
     }
   });
 
+  test("documents producer-untrusted compact quote fixture examples", () => {
+    const [candidateProducerUntrusted] = poolQuotesFixtureUnavailableExamples();
+
+    expect(candidateProducerUntrusted).toMatchObject({
+      status: "unavailable",
+      reason: "producer-untrusted",
+      poolId: "slipstream-basedflick-fame",
+      producerStatus: "warming",
+      producerReason: "shadow-not-promoted",
+    });
+  });
+
   test("quotes reserve and Slipstream compact rows in one batch", async () => {
     const reservePool = quotePool("uniswap-v2-fame-direct");
     const clPool = clReplayPool();
@@ -724,6 +1761,7 @@ describe("FAME pool-state API contract", () => {
         ],
       },
       tableName: "PoolState",
+      registry: registryWithPools([reservePool, clPool]),
       db: new BatchStateDb([
         stateForPool(reservePool, 120, {
           reserve0: 1000n,
@@ -914,6 +1952,7 @@ describe("FAME pool-state API contract", () => {
         ],
       },
       tableName: "PoolState",
+      registry: registryWithPools([pool]),
       db,
       producerMaxFreshnessBlocks: 120,
     });
@@ -949,6 +1988,7 @@ describe("FAME pool-state API contract", () => {
         ],
       },
       tableName: "PoolState",
+      registry: registryWithPools([pool]),
       db: new BatchStateDb([
         trustedMaintenanceForReplayRows(pool, rows),
         rows.latest,
@@ -968,8 +2008,11 @@ describe("FAME pool-state API contract", () => {
   test("returns unavailable CL quotes for untrusted producer maintenance without loading chunks", async () => {
     const pool = clReplayPool();
     const rows = quoteClReplayRowsForPool(pool);
+    const maintenance = warmingMaintenanceForReplayRows(pool, rows);
+    maintenance.reason =
+      'response body {"token":"unit-secret"} https://rpc.example/raw';
     const db = new BatchStateDb([
-      warmingMaintenanceForReplayRows(pool, rows),
+      maintenance,
       rows.latest,
       ...rows.bitmapChunks,
       ...rows.tickChunks,
@@ -987,6 +2030,7 @@ describe("FAME pool-state API contract", () => {
         ],
       },
       tableName: "PoolState",
+      registry: registryWithPools([pool]),
       db,
       producerMaxFreshnessBlocks: 120,
     });
@@ -997,8 +2041,10 @@ describe("FAME pool-state API contract", () => {
       poolId: pool.id,
       observedThroughBlock: 120,
       producerStatus: "warming",
-      producerReason: "shadow-not-promoted",
+      producerReason: "redacted-reason",
     });
+    expect(JSON.stringify(response)).not.toContain("unit-secret");
+    expect(JSON.stringify(response)).not.toContain("rpc.example");
     expect(db.readCount).toBe(2);
   });
 
@@ -1042,7 +2088,7 @@ describe("FAME pool-state API contract", () => {
     expect(db.readCount).toBe(0);
   });
 
-  test("rejects oversized CL quote amount strings before DynamoDB access", async () => {
+  test("rejects zero and oversized CL quote amount strings before DynamoDB access", async () => {
     const pool = clReplayPool();
     const db = new BatchStateDb([]);
 
@@ -1064,6 +2110,26 @@ describe("FAME pool-state API contract", () => {
         producerMaxFreshnessBlocks: 120,
       }),
     ).rejects.toThrow(/uint256 decimal string/);
+    expect(db.readCount).toBe(0);
+
+    await expect(
+      handleFamePoolQuoteBatchRequest({
+        request: {
+          currentBlock: 125,
+          quotes: [
+            {
+              poolId: pool.id,
+              tokenIn: pool.token0,
+              tokenOut: pool.token1,
+              amountIn: "0",
+            },
+          ],
+        },
+        tableName: "PoolState",
+        db,
+        producerMaxFreshnessBlocks: 120,
+      }),
+    ).rejects.toThrow(/positive uint256 decimal string/);
     expect(db.readCount).toBe(0);
   });
 
@@ -1109,6 +2175,7 @@ describe("FAME pool-state API contract", () => {
         pools: [{ poolId: pool.id }],
       },
       tableName: "PoolState",
+      registry: registryWithPools([pool]),
       db: new BatchStateDb([rows.latest, ...rows.bitmapChunks]),
       producerMaxFreshnessBlocks: 120,
     });
@@ -1131,6 +2198,7 @@ describe("FAME pool-state API contract", () => {
         pools: [{ poolId: pool.id }],
       },
       tableName: "PoolState",
+      registry: registryWithPools([pool]),
       db,
       producerMaxFreshnessBlocks: 120,
     });
@@ -1161,6 +2229,7 @@ describe("FAME pool-state API contract", () => {
         pools: [{ poolId: pool.id }],
       },
       tableName: "PoolState",
+      registry: registryWithPools([pool]),
       db,
       producerMaxFreshnessBlocks: 120,
     });
@@ -1176,6 +2245,167 @@ describe("FAME pool-state API contract", () => {
     expect(db.readCount).toBe(1);
   });
 
+  test("returns fresh V4 replay state only through the V4 replay surface", async () => {
+    const pool = v4ClReplayPool();
+    const rows = v4ClReplayRowsForPool(pool);
+    const db = new BatchStateDb([
+      rows.latest,
+      ...rows.bitmapChunks,
+      ...rows.tickChunks,
+    ]);
+    const response = await handleFamePoolStateBatchRequest({
+      request: {
+        currentBlock: 125,
+        stateSurfaces: ["v4-cl-replay-v1"],
+        pools: [{ poolId: pool.id }],
+      },
+      tableName: "PoolState",
+      registry: registryWithPools([pool]),
+      db,
+      producerMaxFreshnessBlocks: 120,
+    });
+
+    expect(response.pools[0]).toMatchObject({
+      status: "fresh",
+      stateKind: "v4-cl-replay-v1",
+      poolId: pool.id,
+      poolKey: pool.poolKey,
+      stateViewAddress: pool.stateViewAddress,
+      venueFamily: "UniswapV4",
+      tick: -17_400,
+      liquidity: "8888",
+      lpFee: "30000",
+      protocolFee: "0",
+      feeSource: "v4-slot0",
+      source: "uniswap-v4-state-view",
+      zoraProvenance: verifiedV4ZoraProvenance(pool),
+      observedThroughBlock: 120,
+      bitmapWordCount: 1,
+      initializedTickCount: 1,
+      bitmapWords: [{ wordPosition: -1, bitmap: expect.any(String) }],
+      initializedTicks: [
+        { tick: -17_400, liquidityGross: "30", liquidityNet: "10" },
+      ],
+    });
+    expect(response.pools[0]).not.toHaveProperty("poolAddress");
+    expect(db.readCount).toBe(2);
+
+    const slipstreamSurfaceResponse = await handleFamePoolStateBatchRequest({
+      request: {
+        currentBlock: 125,
+        stateSurfaces: ["cl-replay-v1"],
+        pools: [{ poolId: pool.id }],
+      },
+      tableName: "PoolState",
+      registry: registryWithPools([pool]),
+      db,
+      producerMaxFreshnessBlocks: 120,
+    });
+    expect(slipstreamSurfaceResponse.pools[0]).toEqual({
+      status: "unsupported",
+      poolId: pool.id,
+      chainId: pool.chainId,
+      poolAddress: null,
+      unsupportedReason: "concentrated-liquidity",
+    });
+  });
+
+  test("returns unknown for V4 replay rows with mismatched provenance", async () => {
+    const pool = v4ClReplayPool();
+    const rows = v4ClReplayRowsForPool(pool);
+    const response = await handleFamePoolStateBatchRequest({
+      request: {
+        currentBlock: 125,
+        stateSurfaces: ["v4-cl-replay-v1"],
+        pools: [{ poolId: pool.id }],
+      },
+      tableName: "PoolState",
+      registry: registryWithPools([pool]),
+      db: new BatchStateDb([
+        {
+          ...rows.latest,
+          zoraProvenance: {
+            ...verifiedV4ZoraProvenance(pool),
+            coinAddress: pool.token0,
+          },
+        },
+        ...rows.bitmapChunks,
+        ...rows.tickChunks,
+      ]),
+      producerMaxFreshnessBlocks: 120,
+    });
+
+    expect(response.pools[0]).toEqual({
+      status: "unknown",
+      requested: { poolId: pool.id },
+      reason: "missing-indexed-state",
+    });
+  });
+
+  test("returns unknown for V4 replay rows with mismatched reviewed evidence kind", async () => {
+    const pool = v4ClReplayPool("uniswap-v4-zora-eth");
+    const rows = v4ClReplayRowsForPool(pool);
+    const response = await handleFamePoolStateBatchRequest({
+      request: {
+        currentBlock: 125,
+        stateSurfaces: ["v4-cl-replay-v1"],
+        pools: [{ poolId: pool.id }],
+      },
+      tableName: "PoolState",
+      registry: registryWithPools([pool]),
+      db: new BatchStateDb([
+        {
+          ...rows.latest,
+          reviewedPoolEvidence: {
+            ...rows.latest.reviewedPoolEvidence,
+            kind: "zora-protocol-pool",
+          },
+        },
+        ...rows.bitmapChunks,
+        ...rows.tickChunks,
+      ]),
+      producerMaxFreshnessBlocks: 120,
+    });
+
+    expect(response.pools[0]).toEqual({
+      status: "unknown",
+      requested: { poolId: pool.id },
+      reason: "missing-indexed-state",
+    });
+  });
+
+  test("returns stale V4 replay metadata without loading tick chunks", async () => {
+    const pool = v4ClReplayPool();
+    const rows = v4ClReplayRowsForPool(pool);
+    const db = new BatchStateDb([rows.latest]);
+    const response = await handleFamePoolStateBatchRequest({
+      request: {
+        currentBlock: 500,
+        stateSurfaces: ["v4-cl-replay-v1"],
+        pools: [{ poolId: pool.id }],
+      },
+      tableName: "PoolState",
+      registry: registryWithPools([pool]),
+      db,
+      producerMaxFreshnessBlocks: 120,
+    });
+
+    expect(response.pools[0]).toMatchObject({
+      status: "stale",
+      stateKind: "v4-cl-replay-v1",
+      poolId: pool.id,
+      poolKey: pool.poolKey,
+      stateViewAddress: pool.stateViewAddress,
+      observedThroughBlock: 120,
+      bitmapWordCount: 1,
+      initializedTickCount: 1,
+    });
+    expect(response.pools[0]).not.toHaveProperty("bitmapWords");
+    expect(response.pools[0]).not.toHaveProperty("initializedTicks");
+    expect(response.pools[0]).not.toHaveProperty("poolAddress");
+    expect(db.readCount).toBe(1);
+  });
+
   test("does not expose CL replay arrays without replay opt-in", async () => {
     const pool = clReplayPool();
     const rows = clReplayRowsForPool(pool);
@@ -1186,6 +2416,7 @@ describe("FAME pool-state API contract", () => {
         pools: [{ poolId: pool.id }],
       },
       tableName: "PoolState",
+      registry: registryWithPools([pool]),
       db: new BatchStateDb([
         clHeadStateForPool(pool, 120),
         rows.latest,
@@ -1213,6 +2444,7 @@ describe("FAME pool-state API contract", () => {
         pools: [{ poolId: pool.id }],
       },
       tableName: "PoolState",
+      registry: registryWithPools([pool]),
       db: new BatchStateDb([clHeadStateForPool(pool, 120, "stale-registry")]),
       producerMaxFreshnessBlocks: 120,
     });
@@ -1233,6 +2465,7 @@ describe("FAME pool-state API contract", () => {
         pools: [{ poolId: pool.id }],
       },
       tableName: "PoolState",
+      registry: registryWithPools([pool]),
       db: new BatchStateDb([
         {
           ...clHeadStateForPool(pool, 120),
@@ -1258,6 +2491,7 @@ describe("FAME pool-state API contract", () => {
         pools: [{ poolId: pool.id }],
       },
       tableName: "PoolState",
+      registry: registryWithPools([pool]),
       db: new BatchStateDb([clHeadStateForPool(pool, 130)]),
       producerMaxFreshnessBlocks: 120,
     });
