@@ -4,6 +4,7 @@ import {
   FAME_POOL_STATE_CL_REPLAY_MAX_RANGE_BLOCKS,
   FAME_POOL_STATE_CL_REPLAY_TRUST_PROMOTION,
   FAME_POOL_STATE_CONFIRMATION_BLOCKS,
+  FAME_POOL_STATE_RPC_GET_LOGS_BLOCK_RANGE,
   FAME_POOL_STATE_TABLE_NAME,
 } from "../config.ts";
 import {
@@ -50,7 +51,11 @@ function defaultIndexPools({
   v4ZoraProvenance?: FamePoolStateV4ZoraProvenanceEvidence;
 }): Promise<FamePoolStateIndexerResult> {
   return indexFamePoolStates({
-    client: client ?? createViemPoolStateIndexerClient(baseClient),
+    client:
+      client ??
+      createViemPoolStateIndexerClient(baseClient, {
+        getLogsBlockRange: FAME_POOL_STATE_RPC_GET_LOGS_BLOCK_RANGE,
+      }),
     tableName,
     confirmationBlocks,
     clReplayMaintenanceMode,

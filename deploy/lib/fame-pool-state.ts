@@ -24,6 +24,7 @@ export interface FamePoolStateProps {
   readonly clReplayMaintenanceMode?: "checkpoint" | "steady-state" | "repair";
   readonly clReplayTrustPromotion?: boolean;
   readonly clReplayMaxRangeBlocks?: number;
+  readonly rpcGetLogsBlockRange?: number;
   readonly schedule?: cdk.Duration;
 }
 
@@ -143,6 +144,8 @@ export class FamePoolState extends Construct {
       (props.clReplayTrustPromotion ?? true) ? "true" : "false";
     const clReplayMaxRangeBlocks =
       props.clReplayMaxRangeBlocks?.toString() ?? "1000";
+    const rpcGetLogsBlockRange =
+      props.rpcGetLogsBlockRange?.toString() ?? "500";
 
     const table = new dynamodb.Table(this, "FamePoolState", {
       partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
@@ -182,6 +185,7 @@ export class FamePoolState extends Construct {
         FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE: clReplayMaintenanceMode,
         FAME_POOL_STATE_CL_REPLAY_TRUST_PROMOTION: clReplayTrustPromotion,
         FAME_POOL_STATE_CL_REPLAY_MAX_RANGE_BLOCKS: clReplayMaxRangeBlocks,
+        FAME_POOL_STATE_RPC_GET_LOGS_BLOCK_RANGE: rpcGetLogsBlockRange,
       },
     });
     table.grantReadWriteData(indexerLambda);

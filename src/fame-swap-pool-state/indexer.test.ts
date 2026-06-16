@@ -16,6 +16,7 @@ import {
   V4ClReplaySwapEventAbi,
   applyClReplayDeltas,
   applyV4ClReplayDeltas,
+  createViemPoolStateIndexerClient,
   FameClReplayLogNormalizationError,
   FameClReplaySnapshotIndexingError,
   getSlipstreamClReplaySnapshot,
@@ -29,7 +30,6 @@ import {
   type FameClReplaySnapshotRead,
   type FameV4ClReplaySnapshotRead,
   type FamePoolStateIndexerClient,
-  type FamePoolStateSyncLog,
   type FameV4ClReplayRawLog,
   type SlipstreamReplayReadClient,
   type UniswapV4ReplayReadClient,
@@ -227,7 +227,6 @@ class InMemoryPoolStateDb implements PoolStateDocumentClient {
 }
 
 class FakePoolStateClient implements FamePoolStateIndexerClient {
-  public requestedAddresses: Address[] = [];
   public reservesByAddress = new Map<
     string,
     readonly [bigint, bigint, number]
@@ -259,10 +258,7 @@ class FakePoolStateClient implements FamePoolStateIndexerClient {
     "V4 CL replay read failed",
   );
 
-  constructor(
-    private readonly logs: readonly FamePoolStateSyncLog[],
-    private readonly latestBlock: bigint,
-  ) {}
+  constructor(private readonly latestBlock: bigint) {}
 
   chain = {
     id: 8453,
@@ -284,13 +280,6 @@ class FakePoolStateClient implements FamePoolStateIndexerClient {
           "0x2222222222222222222222222222222222222222222222222222222222222222",
       }
     );
-  }
-
-  async getSyncLogs(options: {
-    pools: readonly (FamePoolStateRegistryEntry & { poolAddress: Address })[];
-  }): Promise<readonly FamePoolStateSyncLog[]> {
-    this.requestedAddresses = options.pools.map((pool) => pool.poolAddress);
-    return this.logs;
   }
 
   async getClReplayLogs(): Promise<readonly FameClReplayRawLog[]> {
@@ -844,6 +833,25 @@ function strictTopics(topics: ReturnType<typeof encodeEventTopics>): Hex[] {
   });
 }
 
+type CapturedGetLogsOptions = {
+  address?: Address | readonly Address[];
+  fromBlock: bigint;
+  toBlock: bigint;
+  events?: readonly { name: string }[];
+};
+
+function viemClientWithCapturedLogs(
+  calls: CapturedGetLogsOptions[],
+): Parameters<typeof createViemPoolStateIndexerClient>[0] {
+  return {
+    chain: { id: 8453 },
+    async getLogs(options: CapturedGetLogsOptions) {
+      calls.push(options);
+      return [];
+    },
+  } as unknown as Parameters<typeof createViemPoolStateIndexerClient>[0];
+}
+
 function replayLogFixture(
   pool: FameClReplayRegistryEntry,
   options: {
@@ -1199,6 +1207,79 @@ function normalizedV4EventBase(pool: FameV4ClReplayRegistryEntry) {
 }
 
 describe("FAME pool-state indexer", () => {
+  test("filters Slipstream replay logs and defaults to 500-block batches", async () => {
+    const pool = clReplayPool();
+    const getLogsCalls: CapturedGetLogsOptions[] = [];
+    const client = createViemPoolStateIndexerClient(
+      viemClientWithCapturedLogs(getLogsCalls),
+    );
+
+    await client.getClReplayLogs({
+      pools: [pool],
+      fromBlock: 1n,
+      toBlock: 1_001n,
+    });
+
+    expect(getLogsCalls.map((call) => [call.fromBlock, call.toBlock])).toEqual([
+      [1n, 500n],
+      [501n, 1_000n],
+      [1_001n, 1_001n],
+    ]);
+    expect(getLogsCalls.map((call) => call.address)).toEqual([
+      [pool.poolAddress],
+      [pool.poolAddress],
+      [pool.poolAddress],
+    ]);
+    expect(
+      getLogsCalls.map((call) => call.events?.map((event) => event.name)),
+    ).toEqual([
+      ["Swap", "Mint", "Burn", "Collect"],
+      ["Swap", "Mint", "Burn", "Collect"],
+      ["Swap", "Mint", "Burn", "Collect"],
+    ]);
+  });
+
+  test("uses the configured replay log batch range for V4 scans", async () => {
+    const pool = v4ClReplayPool();
+    const getLogsCalls: CapturedGetLogsOptions[] = [];
+    const client = createViemPoolStateIndexerClient(
+      viemClientWithCapturedLogs(getLogsCalls),
+      { getLogsBlockRange: 250 },
+    );
+
+    await client.getV4ClReplayLogs({
+      pools: [pool],
+      fromBlock: 10n,
+      toBlock: 510n,
+    });
+
+    expect(getLogsCalls.map((call) => [call.fromBlock, call.toBlock])).toEqual([
+      [10n, 259n],
+      [260n, 509n],
+      [510n, 510n],
+    ]);
+    expect(getLogsCalls.map((call) => call.address)).toEqual([
+      FAME_V4_ZORA_REVIEWED_POOL_SHAPE.poolManager,
+      FAME_V4_ZORA_REVIEWED_POOL_SHAPE.poolManager,
+      FAME_V4_ZORA_REVIEWED_POOL_SHAPE.poolManager,
+    ]);
+    expect(
+      getLogsCalls.map((call) => call.events?.map((event) => event.name)),
+    ).toEqual([
+      ["Swap", "ModifyLiquidity", "Initialize", "Donate"],
+      ["Swap", "ModifyLiquidity", "Initialize", "Donate"],
+      ["Swap", "ModifyLiquidity", "Initialize", "Donate"],
+    ]);
+  });
+
+  test("rejects invalid replay log batch ranges", () => {
+    expect(() =>
+      createViemPoolStateIndexerClient(viemClientWithCapturedLogs([]), {
+        getLogsBlockRange: 0,
+      }),
+    ).toThrow(/getLogsBlockRange/);
+  });
+
   test("decodes Aerodrome Slipstream tick state with staked and reward fields", () => {
     const result = decodeFunctionResult({
       abi: SlipstreamTicksAbi,
@@ -1729,33 +1810,17 @@ describe("FAME pool-state indexer", () => {
     ).toMatchObject({ status: "event-gap", reason: "liquidity-underflow" });
   });
 
-  test("writes Sync reserves, k, observed-through block, and cursor", async () => {
+  test("writes reserve snapshots, k, observed-through block, and cursor", async () => {
     const pool = quotePool("uniswap-v2-fame-direct");
     const db = new InMemoryPoolStateDb();
-    const client = new FakePoolStateClient(
-      [
-        {
-          address: pool.poolAddress,
-          blockNumber: 118n,
-          transactionIndex: 3,
-          logIndex: 5,
-          transactionHash:
-            "0x0000000000000000000000000000000000000000000000000000000000000005",
-          args: {
-            reserve0: 10n,
-            reserve1: 50n,
-          },
-        },
-      ],
-      120n,
-    );
+    const client = new FakePoolStateClient(120n);
     client.reservesByAddress.set(pool.poolAddress.toLowerCase(), [10n, 50n, 0]);
 
     const result = await indexFamePoolStates({
       client,
       db,
       tableName: "PoolState",
-      registry: registryFixture(),
+      registry: registryWithPools([pool]),
       now: new Date("2026-05-17T00:00:00.000Z"),
     });
 
@@ -1763,8 +1828,9 @@ describe("FAME pool-state indexer", () => {
       durationMs: expect.any(Number),
       fromBlock: 118,
       observedThroughBlock: 118,
-      syncEvents: 1,
-      writtenEvents: 1,
+      syncEvents: 0,
+      writtenEvents: 0,
+      ignoredEvents: 0,
       seededPools: 1,
       reconciledPools: 0,
     });
@@ -1774,7 +1840,7 @@ describe("FAME pool-state indexer", () => {
       k: "500",
       lastReserveChangeBlock: 118,
       observedThroughBlock: 118,
-      source: "sync-event",
+      source: "getReserves",
     });
     expect(db.getCursor(8453)).toMatchObject({
       observedThroughBlock: 118,
@@ -1785,7 +1851,7 @@ describe("FAME pool-state indexer", () => {
     const uniswapPool = quotePool("uniswap-v2-fame-direct");
     const solidlyPool = quotePool("scale-equalizer-weth-fame");
     const db = new InMemoryPoolStateDb();
-    const client = new FakePoolStateClient([], 120n);
+    const client = new FakePoolStateClient(120n);
 
     const result = await indexFamePoolStates({
       client,
@@ -1796,10 +1862,7 @@ describe("FAME pool-state indexer", () => {
     });
 
     expect(result.seededPools).toBe(2);
-    expect(client.requestedAddresses).toEqual([
-      uniswapPool.poolAddress,
-      solidlyPool.poolAddress,
-    ]);
+    expect(result.syncEvents).toBe(0);
     expect(db.getLatest(uniswapPool)).toMatchObject({
       reserve0: "1000",
       reserve1: "2000",
@@ -1819,7 +1882,7 @@ describe("FAME pool-state indexer", () => {
   test("writes complete CL head snapshots at the safe block", async () => {
     const clPool = clHeadPool("uniswap-v3-usdc-weth-5bps");
     const db = new InMemoryPoolStateDb();
-    const client = new FakePoolStateClient([], 120n);
+    const client = new FakePoolStateClient(120n);
     client.clHeadSnapshotsByPoolId.set(clPool.id, {
       sqrtPriceX96: 2n ** 96n,
       tick: -12,
@@ -1854,7 +1917,7 @@ describe("FAME pool-state indexer", () => {
   test("writes complete CL replay snapshots for the one replay-capable pool", async () => {
     const replayPool = clReplayPool();
     const db = new InMemoryPoolStateDb();
-    const client = new FakePoolStateClient([], 120n);
+    const client = new FakePoolStateClient(120n);
     client.clReplaySnapshotsByPoolId.set(replayPool.id, {
       sqrtPriceX96: 2n ** 96n,
       tick: 199_900,
@@ -1947,7 +2010,7 @@ describe("FAME pool-state indexer", () => {
   test("writes V4 replay snapshots only with verified Zora provenance", async () => {
     const v4Pool = v4ClReplayPool();
     const db = new InMemoryPoolStateDb();
-    const client = new FakePoolStateClient([], 120n);
+    const client = new FakePoolStateClient(120n);
     client.v4ClReplaySnapshotsByPoolId.set(v4Pool.id, {
       sqrtPriceX96: 2n ** 96n,
       tick: -17_400,
@@ -2038,7 +2101,7 @@ describe("FAME pool-state indexer", () => {
   test("writes no-hook ZORA/ETH V4 replay snapshots without Zora provenance", async () => {
     const v4Pool = v4ClReplayPool("uniswap-v4-zora-eth");
     const db = new InMemoryPoolStateDb();
-    const client = new FakePoolStateClient([], 120n);
+    const client = new FakePoolStateClient(120n);
     client.v4ClReplaySnapshotsByPoolId.set(v4Pool.id, {
       sqrtPriceX96: 2n ** 96n,
       tick: -1_200,
@@ -2100,15 +2163,13 @@ describe("FAME pool-state indexer", () => {
         protocolFeeStatus: "zero",
       }),
     });
-    expect(db.getLatestV4ClReplay(v4Pool)).not.toHaveProperty(
-      "zoraProvenance",
-    );
+    expect(db.getLatestV4ClReplay(v4Pool)).not.toHaveProperty("zoraProvenance");
   });
 
   test("seeds approved V4 maintenance once then advances from PoolManager deltas", async () => {
     const v4Pool = v4ClReplayPool();
     const db = new InMemoryPoolStateDb();
-    const seedClient = new FakePoolStateClient([], 120n);
+    const seedClient = new FakePoolStateClient(120n);
     seedClient.v4ClReplaySnapshotsByPoolId.set(v4Pool.id, {
       sqrtPriceX96: 2n ** 96n,
       tick: -17_400,
@@ -2168,7 +2229,7 @@ describe("FAME pool-state indexer", () => {
       initializedTickCount: 2,
     });
 
-    const deltaClient = new FakePoolStateClient([], 123n);
+    const deltaClient = new FakePoolStateClient(123n);
     const unrelatedV4Log = swapV4ReplayLog(v4Pool, {
       blockNumber: 120n,
       transactionIndex: 1,
@@ -2234,7 +2295,7 @@ describe("FAME pool-state indexer", () => {
   test("repairs approved V4 maintenance from a full snapshot without a trusted cursor", async () => {
     const v4Pool = v4ClReplayPool();
     const db = new InMemoryPoolStateDb();
-    const repairClient = new FakePoolStateClient([], 120n);
+    const repairClient = new FakePoolStateClient(120n);
     repairClient.v4ClReplaySnapshotsByPoolId.set(v4Pool.id, {
       sqrtPriceX96: 2n ** 96n,
       tick: -17_400,
@@ -2297,7 +2358,7 @@ describe("FAME pool-state indexer", () => {
   test("maintains the selected Slipstream candidate without publishing quoteable replay state", async () => {
     const candidatePool = clReplayCandidatePool();
     const db = new InMemoryPoolStateDb();
-    const client = new FakePoolStateClient([], 120n);
+    const client = new FakePoolStateClient(120n);
     client.clReplaySnapshotsByPoolId.set(candidatePool.id, {
       sqrtPriceX96: 2n ** 96n,
       tick: 200_000,
@@ -2359,7 +2420,7 @@ describe("FAME pool-state indexer", () => {
   test("publishes selected Slipstream replay rows only after compact quote activation", async () => {
     const promotedPool = clReplayPromotedCandidatePool();
     const db = new InMemoryPoolStateDb();
-    const client = new FakePoolStateClient([], 120n);
+    const client = new FakePoolStateClient(120n);
     client.clReplaySnapshotsByPoolId.set(promotedPool.id, {
       sqrtPriceX96: 2n ** 96n,
       tick: 200_000,
@@ -2410,7 +2471,7 @@ describe("FAME pool-state indexer", () => {
   test("requires a complete checkpoint snapshot before trusting selected candidate maintenance", async () => {
     const candidatePool = clReplayCandidatePool();
     const db = new InMemoryPoolStateDb();
-    const client = new FakePoolStateClient([], 120n);
+    const client = new FakePoolStateClient(120n);
     client.failingClReplayPoolId = candidatePool.id;
 
     const result = await indexFamePoolStates({
@@ -2442,7 +2503,7 @@ describe("FAME pool-state indexer", () => {
   test("keeps selected candidate steady-state untrusted without a matching trusted cursor", async () => {
     const candidatePool = clReplayCandidatePool();
     const db = new InMemoryPoolStateDb();
-    const seedClient = new FakePoolStateClient([], 120n);
+    const seedClient = new FakePoolStateClient(120n);
     seedClient.clReplaySnapshotsByPoolId.set(candidatePool.id, {
       sqrtPriceX96: 2n ** 96n,
       tick: 200_000,
@@ -2481,7 +2542,7 @@ describe("FAME pool-state indexer", () => {
     });
 
     const result = await indexFamePoolStates({
-      client: new FakePoolStateClient([], 123n),
+      client: new FakePoolStateClient(123n),
       db,
       tableName: "PoolState",
       registry: registryWithPools([candidatePool]),
@@ -2514,7 +2575,7 @@ describe("FAME pool-state indexer", () => {
       "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     );
     const db = new InMemoryPoolStateDb();
-    const seedClient = new FakePoolStateClient([], 120n);
+    const seedClient = new FakePoolStateClient(120n);
     seedClient.clReplaySnapshotsByPoolId.set(replayPool.id, {
       sqrtPriceX96: 2n ** 96n,
       tick: 199_900,
@@ -2541,7 +2602,7 @@ describe("FAME pool-state indexer", () => {
       now: new Date("2026-05-20T00:00:00.000Z"),
     });
 
-    const bootstrapClient = new FakePoolStateClient([], 123n);
+    const bootstrapClient = new FakePoolStateClient(123n);
     bootstrapClient.clReplaySnapshotsByPoolId.set(replayPool.id, {
       sqrtPriceX96: 2n ** 96n,
       tick: 200_000,
@@ -2611,7 +2672,7 @@ describe("FAME pool-state indexer", () => {
 
     await expect(
       indexFamePoolStates({
-        client: new FakePoolStateClient([], 120n),
+        client: new FakePoolStateClient(120n),
         db: new InMemoryPoolStateDb(),
         tableName: "PoolState",
         registry: registryWithPools([candidatePool]),
@@ -2624,7 +2685,7 @@ describe("FAME pool-state indexer", () => {
   test("advances trusted candidate maintenance only when the cursor block is canonical", async () => {
     const candidatePool = clReplayCandidatePool();
     const db = new InMemoryPoolStateDb();
-    const seedClient = new FakePoolStateClient([], 120n);
+    const seedClient = new FakePoolStateClient(120n);
     seedClient.clReplaySnapshotsByPoolId.set(candidatePool.id, {
       sqrtPriceX96: 2n ** 96n,
       tick: 200_000,
@@ -2651,7 +2712,7 @@ describe("FAME pool-state indexer", () => {
       now: new Date("2026-05-20T00:00:00.000Z"),
     });
 
-    const steadyClient = new FakePoolStateClient([], 123n);
+    const steadyClient = new FakePoolStateClient(123n);
     const steadyResult = await indexFamePoolStates({
       client: steadyClient,
       db,
@@ -2683,7 +2744,7 @@ describe("FAME pool-state indexer", () => {
       liquidity: "7777",
     });
 
-    const mismatchClient = new FakePoolStateClient([], 124n);
+    const mismatchClient = new FakePoolStateClient(124n);
     mismatchClient.blockIdentitiesByNumber.set(121, {
       hash: "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
       parentHash:
@@ -2711,7 +2772,7 @@ describe("FAME pool-state indexer", () => {
   test("promotes checkpoint-clean CL replay state and advances it in steady-state without full snapshots", async () => {
     const replayPool = clReplayPool();
     const db = new InMemoryPoolStateDb();
-    const seedClient = new FakePoolStateClient([], 120n);
+    const seedClient = new FakePoolStateClient(120n);
     seedClient.clReplaySnapshotsByPoolId.set(replayPool.id, {
       sqrtPriceX96: 2n ** 96n,
       tick: 199_900,
@@ -2758,7 +2819,7 @@ describe("FAME pool-state indexer", () => {
       cursorBlock: 118,
     });
 
-    const deltaClient = new FakePoolStateClient([], 123n);
+    const deltaClient = new FakePoolStateClient(123n);
     deltaClient.clReplayLogs = [
       swapReplayLog(replayPool, {
         blockNumber: 120n,
@@ -2834,7 +2895,7 @@ describe("FAME pool-state indexer", () => {
       }),
     });
 
-    const checkpointClient = new FakePoolStateClient([], 120n);
+    const checkpointClient = new FakePoolStateClient(120n);
     checkpointClient.clReplaySnapshotsByPoolId.set(replayPool.id, {
       sqrtPriceX96: 2n ** 96n,
       tick: 199_900,
@@ -2888,7 +2949,7 @@ describe("FAME pool-state indexer", () => {
   test("keeps checkpoint trust when the dynamic fee changes without liquidity drift", async () => {
     const replayPool = clReplayPool();
     const db = new InMemoryPoolStateDb();
-    const seedClient = new FakePoolStateClient([], 120n);
+    const seedClient = new FakePoolStateClient(120n);
     seedClient.clReplaySnapshotsByPoolId.set(replayPool.id, {
       sqrtPriceX96: 2n ** 96n,
       tick: 199_900,
@@ -2915,7 +2976,7 @@ describe("FAME pool-state indexer", () => {
       now: new Date("2026-05-20T00:00:00.000Z"),
     });
 
-    const checkpointClient = new FakePoolStateClient([], 123n);
+    const checkpointClient = new FakePoolStateClient(123n);
     checkpointClient.clReplaySnapshotsByPoolId.set(replayPool.id, {
       sqrtPriceX96: 2n ** 96n,
       tick: 199_900,
@@ -2963,7 +3024,7 @@ describe("FAME pool-state indexer", () => {
   test("steady-state refreshes dynamic fee without full replay snapshots", async () => {
     const replayPool = clReplayPool();
     const db = new InMemoryPoolStateDb();
-    const seedClient = new FakePoolStateClient([], 120n);
+    const seedClient = new FakePoolStateClient(120n);
     seedClient.clReplaySnapshotsByPoolId.set(replayPool.id, {
       sqrtPriceX96: 2n ** 96n,
       tick: 199_900,
@@ -2990,7 +3051,7 @@ describe("FAME pool-state indexer", () => {
       now: new Date("2026-05-20T00:00:00.000Z"),
     });
 
-    const deltaClient = new FakePoolStateClient([], 123n);
+    const deltaClient = new FakePoolStateClient(123n);
     deltaClient.clReplayFeesByPoolId.set(replayPool.id, 712n);
 
     const result = await indexFamePoolStates({
@@ -3027,7 +3088,7 @@ describe("FAME pool-state indexer", () => {
   test("marks checkpoint drift failed and repairs from a complete snapshot", async () => {
     const replayPool = clReplayPool();
     const db = new InMemoryPoolStateDb();
-    const seedClient = new FakePoolStateClient([], 120n);
+    const seedClient = new FakePoolStateClient(120n);
     seedClient.clReplaySnapshotsByPoolId.set(replayPool.id, {
       sqrtPriceX96: 2n ** 96n,
       tick: 199_900,
@@ -3054,7 +3115,7 @@ describe("FAME pool-state indexer", () => {
       now: new Date("2026-05-20T00:00:00.000Z"),
     });
 
-    const checkpointClient = new FakePoolStateClient([], 120n);
+    const checkpointClient = new FakePoolStateClient(120n);
     checkpointClient.clReplaySnapshotsByPoolId.set(replayPool.id, {
       sqrtPriceX96: 2n ** 96n,
       tick: 199_900,
@@ -3121,7 +3182,7 @@ describe("FAME pool-state indexer", () => {
   test("records CL replay failures without blocking CL head snapshots", async () => {
     const replayPool = clReplayPool();
     const db = new InMemoryPoolStateDb();
-    const client = new FakePoolStateClient([], 120n);
+    const client = new FakePoolStateClient(120n);
     client.failingClReplayPoolId = replayPool.id;
     client.clHeadSnapshotsByPoolId.set(replayPool.id, {
       sqrtPriceX96: 123n,
@@ -3162,7 +3223,7 @@ describe("FAME pool-state indexer", () => {
     const failedClPool = clHeadPool("uniswap-v3-usdc-weth-5bps");
     const replayPool = clReplayPool();
     const db = new InMemoryPoolStateDb();
-    const client = new FakePoolStateClient([], 120n);
+    const client = new FakePoolStateClient(120n);
     client.failingClHeadPoolId = failedClPool.id;
     client.failingClReplayPoolId = replayPool.id;
     client.failingClHeadError = new Error(
@@ -3231,14 +3292,14 @@ describe("FAME pool-state indexer", () => {
     const db = new InMemoryPoolStateDb();
 
     await indexFamePoolStates({
-      client: new FakePoolStateClient([], 120n),
+      client: new FakePoolStateClient(120n),
       db,
       tableName: "PoolState",
       registry: registryFixture(),
       now: new Date("2026-05-17T00:00:00.000Z"),
     });
 
-    const client = new FakePoolStateClient([], 121n);
+    const client = new FakePoolStateClient(121n);
     client.reservesByAddress.set(uniswapPool.poolAddress.toLowerCase(), [
       1_111n,
       2_222n,
@@ -3272,14 +3333,14 @@ describe("FAME pool-state indexer", () => {
     const db = new InMemoryPoolStateDb();
 
     await indexFamePoolStates({
-      client: new FakePoolStateClient([], 120n),
+      client: new FakePoolStateClient(120n),
       db,
       tableName: "PoolState",
       registry: registryFixture(),
       now: new Date("2026-05-17T00:00:00.000Z"),
     });
 
-    const client = new FakePoolStateClient([], 121n);
+    const client = new FakePoolStateClient(121n);
     client.failingReserveAddress = uniswapPool.poolAddress;
 
     await expect(
@@ -3300,26 +3361,15 @@ describe("FAME pool-state indexer", () => {
     });
   });
 
-  test("does not write Sync rows when later reconciliation reads fail", async () => {
+  test("does not write reserve rows when another reserve read fails", async () => {
     const uniswapPool = quotePool("uniswap-v2-fame-direct");
     const db = new InMemoryPoolStateDb();
-    const client = new FakePoolStateClient(
-      [
-        {
-          address: uniswapPool.poolAddress,
-          blockNumber: 118n,
-          transactionIndex: 0,
-          logIndex: 0,
-          transactionHash:
-            "0x0000000000000000000000000000000000000000000000000000000000000076",
-          args: {
-            reserve0: 300n,
-            reserve1: 400n,
-          },
-        },
-      ],
-      120n,
-    );
+    const client = new FakePoolStateClient(120n);
+    client.reservesByAddress.set(uniswapPool.poolAddress.toLowerCase(), [
+      300n,
+      400n,
+      0,
+    ]);
     client.failingReserveAddress = quotePool(
       "scale-equalizer-weth-fame",
     ).poolAddress;
@@ -3343,7 +3393,7 @@ describe("FAME pool-state indexer", () => {
     const failedClPool = clHeadPool("uniswap-v3-usdc-weth-5bps");
     const writtenClPool = clHeadPool("uniswap-v4-usdc-eth");
     const db = new InMemoryPoolStateDb();
-    const client = new FakePoolStateClient([], 120n);
+    const client = new FakePoolStateClient(120n);
     client.failingClHeadPoolId = failedClPool.id;
     client.clHeadSnapshotsByPoolId.set(writtenClPool.id, {
       sqrtPriceX96: 123n,
@@ -3392,7 +3442,7 @@ describe("FAME pool-state indexer", () => {
   test("does not overwrite same-block CL head state from a different registry source", async () => {
     const clPool = clHeadPool("uniswap-v3-usdc-weth-5bps");
     const db = new InMemoryPoolStateDb();
-    const newerClient = new FakePoolStateClient([], 120n);
+    const newerClient = new FakePoolStateClient(120n);
     newerClient.clHeadSnapshotsByPoolId.set(clPool.id, {
       sqrtPriceX96: 111n,
       tick: 1,
@@ -3420,7 +3470,7 @@ describe("FAME pool-state indexer", () => {
       "sourceRegistryId",
     );
 
-    const staleClient = new FakePoolStateClient([], 120n);
+    const staleClient = new FakePoolStateClient(120n);
     staleClient.clHeadSnapshotsByPoolId.set(clPool.id, {
       sqrtPriceX96: 333n,
       tick: 9,
@@ -3452,7 +3502,7 @@ describe("FAME pool-state indexer", () => {
     const db = new InMemoryPoolStateDb();
 
     await indexFamePoolStates({
-      client: new FakePoolStateClient([], 120n),
+      client: new FakePoolStateClient(120n),
       db,
       tableName: "PoolState",
       registry: registryFixture(),
@@ -3474,7 +3524,7 @@ describe("FAME pool-state indexer", () => {
     };
 
     await indexFamePoolStates({
-      client: new FakePoolStateClient([], 121n),
+      client: new FakePoolStateClient(121n),
       db,
       tableName: "PoolState",
       registry: renamedRegistry,
@@ -3488,43 +3538,11 @@ describe("FAME pool-state indexer", () => {
     });
   });
 
-  test("rejects unknown Sync logs before advancing the cursor", async () => {
-    const db = new InMemoryPoolStateDb();
-    const client = new FakePoolStateClient(
-      [
-        {
-          address: "0x0000000000000000000000000000000000000bad",
-          blockNumber: 118n,
-          transactionIndex: 0,
-          logIndex: 0,
-          transactionHash:
-            "0x0000000000000000000000000000000000000000000000000000000000000006",
-          args: {
-            reserve0: 10n,
-            reserve1: 50n,
-          },
-        },
-      ],
-      120n,
-    );
-
-    await expect(
-      indexFamePoolStates({
-        client,
-        db,
-        tableName: "PoolState",
-        registry: registryFixture(),
-        now: new Date("2026-05-17T00:00:00.000Z"),
-      }),
-    ).rejects.toThrow(/unregistered pool/);
-    expect(db.getCursor(8453)).toBeUndefined();
-  });
-
   test("does not rewind the cursor when an older overlapping run finishes later", async () => {
     const db = new InMemoryPoolStateDb();
 
     await indexFamePoolStates({
-      client: new FakePoolStateClient([], 130n),
+      client: new FakePoolStateClient(130n),
       db,
       tableName: "PoolState",
       registry: registryFixture(),
@@ -3535,7 +3553,7 @@ describe("FAME pool-state indexer", () => {
     });
 
     await indexFamePoolStates({
-      client: new FakePoolStateClient([], 120n),
+      client: new FakePoolStateClient(120n),
       db,
       tableName: "PoolState",
       registry: registryFixture(),
@@ -3546,26 +3564,11 @@ describe("FAME pool-state indexer", () => {
     });
   });
 
-  test("does not lower latest-state freshness when an older run finds a newer event", async () => {
+  test("does not lower latest-state freshness when an older run finds different reserves", async () => {
     const pool = quotePool("uniswap-v2-fame-direct");
     const db = new InMemoryPoolStateDb();
-    const firstClient = new FakePoolStateClient(
-      [
-        {
-          address: pool.poolAddress,
-          blockNumber: 100n,
-          transactionIndex: 0,
-          logIndex: 0,
-          transactionHash:
-            "0x0000000000000000000000000000000000000000000000000000000000000064",
-          args: {
-            reserve0: 100n,
-            reserve1: 200n,
-          },
-        },
-      ],
-      130n,
-    );
+    const registry = registryWithPools([pool]);
+    const firstClient = new FakePoolStateClient(130n);
     firstClient.reservesByAddress.set(pool.poolAddress.toLowerCase(), [
       100n,
       200n,
@@ -3576,43 +3579,34 @@ describe("FAME pool-state indexer", () => {
       client: firstClient,
       db,
       tableName: "PoolState",
-      registry: registryFixture(),
+      registry,
       now: new Date("2026-05-17T00:00:00.000Z"),
     });
     expect(db.getLatest(pool)).toMatchObject({
-      lastReserveChangeBlock: 100,
+      lastReserveChangeBlock: 128,
       observedThroughBlock: 128,
     });
 
+    const olderClient = new FakePoolStateClient(120n);
+    olderClient.reservesByAddress.set(pool.poolAddress.toLowerCase(), [
+      300n,
+      400n,
+      0,
+    ]);
     const result = await indexFamePoolStates({
-      client: new FakePoolStateClient(
-        [
-          {
-            address: pool.poolAddress,
-            blockNumber: 118n,
-            transactionIndex: 0,
-            logIndex: 0,
-            transactionHash:
-              "0x0000000000000000000000000000000000000000000000000000000000000076",
-            args: {
-              reserve0: 300n,
-              reserve1: 400n,
-            },
-          },
-        ],
-        120n,
-      ),
+      client: olderClient,
       db,
       tableName: "PoolState",
-      registry: registryFixture(),
+      registry,
       now: new Date("2026-05-17T00:01:00.000Z"),
     });
 
-    expect(result.ignoredEvents).toBe(1);
+    expect(result.reconciledPools).toBe(0);
+    expect(result.ignoredEvents).toBe(0);
     expect(db.getLatest(pool)).toMatchObject({
       reserve0: "100",
       reserve1: "200",
-      lastReserveChangeBlock: 100,
+      lastReserveChangeBlock: 128,
       observedThroughBlock: 128,
     });
     expect(db.getCursor(8453)).toMatchObject({

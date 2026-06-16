@@ -137,6 +137,7 @@ describe("FamePoolState infrastructure", () => {
           FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE: "steady-state",
           FAME_POOL_STATE_CL_REPLAY_TRUST_PROMOTION: "true",
           FAME_POOL_STATE_CL_REPLAY_MAX_RANGE_BLOCKS: "1000",
+          FAME_POOL_STATE_RPC_GET_LOGS_BLOCK_RANGE: "500",
         }),
       },
       Timeout: 60,
@@ -440,9 +441,7 @@ describe("FamePoolState infrastructure", () => {
     expect(
       () =>
         new FamePoolState(stack, "FamePoolState", {
-          indexerBaseRpcsJson: JSON.stringify([
-            "https://indexer-base.example",
-          ]),
+          indexerBaseRpcsJson: JSON.stringify(["https://indexer-base.example"]),
           serviceToken: "",
         }),
     ).toThrow(/FAME_POOL_STATE_SERVICE_TOKEN must be configured/);
@@ -552,9 +551,7 @@ describe("FamePoolState infrastructure", () => {
     expect(job).toContain("DEPLOY_POOL_STATE_DEV");
     expect(job).toContain('POOL_STATE_ONLY: "true"');
     expect(job).toContain("FAME_POOL_STATE_INDEXER_BASE_RPCS_JSON");
-    expect(job).not.toContain(
-      "BASE_RPCS_JSON: ${{ secrets.BASE_RPCS_JSON }}",
-    );
+    expect(job).not.toContain("BASE_RPCS_JSON: ${{ secrets.BASE_RPCS_JSON }}");
     expect(job).toContain("FAME_POOL_STATE_DEV_SERVICE_TOKEN");
     expect(job).toContain("FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE");
     expect(job).toContain("FAME_POOL_STATE_CL_REPLAY_TRUST_PROMOTION");

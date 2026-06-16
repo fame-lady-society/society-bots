@@ -57,6 +57,9 @@ export class DeployInfraStack extends cdk.Stack {
       clReplayMaxRangeBlocks: Number(
         process.env.FAME_POOL_STATE_CL_REPLAY_MAX_RANGE_BLOCKS ?? "1000",
       ),
+      rpcGetLogsBlockRange: Number(
+        process.env.FAME_POOL_STATE_RPC_GET_LOGS_BLOCK_RANGE ?? "500",
+      ),
     });
 
     const { httpApi } = new HttpApi(this, "SocietyBotREST", {
