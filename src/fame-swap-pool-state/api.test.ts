@@ -51,7 +51,7 @@ type SentCommand = Parameters<PoolStateDocumentClient["send"]>[0];
 
 const ADDRESS_A = "0x0000000000000000000000000000000000000001" as Address;
 const POOL_QUOTES_V1_FIXTURE_SHA256 =
-  "3218b241ffb1752f824c2eb58fc84dfad876927e3fc8716afc1c13a70a424594";
+  "79568c570c8965404cc994919e66c491850535c8fffcf2d6e8188eb8a8322774";
 
 class BatchStateDb implements PoolStateDocumentClient {
   public readCount = 0;
@@ -263,9 +263,7 @@ function clReplayCandidatePool(): FameClReplayRegistryEntry {
 function v4ClReplayPool(
   poolId = "uniswap-v4-basedflick-zora",
 ): FameV4ClReplayRegistryEntry {
-  const entry = famePoolStateRegistry.pools.find(
-    (pool) => pool.id === poolId,
-  );
+  const entry = famePoolStateRegistry.pools.find((pool) => pool.id === poolId);
   if (
     !entry ||
     entry.venue !== "uniswap-v4" ||
