@@ -14,6 +14,7 @@
 ## Runtime
 
 - `FamePoolState` CDK creates one DynamoDB table keyed by `pk` and `sk`, a scheduled indexer Lambda, and an authenticated read API Lambda.
+- The scheduled indexer is configured from deploy-time `FAME_POOL_STATE_INDEXER_BASE_RPCS_JSON` only. The shared app `BASE_RPCS_JSON` still feeds other Base lambdas, but it is not accepted as a pool-state indexer fallback.
 - The indexer scans Base `Sync` logs for quote-model pools, reconciles every quote-model pool with `getReserves` at the safe block, writes monotonic latest rows when reserves drift or rows are missing, updates `observedThroughBlock`, records complete CL head snapshots at the same safe block, captures a full `cl-replay-v1` Slipstream snapshot for `slipstream-usdc-weth-100`, and advances a cursor only after reserve reconciliation succeeds.
 - The replay snapshot lane reads slot0, current liquidity, dynamic pool fee, the full initialized tick bitmap word range, and initialized tick liquidity records at one safe block. It writes bitmap/tick chunks first, then publishes the latest replay pointer so the API never returns a partial snapshot as fresh replay state.
 - The delta replay maintenance lane is checkpoint-seeded and promotion-gated. It stores a separate `cl-replay-maintenance-v1` lifecycle row and non-quoteable `cl-replay-candidate-v1` capsule for supported `Swap`, `Mint`, and `Burn` deltas; `Collect` is decoded as a supported no-op for quote-state maintenance. Full snapshots remain the seed/checkpoint/repair artifact; warming, event-gap, drift-failed, and repairing maintenance state cannot publish compact CL quotes. Trusted promotion can publish the reducer-maintained capsule only when the checkpoint is drift-clean and the maintenance row is cursor/state-hash compatible.
@@ -111,14 +112,14 @@ Do not add email, pager, or chat notification actions for the first release unle
 1. Regenerate the registry from the local `../fls-www` checkout of `fame-lady-society/www` with `bun scripts/fame-swap-pool-state-registry.ts`.
 2. Copy the artifact into `src/fame-swap-pool-state/registry/base-v1-pools.json`.
 3. Run registry, indexer, API, and CDK tests.
-4. Confirm main deploy provides `FAME_POOL_STATE_SERVICE_TOKEN`, PR deploy provides a separate `FAME_POOL_STATE_PR_SERVICE_TOKEN`, and both fail before CDK deploy when the token or structurally valid `BASE_RPCS_JSON` is missing.
+4. Confirm main deploy provides `FAME_POOL_STATE_SERVICE_TOKEN`, PR deploy provides a separate `FAME_POOL_STATE_PR_SERVICE_TOKEN`, and all pool-state deploys fail before CDK deploy when the token or structurally valid `FAME_POOL_STATE_INDEXER_BASE_RPCS_JSON` is missing.
 5. Confirm the synthesized or deployed stack includes managed CloudWatch log groups with 7-day retention for replay-tick/Base operational logs and 30-day retention for Ethereum/mixed/app-audit logs.
 6. Confirm PR deploy uses `STAGE=PR-<number>` and cleanup targets only `Bot-PR-<number>` / `BotCert-PR-<number>`.
 7. Set or generate the dev service token first as `FAME_POOL_STATE_DEV_SERVICE_TOKEN`.
-8. For pool-state-only pre-merge validation, add the PR label `DEPLOY_POOL_STATE_DEV`. This deploys `BotPoolStateDev` with only `BASE_RPCS_JSON` and `FAME_POOL_STATE_DEV_SERVICE_TOKEN`; it does not require image, Discord, Farcaster, custom domain, or cert env.
+8. For pool-state-only pre-merge validation, add the PR label `DEPLOY_POOL_STATE_DEV`. This deploys `BotPoolStateDev` with only `FAME_POOL_STATE_INDEXER_BASE_RPCS_JSON` and `FAME_POOL_STATE_DEV_SERVICE_TOKEN`; it does not require the shared app `BASE_RPCS_JSON`, image, Discord, Farcaster, custom domain, or cert env.
 9. Copy the emitted `FamePoolApiDevBaseUrl` value into `www` dev as server-only `FAME_POOL_API_URL`, and set the matching `FAME_POOL_STATE_SERVICE_TOKEN`. Do not copy an endpoint-specific `/fame/pool-state` or `/fame/pool-quotes` URL into `FAME_POOL_API_URL`.
 10. For full messy app validation, add the PR label `DEPLOY_DEV` to update `Bot-dev` / `BotCert-dev` at `dev.fame.support` with event schedules disabled.
-11. Deploy `society-bots` with Base RPCs and the correct environment-scoped FAME pool-state service token.
+11. Deploy `society-bots` with shared app Base RPCs in `BASE_RPCS_JSON`, pool-state indexer-only Base RPCs in `FAME_POOL_STATE_INDEXER_BASE_RPCS_JSON`, and the correct environment-scoped FAME pool-state service token.
 12. Capture smoke evidence:
 
 - endpoint or stack name;

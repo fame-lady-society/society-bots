@@ -40,7 +40,7 @@ jobs:
 
       - name: Validate FAME pool-state deploy configuration
         env:
-          BASE_RPCS_JSON: ${{ secrets.BASE_RPCS_JSON }}
+          FAME_POOL_STATE_INDEXER_BASE_RPCS_JSON: ${{ secrets.FAME_POOL_STATE_INDEXER_BASE_RPCS_JSON }}
           FAME_POOL_STATE_SERVICE_TOKEN: ${{ secrets.FAME_POOL_STATE_SERVICE_TOKEN }}
         run: bash scripts/validate-fame-pool-state-deploy-config.sh
 
@@ -49,6 +49,7 @@ jobs:
           STAGE: prod
           ALCHEMY_WEBHOOK_SIGNING_KEY: ${{ secrets.ALCHEMY_WEBHOOK_SIGNING_KEY }}
           BASE_RPCS_JSON: ${{ secrets.BASE_RPCS_JSON }}
+          FAME_POOL_STATE_INDEXER_BASE_RPCS_JSON: ${{ secrets.FAME_POOL_STATE_INDEXER_BASE_RPCS_JSON }}
           FAME_POOL_STATE_SERVICE_TOKEN: ${{ secrets.FAME_POOL_STATE_SERVICE_TOKEN }}
           MAINNET_RPCS_JSON: ${{ secrets.MAINNET_RPCS_JSON }}
           SEPOLIA_RPCS_JSON: ${{ secrets.SEPOLIA_RPCS_JSON }}
