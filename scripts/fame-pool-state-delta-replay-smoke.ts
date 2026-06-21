@@ -20,10 +20,7 @@ const LIVE_ROUTE_DEPENDENCY = "uniswap-v4-basedflick-zora";
 const BASELINE_CL_COMPACT_POOL_ID = "slipstream-usdc-weth-100";
 const DEFAULT_PROVIDER_READ_THRESHOLD = 1_000;
 const V4_REVIEWED_LANE_DIRECTION_COVERAGE: Record<string, readonly string[]> = {
-  [FAME_V4_ZORA_QUOTE_LANE_POOL_ID]: [
-    "BASEDFLICK->ZORA",
-    "ZORA->BASEDFLICK",
-  ],
+  [FAME_V4_ZORA_QUOTE_LANE_POOL_ID]: ["BASEDFLICK->ZORA", "ZORA->BASEDFLICK"],
   [FAME_V4_ZORA_ETH_QUOTE_LANE_POOL_ID]: ["ETH->ZORA", "ZORA->ETH"],
 };
 const FAME_UPSTREAM_POOL_UNIVERSE_POOL_IDS = [
@@ -34,16 +31,12 @@ const FAME_UPSTREAM_POOL_UNIVERSE_POOL_IDS = [
   "scale-equalizer-usdc-scale",
   "scale-equalizer-weth-fame",
   "slipstream-basedflick-fame",
-  "slipstream-msusd-usdc-a",
   "slipstream-spx-weth",
   "slipstream-usdc-frxusd",
   "slipstream-usdc-weth-100",
   "slipstream-usdc-weth-migrating-50",
-  "slipstream-weth-mseth",
   "slipstream-zora-usdc",
   "slipstream-zora-weth",
-  "slipstream2-msusd-mseth",
-  "slipstream2-msusd-usdc-c",
   "uniswap-v2-fame-direct",
   "uniswap-v2-usdc-weth",
   "uniswap-v3-usdc-weth-30bps",
@@ -177,11 +170,7 @@ export interface FameV4ZoraActivationEvidenceInput {
   poolId: string;
   status: "active" | "blocked" | "pending";
   reviewedPoolEvidenceKind?: FameV4ReviewedPoolEvidenceKind;
-  provenanceStatus:
-    | "verified"
-    | "missing"
-    | "mismatch"
-    | "not-applicable";
+  provenanceStatus: "verified" | "missing" | "mismatch" | "not-applicable";
   shapeStatus: "matched" | "mismatch" | "unknown";
   stateStatus: "fresh" | "stale" | "missing" | "incomplete";
   quoteStatus: "quoted" | "unavailable" | "missing";
@@ -592,8 +581,8 @@ function selectedQuoteSourcesFromQuoteApi(
   quoteContext: string | null,
 ): FameRouteLabSelectedQuoteSourceEvidence[] {
   return (
-    quoteApi?.diagnostics?.details
-      ?.flatMap((detail): FameRouteLabSelectedQuoteSourceEvidence[] => {
+    quoteApi?.diagnostics?.details?.flatMap(
+      (detail): FameRouteLabSelectedQuoteSourceEvidence[] => {
         const source = routeLabQuoteApiSource(detail.outcome, quoteContext);
         if (!source) return [];
         return [
@@ -605,7 +594,8 @@ function selectedQuoteSourcesFromQuoteApi(
             amountIn: detail.amountIn,
           },
         ];
-      }) ?? []
+      },
+    ) ?? []
   );
 }
 
@@ -723,7 +713,8 @@ function routeLabRowsValue(
           ? null
           : stringValue(row.routeArtifactId, `${path}.routeArtifactId`),
       selectedCandidateId:
-        row.selectedCandidateId === null || row.selectedCandidateId === undefined
+        row.selectedCandidateId === null ||
+        row.selectedCandidateId === undefined
           ? null
           : stringValue(row.selectedCandidateId, `${path}.selectedCandidateId`),
       materializedRouteHash:
@@ -869,26 +860,27 @@ function v4ZoraActivationValue(
       `${name}.provenanceStatus`,
       ["verified", "missing", "mismatch", "not-applicable"] as const,
     ),
-    shapeStatus: stringEnumValue(
-      input.shapeStatus,
-      `${name}.shapeStatus`,
-      ["matched", "mismatch", "unknown"] as const,
-    ),
-    stateStatus: stringEnumValue(
-      input.stateStatus,
-      `${name}.stateStatus`,
-      ["fresh", "stale", "missing", "incomplete"] as const,
-    ),
-    quoteStatus: stringEnumValue(
-      input.quoteStatus,
-      `${name}.quoteStatus`,
-      ["quoted", "unavailable", "missing"] as const,
-    ),
-    parityStatus: stringEnumValue(
-      input.parityStatus,
-      `${name}.parityStatus`,
-      ["passed", "failed", "missing"] as const,
-    ),
+    shapeStatus: stringEnumValue(input.shapeStatus, `${name}.shapeStatus`, [
+      "matched",
+      "mismatch",
+      "unknown",
+    ] as const),
+    stateStatus: stringEnumValue(input.stateStatus, `${name}.stateStatus`, [
+      "fresh",
+      "stale",
+      "missing",
+      "incomplete",
+    ] as const),
+    quoteStatus: stringEnumValue(input.quoteStatus, `${name}.quoteStatus`, [
+      "quoted",
+      "unavailable",
+      "missing",
+    ] as const),
+    parityStatus: stringEnumValue(input.parityStatus, `${name}.parityStatus`, [
+      "passed",
+      "failed",
+      "missing",
+    ] as const),
     routeSimulationStatus: stringEnumValue(
       input.routeSimulationStatus,
       `${name}.routeSimulationStatus`,
@@ -898,16 +890,11 @@ function v4ZoraActivationValue(
       input.directionCoverage,
       `${name}.directionCoverage`,
     ).map((direction, index) =>
-      stringValue(
-        direction,
-        `${name}.directionCoverage[${index.toString()}]`,
-      ),
+      stringValue(direction, `${name}.directionCoverage[${index.toString()}]`),
     ),
     sourceRegistryId:
-      optionalStringValue(
-        input.sourceRegistryId,
-        `${name}.sourceRegistryId`,
-      ) ?? undefined,
+      optionalStringValue(input.sourceRegistryId, `${name}.sourceRegistryId`) ??
+      undefined,
     evidenceId:
       optionalStringValue(input.evidenceId, `${name}.evidenceId`) ?? undefined,
     providerReadCount:
@@ -927,10 +914,7 @@ function v4ZoraActivationValue(
       ) ?? undefined,
     deferredHardening: Array.isArray(input.deferredHardening)
       ? input.deferredHardening.map((item, index) =>
-          stringValue(
-            item,
-            `${name}.deferredHardening[${index.toString()}]`,
-          ),
+          stringValue(item, `${name}.deferredHardening[${index.toString()}]`),
         )
       : undefined,
   };
@@ -1316,19 +1300,18 @@ function v4ZoraActivationEvidence(
     {
       name: "v4_zora_direction_coverage",
       passed: directionCoveragePassed,
-      detail:
-        directionCoveragePassed
-          ? base.directionCoverage.join(", ")
-          : [
-              missingDirections.length > 0
-                ? `missing ${missingDirections.join(", ")}`
-                : null,
-              unexpectedDirections.length > 0
-                ? `unexpected ${unexpectedDirections.join(", ")}`
-                : null,
-            ]
-              .filter((part): part is string => part !== null)
-              .join("; ") || "missing",
+      detail: directionCoveragePassed
+        ? base.directionCoverage.join(", ")
+        : [
+            missingDirections.length > 0
+              ? `missing ${missingDirections.join(", ")}`
+              : null,
+            unexpectedDirections.length > 0
+              ? `unexpected ${unexpectedDirections.join(", ")}`
+              : null,
+          ]
+            .filter((part): part is string => part !== null)
+            .join("; ") || "missing",
     },
     {
       name: "v4_zora_evidence_id_present",
