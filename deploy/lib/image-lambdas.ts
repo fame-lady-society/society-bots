@@ -12,7 +12,6 @@ import { createLambdaLogGroup } from "./lambda-log-groups.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export interface Props {
-  readonly baseRpcsJson: string;
   readonly mainnetRpcsJson: string;
   readonly domain: [string, string] | string;
   readonly corsAllowedOriginsJson: string;
@@ -40,15 +39,13 @@ function compile(entrypoint: string, options?: BuildOptions) {
 }
 
 export class ImageLambdas extends Construct {
-  declare readonly fameImageThumbLambda: lambda.IFunction;
-  declare readonly fameImageMosaicLambda: lambda.IFunction;
   declare readonly flsImageThumbLambda: lambda.IFunction;
   declare readonly flsImageMosaicLambda: lambda.IFunction;
   declare readonly assetStorageBucket: s3.Bucket;
   constructor(scope: Construct, id: string, props: Props) {
     super(scope, id);
 
-    const { baseRpcsJson, mainnetRpcsJson, corsAllowedOriginsJson, domain } =
+    const { mainnetRpcsJson, corsAllowedOriginsJson, domain } =
       props;
 
     const storageBucket = new s3.Bucket(this, "storage", {
@@ -57,58 +54,6 @@ export class ImageLambdas extends Construct {
 
     const domains = domain instanceof Array ? domain : [domain];
     const domainName = domains.join(".");
-
-    const fameThumbCodeDir = compile(
-      path.join(__dirname, "../../src/lambda/fame/thumb.ts"),
-    );
-    fs.copyFileSync(
-      path.resolve(__dirname, "../docker/canvas/Dockerfile"),
-      `${fameThumbCodeDir}/Dockerfile`,
-    );
-    const fameThumbHandler = new lambda.DockerImageFunction(this, "FameThumb", {
-      code: lambda.DockerImageCode.fromImageAsset(fameThumbCodeDir, {
-        platform: ecrAssets.Platform.LINUX_AMD64,
-      }),
-      logGroup: createLambdaLogGroup(
-        this,
-        "FameThumbLogGroup",
-        "baseOperational",
-      ),
-      timeout: cdk.Duration.seconds(5),
-      memorySize: 512,
-      environment: {
-        ASSET_BUCKET: storageBucket.bucketName,
-        IMAGE_HOST: domainName,
-        BASE_RPCS_JSON: baseRpcsJson,
-        LOG_LEVEL: "INFO",
-        CORS_ALLOWED_ORIGINS_JSON: corsAllowedOriginsJson,
-      },
-    });
-    storageBucket.grantReadWrite(fameThumbHandler);
-
-    const fameMosaicCodeDir = compile(
-      path.join(__dirname, "../../src/lambda/fame/mosaic.ts"),
-    );
-    fs.copyFileSync(
-      path.resolve(__dirname, "../docker/canvas/Dockerfile"),
-      `${fameMosaicCodeDir}/Dockerfile`,
-    );
-    const fameMosaicHandler = new lambda.DockerImageFunction(this, "Mosaic", {
-      code: lambda.DockerImageCode.fromImageAsset(fameMosaicCodeDir, {
-        platform: ecrAssets.Platform.LINUX_AMD64,
-      }),
-      logGroup: createLambdaLogGroup(this, "MosaicLogGroup", "baseOperational"),
-      timeout: cdk.Duration.seconds(15),
-      memorySize: 1024,
-      environment: {
-        ASSET_BUCKET: storageBucket.bucketName,
-        IMAGE_HOST: domainName,
-        BASE_RPCS_JSON: baseRpcsJson,
-        LOG_LEVEL: "INFO",
-        CORS_ALLOWED_ORIGINS_JSON: corsAllowedOriginsJson,
-      },
-    });
-    storageBucket.grantReadWrite(fameMosaicHandler);
 
     const flsThumbCodeDir = compile(
       path.join(__dirname, "../../src/lambda/fls-image/thumb.ts"),
@@ -159,8 +104,6 @@ export class ImageLambdas extends Construct {
     storageBucket.grantReadWrite(flsMosaicHandler);
 
     this.assetStorageBucket = storageBucket;
-    this.fameImageThumbLambda = fameThumbHandler;
-    this.fameImageMosaicLambda = fameMosaicHandler;
     this.flsImageThumbLambda = flsThumbHandler;
     this.flsImageMosaicLambda = flsMosaicHandler;
   }

@@ -7,6 +7,7 @@ import {
   DeleteCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { DYNAMODB_DISCORD_NOTIFICATION_TABLE_NAME } from "../lambdas/messaging/config.ts";
+import { isNotificationType, type NotificationType } from "@/types.ts";
 
 export const defaultDb = DynamoDBDocumentClient.from(
   new DynamoDBClient({
@@ -19,12 +20,6 @@ export const defaultDb = DynamoDBDocumentClient.from(
   }
 );
 
-type NotificationType =
-  | "fame-buy"
-  | "fame-sell"
-  | "fame-nft-mint"
-  | "fame-nft-burn";
-
 export type DiscordGuildChannelNotification = {
   pk: `guild:${string}:channel:${string}:notification:${NotificationType}`;
   sk: "notifications";
@@ -36,15 +31,14 @@ export type DiscordGuildChannelNotification = {
 function fromDbToDiscordGuildChannelNotification(
   item?: Record<string, unknown> | null
 ): DiscordGuildChannelNotification | null {
-  return item
-    ? ({
-        pk: item.pk,
-        sk: item.sk,
-        guildId: item.guildId,
-        channelId: item.channelId,
-        notification: item.notification,
-      } as DiscordGuildChannelNotification)
-    : null;
+  if (!item || typeof item.notification !== "string" || !isNotificationType(item.notification)) return null;
+  return {
+    pk: item.pk as DiscordGuildChannelNotification["pk"],
+    sk: item.sk as DiscordGuildChannelNotification["sk"],
+    guildId: item.guildId as string,
+    channelId: item.channelId as string,
+    notification: item.notification,
+  };
 }
 
 export async function getNotifications({

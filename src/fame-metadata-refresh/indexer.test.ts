@@ -76,6 +76,10 @@ class InMemoryMetadataRefreshStore {
     return this.items.get(`discord#${transactionHash}|log#7`)?.state;
   }
 
+  notificationSkipReason() {
+    return this.items.get(`discord#${transactionHash}|log#7`)?.skipReason;
+  }
+
   acceptedJobCount() {
     return [...this.items.values()].filter((item) => item.state === "accepted").length;
   }
@@ -178,9 +182,9 @@ function dependencies({
   const defaultFetcher: typeof fetch = async (input) => {
     const url = String(input);
     if (url.startsWith("https://metadata.example/")) {
-      return new Response(JSON.stringify({ name: "FAME", description: "Society", image: "https://image.example/fame.png" }), { status: 200 });
+      return new Response(JSON.stringify({ name: "FAME", description: "Society", image: "https://gateway.irys.xyz/current-art" }), { status: 200 });
     }
-    return new Response(JSON.stringify({ nft: { name: "FAME", description: "Society", image_url: "https://image.example/fame.png" } }), { status: 200 });
+    return new Response(JSON.stringify({ nft: { name: "FAME", description: "Society", image_url: "https://gateway.irys.xyz/current-art" } }), { status: 200 });
   };
   return {
     dependencies: {
@@ -207,7 +211,6 @@ describe("metadata refresh indexer lifecycle", () => {
     process.env.DISCORD_MESSAGE_TOPIC_ARN = "arn:aws:sns:us-east-1:000000000000:discord";
     process.env.DISCORD_CHANNEL_ID = "channel";
     process.env.OPENSEA_API_KEY = "unit-key";
-    process.env.IMAGE_HOST = "images.example";
   });
 
   it("initializes forward-only at the fixed source block and advances after an empty finalized block", async () => {
@@ -233,6 +236,7 @@ describe("metadata refresh indexer lifecycle", () => {
     expect(setup.publish).toHaveBeenCalledTimes(1);
     const message = JSON.parse(String(setup.publish.mock.calls[0][0].Message));
     expect(message.message.embeds[0].fields[0]).toMatchObject({ name: "new owner", value: "holder.eth" });
+    expect(message.message.embeds[0].image).toEqual({ url: "https://gateway.irys.xyz/current-art" });
     expect(store.notificationState()).toBe("published");
   });
 
@@ -252,6 +256,53 @@ describe("metadata refresh indexer lifecycle", () => {
     expect(publish).toHaveBeenCalledTimes(2);
     expect(store.notificationState()).toBe("published");
     expect(store.checkpoint(PURCHASE_CHECKPOINT)).toEqual({ nextBlock: Number(START_BLOCK + 1n), nextLogIndex: 0 });
+  });
+
+  it("keeps a failed metadata read retryable without blocking the metadata checkpoint", async () => {
+    const store = new InMemoryMetadataRefreshStore();
+    store.setCheckpoint(START_BLOCK);
+    const fetcher = jest.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ name: "FAME", description: "Society", image: "https://gateway.irys.xyz/current-art" }), { status: 200 }));
+    const setup = dependencies({ store, purchases: [purchaseLog()], fetcher });
+
+    await expect(runMetadataRefreshIndexer(setup.dependencies as never)).rejects.toThrow("Authoritative metadata read failed");
+    expect(setup.publish).not.toHaveBeenCalled();
+    expect(store.notificationState()).toBe("pending");
+    expect(store.checkpoint(PURCHASE_CHECKPOINT)).toEqual({ nextBlock: Number(START_BLOCK), nextLogIndex: 0 });
+    expect(store.checkpoint(METADATA_CHECKPOINT)).toEqual({ nextBlock: Number(START_BLOCK + 1n), nextLogIndex: 0 });
+
+    await expect(runMetadataRefreshIndexer(setup.dependencies as never)).resolves.toBeUndefined();
+    const message = JSON.parse(String(setup.publish.mock.calls[0][0].Message));
+    expect(message.message.embeds[0].image).toEqual({ url: "https://gateway.irys.xyz/current-art" });
+    expect(store.notificationState()).toBe("published");
+  });
+
+  it("skips a purchase notification when the purchased token no longer exists", async () => {
+    const store = new InMemoryMetadataRefreshStore();
+    store.setCheckpoint(START_BLOCK);
+    const readContract = jest.fn(async ({ abi, args }: { abi: Abi; args: [bigint] }) => {
+      throw tokenDoesNotExistError(abi, args[0]);
+    });
+    const setup = dependencies({ store, purchases: [purchaseLog()], readContract });
+
+    await expect(runMetadataRefreshIndexer(setup.dependencies as never)).resolves.toBeUndefined();
+
+    expect(setup.publish).not.toHaveBeenCalled();
+    expect(store.notificationState()).toBe("skipped");
+    expect(store.notificationSkipReason()).toBe("token_not_found");
+    expect(store.checkpoint(PURCHASE_CHECKPOINT)).toEqual({ nextBlock: Number(START_BLOCK + 1n), nextLogIndex: 0 });
+  });
+
+  it("holds the purchase checkpoint when the Lambda lacks time for another notification", async () => {
+    const store = new InMemoryMetadataRefreshStore();
+    store.setCheckpoint(START_BLOCK);
+    const setup = dependencies({ store, purchases: [purchaseLog()], remainingTimeInMillis: () => 9_000 });
+
+    await expect(runMetadataRefreshIndexer(setup.dependencies as never)).rejects.toThrow("Insufficient Lambda time remains for another purchase notification");
+
+    expect(setup.publish).not.toHaveBeenCalled();
+    expect(store.checkpoint(PURCHASE_CHECKPOINT)).toEqual({ nextBlock: Number(START_BLOCK), nextLogIndex: 0 });
   });
 
   it("falls back to the final-owner address when ENS resolution fails", async () => {
@@ -335,7 +386,7 @@ describe("metadata refresh indexer lifecycle", () => {
     const laterHash = `0x${"22".repeat(32)}` as const;
     const fetcher: typeof fetch = async (input) => {
       if (String(input).startsWith("https://metadata.example/")) {
-        return new Response(JSON.stringify({ name: "FAME", description: "Society", image: "https://image.example/fame.png" }), { status: 200 });
+        return new Response(JSON.stringify({ name: "FAME", description: "Society", image: "https://gateway.irys.xyz/current-art" }), { status: 200 });
       }
       return new Response(null, { status: 401 });
     };
@@ -363,11 +414,11 @@ describe("metadata refresh indexer lifecycle", () => {
     let openSeaReads = 0;
     const fetcher: typeof fetch = async (input) => {
       if (String(input).startsWith("https://metadata.example/")) {
-        return new Response(JSON.stringify({ name: "FAME", description: "Society", image: "https://image.example/fame.png" }), { status: 200 });
+        return new Response(JSON.stringify({ name: "FAME", description: "Society", image: "https://gateway.irys.xyz/current-art" }), { status: 200 });
       }
       openSeaReads += 1;
       if (openSeaReads < 3) return new Response(null, { status: 503, headers: { "retry-after": "0" } });
-      return new Response(JSON.stringify({ nft: { name: "FAME", description: "Society", image_url: "https://image.example/fame.png" } }), { status: 200 });
+      return new Response(JSON.stringify({ nft: { name: "FAME", description: "Society", image_url: "https://gateway.irys.xyz/current-art" } }), { status: 200 });
     };
     const setup = dependencies({ store, metadataLogs: [metadataLog(0)], fetcher });
 
@@ -407,9 +458,9 @@ describe("metadata refresh indexer lifecycle", () => {
     const fetcher = jest.fn<typeof fetch>(async (input) => {
       const url = String(input);
       if (url.startsWith("https://metadata.example/")) {
-        return new Response(JSON.stringify({ name: "FAME", description: "Society", image: "https://image.example/fame.png" }), { status: 200 });
+        return new Response(JSON.stringify({ name: "FAME", description: "Society", image: "https://gateway.irys.xyz/current-art" }), { status: 200 });
       }
-      return new Response(JSON.stringify({ nft: { name: "FAME", description: "Society", image_url: "https://image.example/fame.png" } }), { status: 200 });
+      return new Response(JSON.stringify({ nft: { name: "FAME", description: "Society", image_url: "https://gateway.irys.xyz/current-art" } }), { status: 200 });
     });
     const setup = dependencies({ store, metadataLogs, head: receiptBlock + 8n, readContract, fetcher });
 
@@ -448,7 +499,7 @@ describe("metadata refresh indexer lifecycle", () => {
     let openSeaReads = 0;
     const fetcher: typeof fetch = async (input) => {
       if (String(input).startsWith("https://metadata.example/")) {
-        return new Response(JSON.stringify({ name: "FAME", description: "Society", image: "https://image.example/fame.png" }), { status: 200 });
+        return new Response(JSON.stringify({ name: "FAME", description: "Society", image: "https://gateway.irys.xyz/current-art" }), { status: 200 });
       }
       openSeaReads += 1;
       if (openSeaReads === 1) throw new TypeError("connection reset");

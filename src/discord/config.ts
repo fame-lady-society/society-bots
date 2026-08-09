@@ -36,10 +36,3 @@ export const publicKey = lazy(() => {
   }
   return process.env.DISCORD_PUBLIC_KEY;
 });
-
-export const imageHost = lazy(() => {
-  if (!process.env.IMAGE_HOST) {
-    throw new Error("IMAGE_HOST not set");
-  }
-  return process.env.IMAGE_HOST;
-});

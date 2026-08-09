@@ -19,12 +19,9 @@ export class DeployInfraStack extends cdk.Stack {
 
     const {
       assetStorageBucket,
-      fameImageMosaicLambda,
-      fameImageThumbLambda,
       flsImageMosaicLambda,
       flsImageThumbLambda,
     } = new ImageLambdas(this, "ImageLambdas", {
-      baseRpcsJson: process.env.BASE_RPCS_JSON!,
       mainnetRpcsJson: process.env.MAINNET_RPCS_JSON!,
       domain: JSON.parse(process.env.IMAGE_BASE_HOST_JSON!),
       corsAllowedOriginsJson: process.env.IMAGE_CORS_ALLOWED_ORIGINS_JSON!,
@@ -66,8 +63,6 @@ export class DeployInfraStack extends cdk.Stack {
 
     const { httpApi } = new HttpApi(this, "SocietyBotREST", {
       domain: JSON.parse(process.env.IMAGE_BASE_HOST_JSON!),
-      fameImageThumbHandler: fameImageThumbLambda,
-      fameImageMosaicHandler: fameImageMosaicLambda,
       flsImageThumbHandler: flsImageThumbLambda,
       flsImageMosaicHandler: flsImageMosaicLambda,
       discordInteractionHandler: notificationLambda,

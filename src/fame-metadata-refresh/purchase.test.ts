@@ -86,6 +86,8 @@ describe("marketplace purchase projection", () => {
 
   it("uses the recipient's resolved ENS name for the new-owner field", () => {
     const purchase = { transactionHash: `0x${"11".repeat(32)}` as const, tokenId: 42n, buyer: "0x0000000000000000000000000000000000000001" as const, recipient: "0x0000000000000000000000000000000000000002" as const, payment: { asset: "FAME" as const, amount: 12n, decimals: 18 } };
-    expect(purchaseEmbed(purchase, "fame.eth").fields[0]).toMatchObject({ name: "new owner", value: "fame.eth" });
+    const embed = purchaseEmbed(purchase, "fame.eth", "https://gateway.irys.xyz/current-art");
+    expect(embed.fields[0]).toMatchObject({ name: "new owner", value: "fame.eth" });
+    expect(embed.image).toEqual({ url: "https://gateway.irys.xyz/current-art" });
   });
 });

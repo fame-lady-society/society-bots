@@ -14,8 +14,6 @@ import {
 export interface Props {
   readonly domain: [string, string] | string;
   readonly hostedZone?: route53.IHostedZone;
-  readonly fameImageThumbHandler: lambda.IFunction;
-  readonly fameImageMosaicHandler: lambda.IFunction;
   readonly flsImageThumbHandler: lambda.IFunction;
   readonly flsImageMosaicHandler: lambda.IFunction;
   readonly discordInteractionHandler: lambda.IFunction;
@@ -30,8 +28,6 @@ export class HttpApi extends Construct {
 
     const {
       domain,
-      fameImageThumbHandler,
-      fameImageMosaicHandler,
       flsImageThumbHandler,
       flsImageMosaicHandler,
       discordInteractionHandler,
@@ -61,18 +57,6 @@ export class HttpApi extends Construct {
         domainName: apiDomainName,
       },
     });
-    httpApi.addRoutes({
-      path: "/thumb/{tokenId}",
-      methods: [apigw2.HttpMethod.GET, apigw2.HttpMethod.OPTIONS],
-      integration: new HttpLambdaIntegration("thumb", fameImageThumbHandler),
-    });
-
-    httpApi.addRoutes({
-      path: "/mosaic/{tokenId}",
-      methods: [apigw2.HttpMethod.GET, apigw2.HttpMethod.OPTIONS],
-      integration: new HttpLambdaIntegration("mosaic", fameImageMosaicHandler),
-    });
-
     httpApi.addRoutes({
       path: "/fls/thumb/{tokenId}",
       methods: [apigw2.HttpMethod.GET, apigw2.HttpMethod.OPTIONS],

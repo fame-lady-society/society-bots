@@ -1,7 +1,7 @@
 import { SNS } from "@aws-sdk/client-sns";
 import { APIEmbed } from "discord-api-types/v10";
 import { createLogger } from "@/utils/logging.js";
-import { zeroHash, TransactionReceipt } from "viem";
+import { TransactionReceipt } from "viem";
 import { sepoliaClient, baseClient } from "@/viem.ts";
 import { sendDiscordMessage } from "@/discord/pubsub/send.js";
 import {
@@ -10,27 +10,19 @@ import {
 } from "../../dynamodb/fameIndex.ts";
 import {
   uniswapV2SwapEventAbi,
-  transferEvent,
   uniswapV3SwapEventAbi,
 } from "@/events.js";
 import {
   BASE_FAME_ADDRESS,
-  BASE_FAME_NFT_ADDRESS,
   BASE_FAME_WETH_V2_POOL,
   BASE_FAME_WETH_V3_POOL,
   SEPOLIA_EXAMPLE_ADDRESS,
-  SEPOLIA_EXAMPLE_NFT_ADDRESS,
   SEPOLIA_EXAMPLE_WETH_V2_POOL,
   SEPOLIA_EXAMPLE_WETH_V3_POOL,
 } from "@/constants.ts";
 import { DISCORD_CHANNEL_ID, DISCORD_MESSAGE_TOPIC_ARN } from "./config.js";
-import {
-  notifyDiscordBurn,
-  notifyDiscordMint,
-  notifyDiscordSwap,
-} from "./discord.ts";
+import { notifyDiscordSwap } from "./discord.ts";
 import { findEvents } from "./utils.ts";
-import { EventType } from "./types.ts";
 import { aggregateLogs, aggregateSwapEvents } from "./aggregate.ts";
 import { CompleteSwapEvent } from "@/webhook/swap/types.js";
 import {
@@ -51,12 +43,10 @@ async function eventsForClient({
   client,
   v2PoolAddress,
   v3PoolAddress,
-  nftAddress,
 }: {
   client: typeof sepoliaClient | typeof baseClient;
   v2PoolAddress: `0x${string}`;
   v3PoolAddress: `0x${string}`;
-  nftAddress: `0x${string}`;
 }) {
   const [lastBlockResponse, latestBlock] = await Promise.all([
     getLastIndexedBlock({
@@ -65,7 +55,7 @@ async function eventsForClient({
     client.getBlockNumber(),
   ]);
   const lastBlock = BigInt(lastBlockResponse?.block ?? latestBlock);
-  const [v3SwapEvents, v2SwapEvents, nftTransferEvents, ,] = await Promise.all([
+  const [v3SwapEvents, v2SwapEvents] = await Promise.all([
     findEvents<typeof uniswapV3SwapEventAbi>(
       client as typeof sepoliaClient,
       v3PoolAddress,
@@ -80,18 +70,10 @@ async function eventsForClient({
       lastBlock,
       latestBlock
     ),
-    findEvents<typeof transferEvent>(
-      client as typeof sepoliaClient,
-      nftAddress,
-      transferEvent,
-      lastBlock,
-      latestBlock
-    ),
   ]);
   return {
     v3SwapEvents,
     v2SwapEvents,
-    nftTransferEvents,
     latestBlock,
   };
 }
@@ -100,23 +82,18 @@ async function aggregateEventsForClient({
   client,
   v2PoolAddress,
   v3PoolAddress,
-  nftAddress,
 }: {
   client: typeof sepoliaClient | typeof baseClient;
   v2PoolAddress: `0x${string}`;
   v3PoolAddress: `0x${string}`;
-  nftAddress: `0x${string}`;
 }) {
-  const { latestBlock, v2SwapEvents, v3SwapEvents, nftTransferEvents } =
+  const { latestBlock, v2SwapEvents, v3SwapEvents } =
     await eventsForClient({
       client,
       v2PoolAddress,
       v3PoolAddress,
-      nftAddress,
     });
 
-  const eventsMint = new Set<EventType<typeof transferEvent>>();
-  const eventsBurn = new Set<EventType<typeof transferEvent>>();
   const swapEventTransactionHashes = new Set<`0x${string}`>();
 
   // First get all transaction hashes we are interested in
@@ -127,21 +104,8 @@ async function aggregateEventsForClient({
     swapEventTransactionHashes.add(event.transactionHash);
   }
 
-  for (const event of nftTransferEvents) {
-    if (swapEventTransactionHashes.has(event.transactionHash)) {
-      continue;
-    }
-    if (event.args.to === zeroHash) {
-      eventsMint.add(event);
-    } else if (event.args.from === zeroHash) {
-      eventsBurn.add(event);
-    }
-  }
-
   return {
     latestBlock,
-    mints: eventsMint,
-    burns: eventsBurn,
     swapEvents: swapEventTransactionHashes,
   };
 }
@@ -150,13 +114,11 @@ export const handleForClient = async ({
   client,
   v2PoolAddress,
   v3PoolAddress,
-  nftAddress,
   tokenAddress,
 }: {
   client: typeof sepoliaClient | typeof baseClient;
   v2PoolAddress: `0x${string}`;
   v3PoolAddress: `0x${string}`;
-  nftAddress: `0x${string}`;
   tokenAddress: `0x${string}`;
 }) => {
   console.log(`Handling events for chain ${client.chain.name}`);
@@ -164,7 +126,6 @@ export const handleForClient = async ({
     client,
     v2PoolAddress,
     v3PoolAddress,
-    nftAddress,
   });
   console.log(
     `Found ${swapEvents.size} swap events for chain ${client.chain.name}`
@@ -206,8 +167,6 @@ export const handleForClient = async ({
     {
       fameBuyNotifications: APIEmbed[];
       fameSellNotifications: APIEmbed[];
-      nftMintNotifications: APIEmbed[];
-      nftBurnNotifications: APIEmbed[];
       swapEvent: {
         readonly isArb: boolean;
         readonly nftsMinted: bigint[];
@@ -246,8 +205,6 @@ export const handleForClient = async ({
   for (const [_, swapEvent] of swapEventTransactionReceipts) {
     const fameBuyNotifications: APIEmbed[] = [];
     const fameSellNotifications: APIEmbed[] = [];
-    const nftMintNotifications: APIEmbed[] = [];
-    const nftBurnNotifications: APIEmbed[] = [];
     const recipient = swapEvent.receipt.from.toLowerCase() as `0x${string}`;
     const { buy, sell } = await notifyDiscordSwap({
       swapEvent,
@@ -264,33 +221,12 @@ export const handleForClient = async ({
     if (sell) {
       fameSellNotifications.push(...sell);
     }
-    nftMintNotifications.push(
-      ...(await notifyDiscordMint({
-        testnet: !!client.chain.testnet,
-        tokenIds: swapEvent.nftsMinted,
-        toAddress: recipient,
-        client,
-        txHash: swapEvent.receipt.transactionHash,
-      }))
-    );
-    nftBurnNotifications.push(
-      ...(await notifyDiscordBurn({
-        testnet: !!client.chain.testnet,
-        tokenIds: swapEvent.nftsBurned,
-        fromAddress: recipient,
-        client,
-        txHash: swapEvent.receipt.transactionHash,
-      }))
-    );
-
     const existing = transactionEmbeds.get(recipient) ?? [];
     transactionEmbeds.set(recipient, [
       ...existing,
       {
         fameBuyNotifications,
         fameSellNotifications,
-        nftMintNotifications,
-        nftBurnNotifications,
         swapEvent,
       },
     ]);
@@ -301,8 +237,6 @@ export const handleForClient = async ({
       swapEvent,
       fameBuyNotifications,
       fameSellNotifications,
-      nftMintNotifications,
-      nftBurnNotifications,
     } of events) {
       for (const {
         channelId,
@@ -313,25 +247,13 @@ export const handleForClient = async ({
           notifications.includes("fame-buy") &&
           fameBuyNotifications.length > 0
         ) {
-          embeds.push(...fameBuyNotifications, ...nftMintNotifications);
+          embeds.push(...fameBuyNotifications);
         }
         if (
           notifications.includes("fame-sell") &&
           fameSellNotifications.length > 0
         ) {
-          embeds.push(...fameSellNotifications, ...nftBurnNotifications);
-        }
-        if (
-          notifications.includes("fame-nft-mint") &&
-          !notifications.includes("fame-buy")
-        ) {
-          embeds.push(...nftMintNotifications);
-        }
-        if (
-          notifications.includes("fame-nft-burn") &&
-          !notifications.includes("fame-sell")
-        ) {
-          embeds.push(...nftBurnNotifications);
+          embeds.push(...fameSellNotifications);
         }
         if (embeds.length === 0) {
           continue;
@@ -366,7 +288,6 @@ export const handler = async () => {
       client: sepoliaClient,
       v2PoolAddress: SEPOLIA_EXAMPLE_WETH_V2_POOL,
       v3PoolAddress: SEPOLIA_EXAMPLE_WETH_V3_POOL,
-      nftAddress: SEPOLIA_EXAMPLE_NFT_ADDRESS,
       tokenAddress: SEPOLIA_EXAMPLE_ADDRESS,
     }).catch((error) => {
       logger.error("Error handling events for sepolia", error);
@@ -375,7 +296,6 @@ export const handler = async () => {
       client: baseClient,
       v2PoolAddress: BASE_FAME_WETH_V2_POOL,
       v3PoolAddress: BASE_FAME_WETH_V3_POOL,
-      nftAddress: BASE_FAME_NFT_ADDRESS,
       tokenAddress: BASE_FAME_ADDRESS,
     }).catch((error) => {
       logger.error("Error handling events for base", error);
