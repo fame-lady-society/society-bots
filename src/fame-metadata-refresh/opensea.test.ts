@@ -1,13 +1,15 @@
+import { jest } from "@jest/globals";
 import { metadataMatches, OpenSeaResponseError, readOpenSeaMetadata, refreshOpenSeaMetadata } from "./opensea.ts";
 
 const contract = "0xBB5ED04dD7B207592429eb8d599d103CCad646c4" as const;
 
 describe("OpenSea metadata client", () => {
   it("compares documented cached metadata fields and skips matching data", async () => {
-    const fetcher = jest.fn(async () => new Response(JSON.stringify({ nft: { name: "FAME #1", description: "society", image_url: "https://image" } }), { status: 200 }));
-    const metadata = await readOpenSeaMetadata({ apiKey: "test-key", contract, tokenId: 1n, fetcher });
+    const fetcher = jest.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({ nft: { name: "FAME #1", description: "society", image_url: "https://image" } }), { status: 200 }));
+    const metadata = await readOpenSeaMetadata({ apiKey: "test-key", contract, tokenId: 1n, fetcher: fetcher as typeof fetch });
     expect(metadataMatches(metadata, { name: "FAME #1", description: "society", image: "https://image" })).toBe(true);
     expect(fetcher.mock.calls[0][1]?.headers).toEqual({ "x-api-key": "test-key" });
+    expect(fetcher.mock.calls[0][1]?.signal).toBeInstanceOf(AbortSignal);
   });
 
   it("accepts both a new refresh and an already queued refresh", async () => {

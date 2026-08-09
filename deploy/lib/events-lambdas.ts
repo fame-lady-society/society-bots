@@ -71,9 +71,16 @@ export class EventLambdas extends Construct {
     const domains = domain instanceof Array ? domain : [domain];
     const domainName = domains.join(".");
 
+    const deferredMessageDeadLetterQueue = new sqs.Queue(this, "DeferredMessageDeadLetterQueue", {
+      retentionPeriod: cdk.Duration.days(14),
+    });
     const deferredMessageQueue = new sqs.Queue(this, "DeferredMessageQueue", {
-      visibilityTimeout: cdk.Duration.seconds(30),
+      visibilityTimeout: cdk.Duration.seconds(180),
       retentionPeriod: cdk.Duration.days(1),
+      deadLetterQueue: {
+        queue: deferredMessageDeadLetterQueue,
+        maxReceiveCount: 5,
+      },
     });
     const deferredMessageTopic = new sns.Topic(this, "DeferredMessageTopic");
     deferredMessageTopic.addSubscription(
@@ -171,6 +178,7 @@ export class EventLambdas extends Construct {
       events: [
         new eventSources.SqsEventSource(deferredMessageQueue, {
           batchSize: 10,
+          reportBatchItemFailures: true,
         }),
       ],
     });
@@ -214,7 +222,7 @@ export class EventLambdas extends Construct {
       if (!props.openSeaApiKey) {
         throw new Error("OPENSEA_API_KEY is required when metadata refresh is enabled");
       }
-      const metadataRefreshTable = new dynamodb.Table(this, "FameMetadataRefresh", {
+      const metadataRefreshTable = new dynamodb.Table(this, "FameMetadataRefreshTable", {
         partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
         sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
         billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
@@ -234,6 +242,7 @@ export class EventLambdas extends Construct {
         logGroup: createLambdaLogGroup(this, "FameMetadataRefreshLogGroup", "baseOperational"),
         environment: {
           BASE_RPCS_JSON: baseRpcsJson,
+          MAINNET_RPCS_JSON: mainnetRpcsJson,
           DYNAMODB_REGION: cdk.Stack.of(this).region,
           DYNAMODB_FAME_METADATA_REFRESH_TABLE_NAME: metadataRefreshTable.tableName,
           DISCORD_CHANNEL_ID: discordChannelId,

@@ -2,6 +2,7 @@ import type { Address } from "viem";
 import type { MetadataDocument } from "./types.ts";
 
 const baseUrl = "https://api.opensea.io/api/v2/chain/base/contract";
+export const METADATA_REQUEST_TIMEOUT_MS = 4_000;
 
 export class OpenSeaResponseError extends Error {
   constructor(readonly status: number, message: string, readonly retryAfterMs?: number) {
@@ -40,13 +41,20 @@ export function isRetryableOpenSeaStatus(status: number) {
 }
 
 export async function readOpenSeaMetadata({ apiKey, contract, tokenId, fetcher = fetch }: { apiKey?: string; contract: Address; tokenId: bigint; fetcher?: typeof fetch }): Promise<MetadataDocument> {
-  const response = await fetcher(`${baseUrl}/${contract}/nfts/${tokenId.toString()}`, { headers: { "x-api-key": requiredKey(apiKey) } });
+  const response = await fetcher(`${baseUrl}/${contract}/nfts/${tokenId.toString()}`, {
+    headers: { "x-api-key": requiredKey(apiKey) },
+    signal: AbortSignal.timeout(METADATA_REQUEST_TIMEOUT_MS),
+  });
   if (!response.ok) throw new OpenSeaResponseError(response.status, "OpenSea metadata read failed", retryAfterMs(response));
   return metadataFrom(await response.json());
 }
 
 export async function refreshOpenSeaMetadata({ apiKey, contract, tokenId, fetcher = fetch }: { apiKey?: string; contract: Address; tokenId: bigint; fetcher?: typeof fetch }): Promise<"refreshed" | "accepted_duplicate"> {
-  const response = await fetcher(`${baseUrl}/${contract}/nfts/${tokenId.toString()}/refresh`, { method: "POST", headers: { "x-api-key": requiredKey(apiKey) } });
+  const response = await fetcher(`${baseUrl}/${contract}/nfts/${tokenId.toString()}/refresh`, {
+    method: "POST",
+    headers: { "x-api-key": requiredKey(apiKey) },
+    signal: AbortSignal.timeout(METADATA_REQUEST_TIMEOUT_MS),
+  });
   if (response.status === 200) return "refreshed";
   if (response.status === 409) return "accepted_duplicate";
   throw new OpenSeaResponseError(response.status, "OpenSea metadata refresh failed", retryAfterMs(response));

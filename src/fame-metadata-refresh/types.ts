@@ -17,7 +17,7 @@ export type PurchaseNotification = {
   tokenId: bigint;
   buyer: Address;
   recipient: Address;
-  payment: { asset: "FAME" | "USDC" | "WETH"; amount: bigint; decimals: number };
+  payment: { asset: "ETH" | "FAME" | "USDC" | "WETH"; amount: bigint; decimals: number };
 };
 
 export type MetadataDocument = {

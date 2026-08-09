@@ -42,8 +42,31 @@ describe("OpenSea metadata refresh infrastructure", () => {
     });
     template.hasResourceProperties("AWS::Lambda::Function", {
       ReservedConcurrentExecutions: 1,
-      Environment: { Variables: Match.objectLike({ DYNAMODB_FAME_METADATA_REFRESH_TABLE_NAME: Match.anyValue() }) },
+      Environment: {
+        Variables: Match.objectLike({
+          DYNAMODB_FAME_METADATA_REFRESH_TABLE_NAME: Match.anyValue(),
+          MAINNET_RPCS_JSON: props.mainnetRpcsJson,
+        }),
+      },
     });
     template.hasResourceProperties("AWS::Events::Rule", { ScheduleExpression: "rate(4 minutes)" });
+    template.hasResourceProperties("AWS::Lambda::EventSourceMapping", {
+      FunctionResponseTypes: ["ReportBatchItemFailures"],
+    });
+    template.hasResourceProperties("AWS::SQS::Queue", {
+      VisibilityTimeout: 180,
+      RedrivePolicy: Match.objectLike({ maxReceiveCount: 5 }),
+    });
+  });
+
+  it("fails synthesis when metadata refresh is enabled without an OpenSea key", () => {
+    const app = new cdk.App();
+    const stack = new cdk.Stack(app, "TestStack");
+
+    expect(() => new EventLambdas(stack, "EventLambdas", {
+      ...props,
+      enableSchedules: false,
+      enableMetadataRefresh: true,
+    })).toThrow("OPENSEA_API_KEY is required when metadata refresh is enabled");
   });
 });
