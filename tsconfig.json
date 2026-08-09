@@ -104,7 +104,7 @@
     "noImplicitThis": true,
     "alwaysStrict": true
   },
-  "include": ["**/*.ts"],
+  "include": ["**/*.ts", "src/**/*.json"],
   "exclude": ["node_modules", "dist", "build", "deploy", "wagmi.config.ts"],
   "references": []
 }

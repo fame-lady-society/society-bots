@@ -26,6 +26,8 @@ export interface Props {
   readonly discordPublicKey: string;
   readonly discordBotToken: string;
   readonly enableSchedules?: boolean;
+  readonly enableMetadataRefresh?: boolean;
+  readonly openSeaApiKey?: string;
 }
 
 function compile(entrypoint: string, options?: BuildOptions) {
@@ -64,13 +66,21 @@ export class EventLambdas extends Construct {
       discordBotToken,
       discordPublicKey,
       enableSchedules = true,
+      enableMetadataRefresh = false,
     } = props;
     const domains = domain instanceof Array ? domain : [domain];
     const domainName = domains.join(".");
 
+    const deferredMessageDeadLetterQueue = new sqs.Queue(this, "DeferredMessageDeadLetterQueue", {
+      retentionPeriod: cdk.Duration.days(14),
+    });
     const deferredMessageQueue = new sqs.Queue(this, "DeferredMessageQueue", {
-      visibilityTimeout: cdk.Duration.seconds(30),
+      visibilityTimeout: cdk.Duration.seconds(180),
       retentionPeriod: cdk.Duration.days(1),
+      deadLetterQueue: {
+        queue: deferredMessageDeadLetterQueue,
+        maxReceiveCount: 5,
+      },
     });
     const deferredMessageTopic = new sns.Topic(this, "DeferredMessageTopic");
     deferredMessageTopic.addSubscription(
@@ -168,6 +178,7 @@ export class EventLambdas extends Construct {
       events: [
         new eventSources.SqsEventSource(deferredMessageQueue, {
           batchSize: 10,
+          reportBatchItemFailures: true,
         }),
       ],
     });
@@ -206,6 +217,48 @@ export class EventLambdas extends Construct {
     lastEventBlock.grantReadWriteData(fameEventHandler);
     discordNotificationsTable.grantReadWriteData(fameEventHandler);
     deferredMessageTopic.grantPublish(fameEventHandler);
+
+    if (enableMetadataRefresh) {
+      if (!props.openSeaApiKey) {
+        throw new Error("OPENSEA_API_KEY is required when metadata refresh is enabled");
+      }
+      const metadataRefreshTable = new dynamodb.Table(this, "FameMetadataRefreshTable", {
+        partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
+        sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
+        billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+        tableClass: dynamodb.TableClass.STANDARD,
+      });
+      const metadataRefreshCodeDir = compile(
+        path.join(__dirname, "../../src/fame-metadata-refresh/lambda/index.ts"),
+      );
+      const metadataRefreshHandler = new lambda.Function(this, "FameMetadataRefresh", {
+        runtime: lambda.Runtime.NODEJS_24_X,
+        architecture: lambda.Architecture.ARM_64,
+        code: lambda.Code.fromAsset(metadataRefreshCodeDir),
+        handler: "index.handler",
+        timeout: cdk.Duration.seconds(60),
+        memorySize: 512,
+        reservedConcurrentExecutions: 1,
+        logGroup: createLambdaLogGroup(this, "FameMetadataRefreshLogGroup", "baseOperational"),
+        environment: {
+          BASE_RPCS_JSON: baseRpcsJson,
+          MAINNET_RPCS_JSON: mainnetRpcsJson,
+          DYNAMODB_REGION: cdk.Stack.of(this).region,
+          DYNAMODB_FAME_METADATA_REFRESH_TABLE_NAME: metadataRefreshTable.tableName,
+          DISCORD_CHANNEL_ID: discordChannelId,
+          DISCORD_MESSAGE_TOPIC_ARN: deferredMessageTopic.topicArn,
+          IMAGE_HOST: domainName,
+          OPENSEA_API_KEY: props.openSeaApiKey,
+          LOG_LEVEL: "INFO",
+        },
+      });
+      metadataRefreshTable.grantReadWriteData(metadataRefreshHandler);
+      deferredMessageTopic.grantPublish(metadataRefreshHandler);
+      const metadataRefreshScheduleRule = new events.Rule(this, "FameMetadataRefreshScheduleRule", {
+        schedule: events.Schedule.rate(cdk.Duration.minutes(4)),
+      });
+      metadataRefreshScheduleRule.addTarget(new eventTargets.LambdaFunction(metadataRefreshHandler));
+    }
 
     const wrapEventCodeDir = compile(
       path.join(__dirname, "../../src/lambda/fls-wrapper-event/index.ts"),
