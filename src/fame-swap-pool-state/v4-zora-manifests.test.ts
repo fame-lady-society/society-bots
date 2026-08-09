@@ -37,9 +37,39 @@ function registryEntry(id: string): FamePoolStateRegistryEntry {
   return pool;
 }
 
+function quoteLaneRegistryFixture(id: string): FamePoolStateRegistryEntry {
+  return {
+    ...registryEntry(id),
+    capability: "market-state",
+    activationStatus: "unsupported",
+    stateSurface: "cl-head-snapshot",
+    unsupportedReason: null,
+  };
+}
+
 describe("FAME V4 Zora quote lane manifest", () => {
+  test("keeps tracked-only target pools blocked until registry activation", () => {
+    for (const id of [
+      FAME_V4_ZORA_QUOTE_LANE_POOL_ID,
+      FAME_V4_ZORA_ETH_QUOTE_LANE_POOL_ID,
+    ]) {
+      const pool = registryEntry(id);
+
+      expect(pool).toMatchObject({
+        capability: "tracked-only",
+        activationStatus: "tracked-only",
+        stateSurface: null,
+        unsupportedReason: "non-direct-fame-pool",
+      });
+      expect(classifyV4ZoraQuoteLane(pool, VERIFIED_PROVENANCE)).toMatchObject({
+        status: "target-blocked",
+        reason: "capability-mismatch",
+      });
+    }
+  });
+
   test("reviews the target PoolKey identity and passive hook shape", () => {
-    const pool = registryEntry(FAME_V4_ZORA_QUOTE_LANE_POOL_ID);
+    const pool = quoteLaneRegistryFixture(FAME_V4_ZORA_QUOTE_LANE_POOL_ID);
     const classification = classifyV4ZoraQuoteLane(pool, VERIFIED_PROVENANCE);
     const permissions = decodeUniswapV4HookPermissions(
       FAME_V4_ZORA_REVIEWED_POOL_SHAPE.hooks,
@@ -75,7 +105,7 @@ describe("FAME V4 Zora quote lane manifest", () => {
   });
 
   test("fails closed without Zora factory provenance evidence", () => {
-    const pool = registryEntry(FAME_V4_ZORA_QUOTE_LANE_POOL_ID);
+    const pool = quoteLaneRegistryFixture(FAME_V4_ZORA_QUOTE_LANE_POOL_ID);
 
     expect(classifyV4ZoraQuoteLane(pool)).toMatchObject({
       status: "target-blocked",
@@ -93,7 +123,7 @@ describe("FAME V4 Zora quote lane manifest", () => {
   });
 
   test("accepts the operator-approved BASEDFLICK/ZORA protocol provenance", () => {
-    const pool = registryEntry(FAME_V4_ZORA_QUOTE_LANE_POOL_ID);
+    const pool = quoteLaneRegistryFixture(FAME_V4_ZORA_QUOTE_LANE_POOL_ID);
 
     expect(
       classifyV4ZoraQuoteLane(pool, FAME_V4_ZORA_APPROVED_PROVENANCE),
@@ -111,7 +141,7 @@ describe("FAME V4 Zora quote lane manifest", () => {
   });
 
   test("accepts the no-hook ZORA/ETH reviewed pool without provenance", () => {
-    const pool = registryEntry(FAME_V4_ZORA_ETH_QUOTE_LANE_POOL_ID);
+    const pool = quoteLaneRegistryFixture(FAME_V4_ZORA_ETH_QUOTE_LANE_POOL_ID);
     const classification = classifyV4ZoraQuoteLane(pool);
     const permissions = decodeUniswapV4HookPermissions(
       FAME_V4_ZORA_ETH_REVIEWED_POOL_SHAPE.hooks,
@@ -157,8 +187,8 @@ describe("FAME V4 Zora quote lane manifest", () => {
       ),
     ).toMatchObject({
       status: "non-target-v4-unsupported",
-        reason: "non-target-v4-pool",
-      });
+      reason: "non-target-v4-pool",
+    });
   });
 
   test("rejects dynamic or mismatched V4 fees", () => {
@@ -270,7 +300,7 @@ describe("FAME V4 Zora quote lane manifest", () => {
   });
 
   test("accepts registry identity regardless of address casing", () => {
-    const pool = registryEntry(FAME_V4_ZORA_QUOTE_LANE_POOL_ID);
+    const pool = quoteLaneRegistryFixture(FAME_V4_ZORA_QUOTE_LANE_POOL_ID);
     const mixedCasePool = {
       ...pool,
       router: "0x6FF5693B99212dA76aD316178A184aB56D299B43",
@@ -289,7 +319,7 @@ describe("FAME V4 Zora quote lane manifest", () => {
   });
 
   test("rejects registry rows that drift from the reviewed target shape", () => {
-    const pool = registryEntry(FAME_V4_ZORA_QUOTE_LANE_POOL_ID);
+    const pool = quoteLaneRegistryFixture(FAME_V4_ZORA_QUOTE_LANE_POOL_ID);
 
     expect(
       classifyV4ZoraQuoteLane(

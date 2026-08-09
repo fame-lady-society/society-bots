@@ -31,7 +31,6 @@ const ACTIVATION_ROWS: ActivationRow[] = [
     selectedCandidate: true,
     liveRouteDependencies: [LIVE_DEPENDENCY_POOL_ID],
   },
-  unrepresented("slipstream-msusd-usdc-a"),
   unrepresented("slipstream-spx-weth"),
   row("slipstream-usdc-frxusd", "cl-head-only", "present", "none"),
   row(
@@ -46,11 +45,8 @@ const ACTIVATION_ROWS: ActivationRow[] = [
     "producer-unrepresented",
     "none",
   ),
-  unrepresented("slipstream-weth-mseth"),
   row("slipstream-zora-usdc", "cl-head-only", "present", "none"),
   row("slipstream-zora-weth", "cl-head-only", "present", "none"),
-  unrepresented("slipstream2-msusd-mseth"),
-  unrepresented("slipstream2-msusd-usdc-c"),
   activeReserve("uniswap-v2-fame-direct"),
   activeReserve("uniswap-v2-usdc-weth"),
   row("uniswap-v3-usdc-weth-30bps", "cl-head-only", "present", "none"),
@@ -476,13 +472,7 @@ describe("FAME delta replay smoke report", () => {
     });
     expect(report.activationEvidence.nonPromotion).toMatchObject({
       blockedPoolIds: ["slipstream-usdc-weth-migrating-50"],
-      producerUnrepresentedPoolIds: [
-        "slipstream-msusd-usdc-a",
-        "slipstream-spx-weth",
-        "slipstream-weth-mseth",
-        "slipstream2-msusd-mseth",
-        "slipstream2-msusd-usdc-c",
-      ],
+      producerUnrepresentedPoolIds: ["slipstream-spx-weth"],
       trackedOnlyPoolIds: ["scale-equalizer-usdc-frxusd"],
       unsupportedPoolIds: [
         LIVE_DEPENDENCY_POOL_ID,
@@ -587,9 +577,9 @@ describe("FAME delta replay smoke report", () => {
       );
     expect(report.activationEvidence.status).toBe("ready");
     expect(report.activationEvidence.validationErrors).toEqual([]);
-    expect(report.activationEvidence.nonPromotion.unsupportedPoolIds).not.toContain(
-      ZORA_ETH_POOL_ID,
-    );
+    expect(
+      report.activationEvidence.nonPromotion.unsupportedPoolIds,
+    ).not.toContain(ZORA_ETH_POOL_ID);
     expect(zoraEthActivation).toMatchObject({
       poolId: ZORA_ETH_POOL_ID,
       status: "active",
@@ -600,9 +590,9 @@ describe("FAME delta replay smoke report", () => {
       provenanceStatus: "not-applicable",
       directionCoverage: ["ETH->ZORA", "ZORA->ETH"],
     });
-    expect(
-      zoraEthActivation?.poolQuoteGates.every((gate) => gate.passed),
-    ).toBe(true);
+    expect(zoraEthActivation?.poolQuoteGates.every((gate) => gate.passed)).toBe(
+      true,
+    );
     expect(
       zoraEthActivation?.routeEligibilityGates.every((gate) => gate.passed),
     ).toBe(false);
@@ -737,8 +727,6 @@ describe("FAME delta replay smoke report", () => {
     const mutableRows = ACTIVATION_ROWS.map((entry) => {
       if (
         entry.poolId === "scale-equalizer-usdc-frxusd" ||
-        entry.poolId === "slipstream2-msusd-mseth" ||
-        entry.poolId === "slipstream2-msusd-usdc-c" ||
         entry.poolId === LIVE_DEPENDENCY_POOL_ID ||
         entry.poolId === "uniswap-v4-usdc-eth" ||
         entry.poolId === "uniswap-v4-zora-eth"
@@ -773,14 +761,10 @@ describe("FAME delta replay smoke report", () => {
     expect(report.activationEvidence.nonPromotion.blockedPoolIds).toEqual([]);
     expect(
       report.activationEvidence.nonPromotion.producerUnrepresentedPoolIds,
-    ).toEqual(
-      expect.arrayContaining(["slipstream-usdc-weth-migrating-50"]),
-    );
+    ).toEqual(expect.arrayContaining(["slipstream-usdc-weth-migrating-50"]));
     expect(report.activationEvidence.nonPromotion.clHeadOnlyPoolIds).toEqual(
       expect.arrayContaining([
         "scale-equalizer-usdc-frxusd",
-        "slipstream2-msusd-mseth",
-        "slipstream2-msusd-usdc-c",
         LIVE_DEPENDENCY_POOL_ID,
         "uniswap-v4-usdc-eth",
         "uniswap-v4-zora-eth",
@@ -886,7 +870,7 @@ describe("FAME delta replay smoke report", () => {
     const missing = trustedActivationInput({
       activationReport: activationReport(ACTIVATION_ROWS.slice(0, -1)),
     });
-    missing.activationReport!.upstreamPoolCount = 26;
+    missing.activationReport!.upstreamPoolCount = 22;
     const duplicate = trustedActivationInput({
       activationReport: activationReport([
         ...ACTIVATION_ROWS,
@@ -899,7 +883,7 @@ describe("FAME delta replay smoke report", () => {
 
     expect(missingReport.activationEvidence.status).toBe("blocked");
     expect(missingReport.activationEvidence.validationErrors).toContain(
-      "Activation report row count 25 does not match upstreamPoolCount 26.",
+      "Activation report row count 21 does not match upstreamPoolCount 22.",
     );
     expect(duplicateReport.activationEvidence.status).toBe("blocked");
     expect(duplicateReport.activationEvidence.validationErrors).toContain(

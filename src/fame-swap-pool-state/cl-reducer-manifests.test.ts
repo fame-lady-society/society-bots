@@ -79,7 +79,7 @@ describe("FAME CL reducer manifests", () => {
 
     const slipstream2 = {
       ...registryEntry(FAME_SELECTED_CL_REPLAY_CANDIDATE_POOL_ID),
-      id: "slipstream2-msusd-usdc-c",
+      id: "slipstream2-unit-usdc",
       venue: "aerodrome-slipstream2",
       venueFamily: "Slipstream2",
     } satisfies FamePoolStateRegistryEntry;

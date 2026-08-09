@@ -272,3 +272,41 @@ export const metadataEvent = {
   ],
   name: "MetadataUpdate",
 } as const;
+
+export const artworkPurchasedEvent = {
+  type: "event",
+  anonymous: false,
+  name: "ArtworkPurchased",
+  inputs: [
+    { name: "buyer", type: "address", indexed: true },
+    { name: "recipient", type: "address", indexed: true },
+    { name: "shellId", type: "uint256", indexed: true },
+    { name: "path", type: "uint8", indexed: false },
+    { name: "sourceId", type: "uint256", indexed: false },
+    { name: "artwork", type: "bytes32", indexed: false },
+    { name: "unitAmount", type: "uint256", indexed: false },
+    { name: "grossPremiumAmount", type: "uint256", indexed: false },
+    { name: "inventoryBefore", type: "uint256", indexed: false },
+    { name: "inventoryAfter", type: "uint256", indexed: false },
+  ],
+} as const;
+
+export const checkoutSettledEvent = {
+  type: "event",
+  anonymous: false,
+  name: "CheckoutSettled",
+  inputs: [
+    { name: "buyer", type: "address", indexed: true },
+    { name: "inputAsset", type: "address", indexed: true },
+    { name: "shellId", type: "uint256", indexed: true },
+    { name: "routeHash", type: "bytes32", indexed: false },
+    { name: "fulfillmentPath", type: "uint8", indexed: false },
+    { name: "sourceId", type: "uint256", indexed: false },
+    { name: "artwork", type: "bytes32", indexed: false },
+    { name: "inputAmount", type: "uint256", indexed: false },
+    { name: "inputRefund", type: "uint256", indexed: false },
+    { name: "routerFameOutput", type: "uint256", indexed: false },
+    { name: "marketplaceFameCharge", type: "uint256", indexed: false },
+    { name: "fameRefund", type: "uint256", indexed: false },
+  ],
+} as const;
