@@ -17,6 +17,14 @@ function optionalIntegerEnv(name: string, fallback: number): number {
   return parsed;
 }
 
+function optionalPositiveIntegerEnv(name: string, fallback: number): number {
+  const parsed = optionalIntegerEnv(name, fallback);
+  if (parsed <= 0) {
+    throw new Error(`${name} must be a positive integer`);
+  }
+  return parsed;
+}
+
 function optionalBooleanEnv(name: string, fallback: boolean): boolean {
   const value = process.env[name];
   if (!value || value.trim().length === 0) return fallback;
@@ -70,3 +78,6 @@ export const FAME_POOL_STATE_CL_REPLAY_MAX_RANGE_BLOCKS = optionalIntegerEnv(
   "FAME_POOL_STATE_CL_REPLAY_MAX_RANGE_BLOCKS",
   1_000,
 );
+
+export const FAME_POOL_STATE_RPC_GET_LOGS_BLOCK_RANGE =
+  optionalPositiveIntegerEnv("FAME_POOL_STATE_RPC_GET_LOGS_BLOCK_RANGE", 500);

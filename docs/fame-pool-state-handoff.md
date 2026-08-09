@@ -159,7 +159,7 @@ Delta CL replay maintenance is separate from the quoteable replay pointer. The i
 `deploy/lib/fame-pool-state.ts` creates:
 
 - DynamoDB table: latest pool state rows and cursor rows.
-- Scheduled indexer Lambda: requires `BASE_RPCS_JSON`, validated as a non-empty JSON array of non-empty RPC URLs.
+- Scheduled indexer Lambda: requires `FAME_POOL_STATE_INDEXER_BASE_RPCS_JSON`, validated as a non-empty JSON array of non-empty RPC URLs. The bundled Lambda still receives that value as runtime `BASE_RPCS_JSON`; deploy-time config must not fall back to the shared app `BASE_RPCS_JSON`.
 - API Lambda: requires an environment-scoped service token. Main deploy uses `FAME_POOL_STATE_SERVICE_TOKEN`; PR deploy uses `FAME_POOL_STATE_PR_SERVICE_TOKEN`.
 - EventBridge schedule: defaults to once per minute.
 - HTTP API route: `POST /fame/pool-state`.
@@ -168,9 +168,9 @@ The API accepts auth through `Authorization: Bearer <token>`. `www` should set `
 
 PR deploys must run under `STAGE=PR-<number>` so they synthesize `Bot-PR-<number>` and `BotCert-PR-<number>` instead of the shared dev stack. Cleanup deletes only those named CloudFormation stacks and does not require the production helper token.
 
-For pool-state-only live validation before merge, add the `DEPLOY_POOL_STATE_DEV` label to the PR. That deploys `BotPoolStateDev` with only `BASE_RPCS_JSON` and `FAME_POOL_STATE_DEV_SERVICE_TOKEN`, and emits `FamePoolStateDevEndpointUrl` for `/fame/pool-state`. It does not require image, Discord, Farcaster, custom domain, or cert env.
+For pool-state-only live validation before merge, add the `DEPLOY_POOL_STATE_DEV` label to the PR. That deploys `BotPoolStateDev` with only `FAME_POOL_STATE_INDEXER_BASE_RPCS_JSON` and `FAME_POOL_STATE_DEV_SERVICE_TOKEN`, and emits `FamePoolStateDevEndpointUrl` for `/fame/pool-state`. It does not require the shared app `BASE_RPCS_JSON`, image, Discord, Farcaster, custom domain, or cert env.
 
-For messy full-app validation before merge, add the `DEPLOY_DEV` label to the PR. That updates the existing `Bot-dev` / `BotCert-dev` stacks with `IMAGE_BASE_HOST_JSON=["dev","fame.support"]`, uses `FAME_POOL_STATE_DEV_SERVICE_TOKEN`, and disables the scheduled event processors for that deploy path. It does not trigger the production `main` deploy workflow.
+For messy full-app validation before merge, add the `DEPLOY_DEV` label to the PR. That updates the existing `Bot-dev` / `BotCert-dev` stacks with `IMAGE_BASE_HOST_JSON=["dev","fame.support"]`, uses `FAME_POOL_STATE_DEV_SERVICE_TOKEN` plus `FAME_POOL_STATE_INDEXER_BASE_RPCS_JSON` for the pool-state indexer, and disables the scheduled event processors for that deploy path. It does not trigger the production `main` deploy workflow.
 
 The scheduled indexer failure destination and passive alarms are intended for inspection, not paging. For this community service, first-release readiness requires the release owner to inspect the failure queue depth, passive alarm states, and recent `observedThroughBlock` logs before enabling `www` production helper env.
 

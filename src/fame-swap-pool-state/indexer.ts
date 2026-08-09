@@ -6,11 +6,7 @@ import {
   type Address,
   type Hex,
 } from "viem";
-import {
-  Uint256ReserveSyncEvent,
-  UniswapV2PairReserveAbi,
-  UniswapV2SyncEvent,
-} from "../events.ts";
+import { UniswapV2PairReserveAbi } from "../events.ts";
 import type { baseClient } from "../viem.ts";
 import {
   batchGetLatestClReplayCandidateStates,
@@ -122,7 +118,9 @@ function eligibleV4QuoteLaneEvidence({
 } {
   const classification = classifyV4ZoraQuoteLane(pool, provenance);
   if (classification.status !== "target-eligible") {
-    throw new Error(`${pool.id} V4 replay pool is not reviewed quote eligible.`);
+    throw new Error(
+      `${pool.id} V4 replay pool is not reviewed quote eligible.`,
+    );
   }
   return {
     reviewedPoolEvidence:
@@ -135,13 +133,12 @@ function eligibleV4QuoteLaneEvidence({
 type ClReplayTrustedCursorCheck =
   | { canAdvance: true; reason: null }
   | { canAdvance: false; reason: string | null };
-type FamePoolStateSyncEventKind = "uint112-reserves" | "uint256-reserves";
 
 const CL_MIN_TICK = -887_272;
 const CL_MAX_TICK = 887_272;
 const CL_TICK_BITMAP_WORD_SIZE = 256;
 const CL_REPLAY_PROVIDER_READ_BATCH_SIZE = 4;
-const RPC_GET_LOGS_BLOCK_RANGE = 10n;
+const DEFAULT_RPC_GET_LOGS_BLOCK_RANGE = 500;
 
 const SlipstreamSlot0Abi = [
   {
@@ -425,18 +422,6 @@ const UniswapV4StateViewTickInfoAbi = [
   },
 ] as const;
 
-export interface FamePoolStateSyncLog {
-  address: Address;
-  blockNumber: bigint;
-  transactionIndex: number;
-  logIndex: number;
-  transactionHash: Hex;
-  args: {
-    reserve0: bigint;
-    reserve1: bigint;
-  };
-}
-
 export interface FameClReplayRawLog {
   address: Address;
   blockNumber: bigint;
@@ -563,11 +548,6 @@ export interface FamePoolStateIndexerClient {
   getBlock(options: {
     blockNumber: bigint;
   }): Promise<{ hash: Hex | null; parentHash: Hex }>;
-  getSyncLogs(options: {
-    pools: readonly QuoteModelPool[];
-    fromBlock: bigint;
-    toBlock: bigint;
-  }): Promise<readonly FamePoolStateSyncLog[]>;
   getClReplayLogs(options: {
     pools: readonly ClReplayPool[];
     fromBlock: bigint;
@@ -913,14 +893,6 @@ function v4ClReplayPools({
       pool.tickSpacing !== null
     );
   });
-}
-
-function syncEventKind(pool: QuoteModelPool): FamePoolStateSyncEventKind {
-  if (pool.venue === "uniswap-v2") return "uint112-reserves";
-  if (pool.venue === "solidly" || pool.venue === "aerodrome-v2") {
-    return "uint256-reserves";
-  }
-  throw new Error(`${pool.id} has no supported Sync event kind.`);
 }
 
 function addressKey(address: Address): string {
@@ -1490,20 +1462,6 @@ async function readBlockIdentity({
     throw new Error(`Block ${blockNumber.toString()} has no hash.`);
   }
   return { blockHash: block.hash, parentHash: block.parentHash };
-}
-
-function sortedLogs(
-  logs: readonly FamePoolStateSyncLog[],
-): FamePoolStateSyncLog[] {
-  return [...logs].sort((left, right) => {
-    if (left.blockNumber !== right.blockNumber) {
-      return left.blockNumber < right.blockNumber ? -1 : 1;
-    }
-    if (left.transactionIndex !== right.transactionIndex) {
-      return left.transactionIndex - right.transactionIndex;
-    }
-    return left.logIndex - right.logIndex;
-  });
 }
 
 function sortedReplayLogs(
@@ -2687,9 +2645,25 @@ export async function getUniswapV4ClReplaySnapshot({
   };
 }
 
+export interface CreateViemPoolStateIndexerClientOptions {
+  getLogsBlockRange?: number;
+}
+
+function getLogsBlockRangeFromOptions(
+  options: CreateViemPoolStateIndexerClientOptions,
+): bigint {
+  const value = options.getLogsBlockRange ?? DEFAULT_RPC_GET_LOGS_BLOCK_RANGE;
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error("getLogsBlockRange must be a positive safe integer.");
+  }
+  return BigInt(value);
+}
+
 export function createViemPoolStateIndexerClient(
   client: typeof baseClient,
+  options: CreateViemPoolStateIndexerClientOptions = {},
 ): FamePoolStateIndexerClient {
+  const getLogsBlockRange = getLogsBlockRangeFromOptions(options);
   return {
     chain: {
       id: client.chain.id,
@@ -2700,78 +2674,24 @@ export function createViemPoolStateIndexerClient(
     getBlock(options) {
       return client.getBlock(options);
     },
-    async getSyncLogs({ pools, fromBlock, toBlock }) {
-      const uint112Addresses = pools
-        .filter((pool) => syncEventKind(pool) === "uint112-reserves")
-        .map((pool) => pool.poolAddress);
-      const uint256Addresses = pools
-        .filter((pool) => syncEventKind(pool) === "uint256-reserves")
-        .map((pool) => pool.poolAddress);
-      const logs: FamePoolStateSyncLog[] = [];
-      for (const range of boundedBlockRanges({
-        fromBlock,
-        toBlock,
-        maxRange: RPC_GET_LOGS_BLOCK_RANGE,
-      })) {
-        if (uint112Addresses.length > 0) {
-          const uint112Logs = await client.getLogs({
-            address: uint112Addresses,
-            event: UniswapV2SyncEvent,
-            fromBlock: range.fromBlock,
-            toBlock: range.toBlock,
-            strict: true,
-          });
-          logs.push(
-            ...uint112Logs.map((log) => ({
-              address: log.address,
-              blockNumber: log.blockNumber,
-              transactionIndex: log.transactionIndex,
-              logIndex: log.logIndex,
-              transactionHash: log.transactionHash,
-              args: {
-                reserve0: log.args.reserve0,
-                reserve1: log.args.reserve1,
-              },
-            })),
-          );
-        }
-        if (uint256Addresses.length > 0) {
-          const uint256Logs = await client.getLogs({
-            address: uint256Addresses,
-            event: Uint256ReserveSyncEvent,
-            fromBlock: range.fromBlock,
-            toBlock: range.toBlock,
-            strict: true,
-          });
-          logs.push(
-            ...uint256Logs.map((log) => ({
-              address: log.address,
-              blockNumber: log.blockNumber,
-              transactionIndex: log.transactionIndex,
-              logIndex: log.logIndex,
-              transactionHash: log.transactionHash,
-              args: {
-                reserve0: log.args.reserve0,
-                reserve1: log.args.reserve1,
-              },
-            })),
-          );
-        }
-      }
-      return logs;
-    },
     async getClReplayLogs({ pools, fromBlock, toBlock }) {
       if (pools.length === 0) return [];
       const logs: FameClReplayRawLog[] = [];
       for (const range of boundedBlockRanges({
         fromBlock,
         toBlock,
-        maxRange: RPC_GET_LOGS_BLOCK_RANGE,
+        maxRange: getLogsBlockRange,
       })) {
         const rangeLogs = await client.getLogs({
           address: pools.map((pool) => pool.poolAddress),
           fromBlock: range.fromBlock,
           toBlock: range.toBlock,
+          events: [
+            ClReplaySwapEventAbi,
+            ClReplayMintEventAbi,
+            ClReplayBurnEventAbi,
+            ClReplayCollectEventAbi,
+          ],
         });
         logs.push(
           ...rangeLogs.map((log) => ({
@@ -2795,7 +2715,7 @@ export function createViemPoolStateIndexerClient(
       for (const range of boundedBlockRanges({
         fromBlock,
         toBlock,
-        maxRange: RPC_GET_LOGS_BLOCK_RANGE,
+        maxRange: getLogsBlockRange,
       })) {
         const rangeLogs = await client.getLogs({
           address: FAME_V4_ZORA_REVIEWED_POOL_SHAPE.poolManager,
@@ -3181,20 +3101,9 @@ export async function indexFamePoolStates({
     observedThroughBlock,
   );
   const updatedAt = now.toISOString();
-  const poolByAddress = new Map(
-    pools.map((pool) => [addressKey(pool.poolAddress), pool]),
-  );
 
-  let writtenEvents = 0;
-  let ignoredEvents = 0;
-  const logs =
-    pools.length === 0 || fromBlock > observedThroughBlock
-      ? []
-      : await client.getSyncLogs({
-          pools,
-          fromBlock: BigInt(fromBlock),
-          toBlock: safeBlock,
-        });
+  const writtenEvents = 0;
+  const ignoredEvents = 0;
   const reserveSnapshots = new Map(
     await Promise.all(
       pools.map(async (pool) => {
@@ -3206,35 +3115,6 @@ export async function indexFamePoolStates({
       }),
     ),
   );
-
-  for (const log of sortedLogs(logs)) {
-    const pool = poolByAddress.get(addressKey(log.address));
-    if (!pool) {
-      throw new Error(`Sync log came from unregistered pool ${log.address}.`);
-    }
-
-    const result = await putLatestPoolState({
-      db,
-      tableName,
-      state: latestStateFromReserves({
-        pool,
-        reserve0: log.args.reserve0,
-        reserve1: log.args.reserve1,
-        observedThroughBlock: writeObservedThroughBlock,
-        version: {
-          blockNumber: safeNumber(log.blockNumber, "Sync event block number"),
-          transactionIndex: log.transactionIndex,
-          logIndex: log.logIndex,
-        },
-        transactionHash: log.transactionHash,
-        source: "sync-event",
-        sourceRegistryId,
-        updatedAt,
-      }),
-    });
-    if (result === "written") writtenEvents += 1;
-    else ignoredEvents += 1;
-  }
 
   let seededPools = 0;
   let reconciledPools = 0;
@@ -4184,7 +4064,7 @@ export async function indexFamePoolStates({
     durationMs: Date.now() - startedAtMs,
     fromBlock,
     observedThroughBlock,
-    syncEvents: logs.length,
+    syncEvents: 0,
     writtenEvents,
     ignoredEvents,
     seededPools,
