@@ -5,7 +5,7 @@ import { artworkPurchasedEvent, checkoutSettledEvent, ERC721TransferEventAbi } f
 import type { MetadataRefreshCheckpointId, MetadataRefreshStore } from "./dynamodb.ts";
 import { runMetadataRefreshIndexer } from "./indexer.ts";
 
-const START_BLOCK = 49_751_804n;
+const START_BLOCK = 49_729_692n;
 const buyer = "0x0000000000000000000000000000000000000001" as const;
 const intermediary = "0x0000000000000000000000000000000000000002" as const;
 const finalOwner = "0x0000000000000000000000000000000000000003" as const;

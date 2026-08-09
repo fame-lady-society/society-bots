@@ -16,7 +16,7 @@ const MAX_BLOCKS = 200n;
 const MAX_EVENTS = 20;
 const MAX_RETRY_DELAY_MS = 1_000;
 const MINIMUM_METADATA_JOB_TIME_MS = 45_000;
-const INITIAL_CHECKPOINT = 49_751_804n;
+const INITIAL_CHECKPOINT = 49_729_692n;
 const METADATA_CHECKPOINT: MetadataRefreshCheckpointId = "base-metadata-update";
 const PURCHASE_CHECKPOINT: MetadataRefreshCheckpointId = "base-marketplace-purchase";
 
