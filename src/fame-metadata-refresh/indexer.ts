@@ -12,7 +12,7 @@ import { BASE_CHAIN_ID, type MetadataRefreshJob } from "./types.ts";
 
 const logger = createLogger({ name: "fame-metadata-refresh" });
 const FINALITY_BLOCKS = 8n;
-const MAX_BLOCKS = 200n;
+const MAX_BLOCKS = 1_000n;
 const MAX_EVENTS = 20;
 const MAX_RETRY_DELAY_MS = 1_000;
 const MINIMUM_METADATA_JOB_TIME_MS = 45_000;
