@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it, jest } from "@jest/globals";
-import { encodeAbiParameters, encodeEventTopics, parseAbiParameters, zeroAddress } from "viem";
+import { ContractFunctionExecutionError, ContractFunctionRevertedError, encodeAbiParameters, encodeEventTopics, parseAbiParameters, zeroAddress, type Abi } from "viem";
 import { BASE_FAME_CHECKOUT_ADDRESS, BASE_FAME_NFT_ADDRESS, BASE_UNIVERSAL_MARKETPLACE_ADDRESS } from "@/constants.ts";
 import { artworkPurchasedEvent, checkoutSettledEvent, ERC721TransferEventAbi } from "@/events.ts";
 import type { MetadataRefreshCheckpointId, MetadataRefreshStore } from "./dynamodb.ts";
 import { runMetadataRefreshIndexer } from "./indexer.ts";
+import { BASE_CHAIN_ID, type MetadataRefreshJob } from "./types.ts";
+import fixture from "./_fixtures/base-failing-marketplace-receipt.json";
 
 const START_BLOCK = 49_729_692n;
 const buyer = "0x0000000000000000000000000000000000000001" as const;
@@ -43,11 +45,12 @@ class InMemoryMetadataRefreshStore {
         this.items.set(key, { ...existing, nextBlock: values[":nextBlock"], nextLogIndex: values[":nextLogIndex"] });
         return {};
       }
-      const nextState = values[":published"] ?? values[":accepted"] ?? values[":inFlight"];
+      const nextState = values[":published"] ?? values[":accepted"] ?? values[":skipped"] ?? values[":inFlight"];
       this.items.set(key, {
         ...existing,
         ...(typeof nextState === "string" ? { state: nextState } : {}),
         ...(typeof values[":attempts"] === "number" ? { attempts: values[":attempts"] } : {}),
+        ...(typeof values[":reason"] === "string" ? { skipReason: values[":reason"] } : {}),
       });
       return {};
     }
@@ -56,6 +59,12 @@ class InMemoryMetadataRefreshStore {
 
   setCheckpoint(blockNumber: bigint, checkpointId: MetadataRefreshCheckpointId = METADATA_CHECKPOINT, nextLogIndex = 0) {
     this.items.set(`checkpoint|${checkpointId}`, { pk: "checkpoint", sk: checkpointId, nextBlock: Number(blockNumber), nextLogIndex });
+  }
+
+  setMetadataJob(job: MetadataRefreshJob) {
+    const pk = `event#${job.chainId}#${job.transactionHash}`;
+    const sk = `log#${job.logIndex}`;
+    this.items.set(`${pk}|${sk}`, { ...job, pk, sk, tokenId: job.tokenId.toString(), blockNumber: Number(job.blockNumber) });
   }
 
   checkpoint(checkpointId: MetadataRefreshCheckpointId = METADATA_CHECKPOINT) {
@@ -69,6 +78,14 @@ class InMemoryMetadataRefreshStore {
 
   acceptedJobCount() {
     return [...this.items.values()].filter((item) => item.state === "accepted").length;
+  }
+
+  skippedJobCount() {
+    return [...this.items.values()].filter((item) => item.state === "skipped").length;
+  }
+
+  metadataJob(transactionHash: `0x${string}`, logIndex: number) {
+    return this.items.get(`event#${BASE_CHAIN_ID}#${transactionHash}|log#${logIndex}`);
   }
 }
 
@@ -117,6 +134,16 @@ function metadataLog(index: number) {
   };
 }
 
+function tokenDoesNotExistError(abi: Abi, tokenId: bigint) {
+  const reverted = new ContractFunctionRevertedError({ abi, data: "0xceea21b6", functionName: "tokenURI" });
+  return new ContractFunctionExecutionError(reverted, {
+    abi,
+    args: [tokenId],
+    contractAddress: BASE_FAME_NFT_ADDRESS,
+    functionName: "tokenURI",
+  });
+}
+
 function dependencies({
   store,
   metadataLogs = [],
@@ -127,6 +154,7 @@ function dependencies({
   publish = jest.fn<(input: { Message: string; TopicArn: string }) => Promise<{ MessageId: string }>>(async () => ({ MessageId: "message-id" })),
   fetcher,
   remainingTimeInMillis,
+  readContract,
 }: {
   store: InMemoryMetadataRefreshStore;
   metadataLogs?: ReturnType<typeof metadataLog>[];
@@ -137,6 +165,7 @@ function dependencies({
   publish?: Publish;
   fetcher?: typeof fetch;
   remainingTimeInMillis?: () => number;
+  readContract?: (input: { abi: Abi; address: string; functionName: string; args: [bigint] }) => Promise<unknown>;
 }) {
   const getLogs = jest.fn(async ({ address, fromBlock, toBlock }: { address: string; fromBlock: bigint; toBlock: bigint }) => {
     const logs = address.toLowerCase() === BASE_FAME_NFT_ADDRESS.toLowerCase() ? metadataLogs : purchases;
@@ -159,7 +188,7 @@ function dependencies({
         getBlockNumber: jest.fn(async () => head),
         getLogs,
         getTransactionReceipt: jest.fn(async ({ hash }: { hash: `0x${string}` }) => ({ ...receipt, transactionHash: hash })),
-        readContract: jest.fn(async ({ args }: { args: [bigint] }) => `https://metadata.example/${args[0].toString()}`),
+        readContract: jest.fn(readContract ?? (async ({ args }: { args: [bigint] }) => `https://metadata.example/${args[0].toString()}`)),
       },
       ensClient: { getEnsName },
       store: store as unknown as MetadataRefreshStore,
@@ -347,6 +376,70 @@ describe("metadata refresh indexer lifecycle", () => {
     expect(openSeaReads).toBe(3);
     expect(store.acceptedJobCount()).toBe(1);
     expect(store.checkpoint()).toEqual({ nextBlock: Number(START_BLOCK + 1n), nextLogIndex: 0 });
+  });
+
+  it("recovers an in-flight missing NFT without blocking live metadata or replaying the skipped job", async () => {
+    const store = new InMemoryMetadataRefreshStore();
+    store.setCheckpoint(START_BLOCK);
+    const receiptBlock = BigInt(fixture.blockNumber);
+    const metadataLogs = fixture.logs.slice(0, 2).map((log) => ({
+      transactionHash: fixture.transactionHash as `0x${string}`,
+      blockNumber: receiptBlock,
+      logIndex: Number(BigInt(log.logIndex)),
+      args: { _tokenId: BigInt(log.data) },
+    }));
+    const missingLog = metadataLogs.find((log) => log.args._tokenId === 617n);
+    if (!missingLog) throw new Error("Fixture is missing MetadataUpdate(617)");
+    store.setMetadataJob({
+      chainId: BASE_CHAIN_ID,
+      transactionHash: missingLog.transactionHash,
+      logIndex: missingLog.logIndex,
+      tokenId: missingLog.args._tokenId,
+      blockNumber: missingLog.blockNumber,
+      state: "in_flight",
+      attempts: 1,
+    });
+    const readContract = jest.fn(async ({ abi, functionName, args }: { abi: Abi; functionName: string; args: [bigint] }) => {
+      if (functionName !== "tokenURI") throw new Error(`Unexpected contract read ${functionName}`);
+      if (args[0] === 617n) throw tokenDoesNotExistError(abi, args[0]);
+      return `https://metadata.example/${args[0].toString()}`;
+    });
+    const fetcher = jest.fn<typeof fetch>(async (input) => {
+      const url = String(input);
+      if (url.startsWith("https://metadata.example/")) {
+        return new Response(JSON.stringify({ name: "FAME", description: "Society", image: "https://image.example/fame.png" }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ nft: { name: "FAME", description: "Society", image_url: "https://image.example/fame.png" } }), { status: 200 });
+    });
+    const setup = dependencies({ store, metadataLogs, head: receiptBlock + 8n, readContract, fetcher });
+
+    await runMetadataRefreshIndexer(setup.dependencies as never);
+
+    expect(store.acceptedJobCount()).toBe(1);
+    expect(store.skippedJobCount()).toBe(1);
+    expect(store.checkpoint()).toEqual({ nextBlock: Number(receiptBlock + 1n), nextLogIndex: 0 });
+    expect(readContract).toHaveBeenCalledWith(expect.objectContaining({ functionName: "tokenURI", args: [617n] }));
+    expect(store.metadataJob(missingLog.transactionHash, missingLog.logIndex)).toEqual(expect.objectContaining({ state: "skipped", skipReason: "token_not_found" }));
+    expect(fetcher.mock.calls.some(([input]) => String(input).includes("/617"))).toBe(false);
+
+    const callsAfterFirstRun = readContract.mock.calls.length;
+    store.setCheckpoint(START_BLOCK);
+    await runMetadataRefreshIndexer(setup.dependencies as never);
+    expect(readContract).toHaveBeenCalledTimes(callsAfterFirstRun);
+  });
+
+  it("keeps unrelated tokenURI failures loud and retryable", async () => {
+    const store = new InMemoryMetadataRefreshStore();
+    store.setCheckpoint(START_BLOCK);
+    const setup = dependencies({
+      store,
+      metadataLogs: [metadataLog(0)],
+      readContract: async () => { throw new Error("RPC unavailable"); },
+    });
+
+    await expect(runMetadataRefreshIndexer(setup.dependencies as never)).rejects.toThrow("RPC unavailable");
+    expect(store.skippedJobCount()).toBe(0);
+    expect(store.checkpoint()).toEqual({ nextBlock: Number(START_BLOCK), nextLogIndex: 0 });
   });
 
   it("retries a transport failure and holds the checkpoint after terminal OpenSea failure", async () => {

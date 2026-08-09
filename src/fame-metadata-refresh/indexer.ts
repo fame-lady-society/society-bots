@@ -5,9 +5,9 @@ import { BASE_FAME_NFT_ADDRESS, BASE_UNIVERSAL_MARKETPLACE_ADDRESS } from "@/con
 import { artworkPurchasedEvent, metadataEvent } from "@/events.ts";
 import { sendDiscordMessage } from "@/discord/pubsub/send.ts";
 import { createLogger } from "@/utils/logging.ts";
-import { advanceCheckpoint, getCheckpoint, initializeCheckpoint, markAccepted, markInFlight, markPurchaseNotificationPublished, putJob, shouldPublishPurchaseNotification, type MetadataRefreshCheckpoint, type MetadataRefreshCheckpointId, type MetadataRefreshStore } from "./dynamodb.ts";
+import { advanceCheckpoint, getCheckpoint, initializeCheckpoint, markAccepted, markInFlight, markMissingTokenSkipped, markPurchaseNotificationPublished, putJob, shouldPublishPurchaseNotification, type MetadataRefreshCheckpoint, type MetadataRefreshCheckpointId, type MetadataRefreshStore } from "./dynamodb.ts";
 import { isRetryableOpenSeaStatus, metadataMatches, OpenSeaResponseError, readOpenSeaMetadata, refreshOpenSeaMetadata } from "./opensea.ts";
-import { authoritativeMetadata, projectPurchaseNotification, purchaseEmbed } from "./purchase.ts";
+import { authoritativeMetadata, isMissingFameNft, projectPurchaseNotification, purchaseEmbed } from "./purchase.ts";
 import { BASE_CHAIN_ID, type MetadataRefreshJob } from "./types.ts";
 
 const logger = createLogger({ name: "fame-metadata-refresh" });
@@ -25,7 +25,7 @@ function startBlock() {
 }
 
 async function refreshJob(job: MetadataRefreshJob, dependencies: IndexerDependencies) {
-  if (job.state === "accepted") return;
+  if (job.state === "accepted" || job.state === "skipped") return;
   await markInFlight(job, dependencies.store);
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
@@ -38,6 +38,11 @@ async function refreshJob(job: MetadataRefreshJob, dependencies: IndexerDependen
       logger.info({ event: "metadata_refresh_accepted", tokenId: job.tokenId.toString(), transactionHash: job.transactionHash, logIndex: job.logIndex }, "metadata refresh accepted");
       return;
     } catch (error: unknown) {
+      if (isMissingFameNft(error)) {
+        await markMissingTokenSkipped(job, dependencies.store);
+        logger.info({ event: "metadata_refresh_skipped", tokenId: job.tokenId.toString(), transactionHash: job.transactionHash, logIndex: job.logIndex, reason: "token_not_found" }, "Metadata refresh skipped for a token that does not exist");
+        return;
+      }
       const retryable = error instanceof OpenSeaResponseError
         ? isRetryableOpenSeaStatus(error.status)
         : error instanceof TypeError || (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError"));

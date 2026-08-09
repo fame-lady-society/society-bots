@@ -78,6 +78,10 @@ export async function markAccepted(job: MetadataRefreshJob, store: MetadataRefre
   await store.send(new UpdateCommand({ TableName: tableName(), Key: { pk: `event#${job.chainId}#${job.transactionHash}`, sk: `log#${job.logIndex}` }, UpdateExpression: "SET #state = :accepted, attempts = :attempts", ExpressionAttributeNames: { "#state": "state" }, ExpressionAttributeValues: { ":accepted": "accepted", ":attempts": job.attempts + 1 } }));
 }
 
+export async function markMissingTokenSkipped(job: MetadataRefreshJob, store: MetadataRefreshStore = defaultDb) {
+  await store.send(new UpdateCommand({ TableName: tableName(), Key: { pk: `event#${job.chainId}#${job.transactionHash}`, sk: `log#${job.logIndex}` }, UpdateExpression: "SET #state = :skipped, attempts = :attempts, skipReason = :reason", ExpressionAttributeNames: { "#state": "state" }, ExpressionAttributeValues: { ":skipped": "skipped", ":attempts": job.attempts + 1, ":reason": "token_not_found" } }));
+}
+
 export async function markInFlight(job: MetadataRefreshJob, store: MetadataRefreshStore = defaultDb) {
   await store.send(new UpdateCommand({ TableName: tableName(), Key: { pk: `event#${job.chainId}#${job.transactionHash}`, sk: `log#${job.logIndex}` }, UpdateExpression: "SET #state = :inFlight, attempts = :attempts", ExpressionAttributeNames: { "#state": "state" }, ExpressionAttributeValues: { ":inFlight": "in_flight", ":attempts": job.attempts + 1 } }));
 }
