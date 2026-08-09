@@ -40,6 +40,8 @@ export class DeployInfraStack extends cdk.Stack {
       discordBotToken: process.env.DISCORD_BOT_TOKEN!,
       discordPublicKey: process.env.DISCORD_PUBLIC_KEY!,
       enableSchedules: process.env.ENABLE_EVENT_SCHEDULES !== "false",
+      enableMetadataRefresh: process.env.STAGE === "prod",
+      openSeaApiKey: process.env.OPENSEA_API_KEY,
     });
 
     const {
