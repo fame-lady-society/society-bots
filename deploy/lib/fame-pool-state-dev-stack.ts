@@ -64,7 +64,7 @@ export class FamePoolStateDevStack extends cdk.Stack {
       authorizer,
     });
 
-    httpApi.addRoutes({
+    const [landingSnapshotRoute] = httpApi.addRoutes({
       path: "/fame/landing-defi-snapshot",
       methods: [apigw2.HttpMethod.GET],
       integration: new HttpLambdaIntegration(
@@ -77,6 +77,14 @@ export class FamePoolStateDevStack extends cdk.Stack {
     if (!(defaultStage instanceof apigw2.CfnStage)) {
       throw new Error("FAME pool-state dev API requires its default stage.");
     }
+    const landingSnapshotRouteResource =
+      landingSnapshotRoute.node.defaultChild;
+    if (!(landingSnapshotRouteResource instanceof apigw2.CfnRoute)) {
+      throw new Error(
+        "FAME pool-state dev API requires its landing snapshot route.",
+      );
+    }
+    defaultStage.addDependency(landingSnapshotRouteResource);
     defaultStage.addPropertyOverride("RouteSettings", {
       "GET /fame/landing-defi-snapshot": {
         ThrottlingBurstLimit: 20,

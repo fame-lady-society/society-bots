@@ -126,7 +126,7 @@ export class HttpApi extends Construct {
       authorizer: famePoolStateAuthorizer,
     });
 
-    httpApi.addRoutes({
+    const [landingSnapshotRoute] = httpApi.addRoutes({
       path: "/fame/landing-defi-snapshot",
       methods: [apigw2.HttpMethod.GET],
       integration: new HttpLambdaIntegration(
@@ -139,6 +139,14 @@ export class HttpApi extends Construct {
     if (!(defaultStage instanceof apigw2.CfnStage)) {
       throw new Error("SocietyBot HTTP API requires its default stage.");
     }
+    const landingSnapshotRouteResource =
+      landingSnapshotRoute.node.defaultChild;
+    if (!(landingSnapshotRouteResource instanceof apigw2.CfnRoute)) {
+      throw new Error(
+        "SocietyBot HTTP API requires its landing snapshot route.",
+      );
+    }
+    defaultStage.addDependency(landingSnapshotRouteResource);
     defaultStage.addPropertyOverride("RouteSettings", {
       "GET /fame/landing-defi-snapshot": {
         ThrottlingBurstLimit: 20,
