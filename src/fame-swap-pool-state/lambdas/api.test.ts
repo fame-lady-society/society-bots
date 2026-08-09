@@ -7,6 +7,7 @@ import type {
 import type { Address, Hex } from "viem";
 import type { FamePoolStateBatchResponse } from "../api.ts";
 import type {
+  FameLandingSnapshotHandler,
   FamePoolQuoteBatchHandler,
   FamePoolStateBatchHandler,
 } from "./api.ts";
@@ -20,25 +21,32 @@ function eventFixture({
   body,
   headers = { authorization: "Bearer unit-token" },
   path = "/fame/pool-state",
+  method = "POST",
+  rawQueryString = "",
+  cookies,
 }: {
   body?: string;
   headers?: Record<string, string | undefined>;
   path?: string;
+  method?: string;
+  rawQueryString?: string;
+  cookies?: string[];
 }): APIGatewayProxyEventV2 {
-  const routeKey = `POST ${path}`;
+  const routeKey = `${method} ${path}`;
   return {
     version: "2.0",
     routeKey,
     rawPath: path,
-    rawQueryString: "",
+    rawQueryString,
     headers,
+    cookies,
     requestContext: {
       accountId: "unit",
       apiId: "unit",
       domainName: "api.example",
       domainPrefix: "api",
       http: {
-        method: "POST",
+        method,
         path,
         protocol: "HTTP/1.1",
         sourceIp: "127.0.0.1",
@@ -199,6 +207,163 @@ async function requestHandler(
 }
 
 describe("FAME pool-state API Lambda transport", () => {
+  test("serves the fixed landing snapshot anonymously with cache and version headers", async () => {
+    const { handleFamePoolStateApiEvent } = await loadApiModule();
+    const infoLog = jest
+      .spyOn(console, "log")
+      .mockImplementation(() => undefined);
+    const snapshot = {
+      schemaVersion: "fame-landing-defi-snapshot-v1",
+      provenance: {
+        snapshotId: "fame-landing-defi-snapshot-v1:120:0xabc",
+        safeBlockNumber: 120,
+      },
+    } as never;
+    const readLandingSnapshot: FameLandingSnapshotHandler = async () => ({
+      status: "success",
+      snapshot,
+      ageSeconds: 10,
+      cacheControl:
+        "public, max-age=60, s-maxage=60, stale-while-revalidate=120",
+    });
+    try {
+      const response = structuredResponse(
+        await handleFamePoolStateApiEvent({
+          event: eventFixture({
+            path: "/fame/landing-defi-snapshot",
+            method: "GET",
+            headers: {},
+          }),
+          serviceToken: "unit-token",
+          tableName: "PoolState",
+          producerMaxFreshnessBlocks: 120,
+          maxBatchSize: 64,
+          readLandingSnapshot,
+        }),
+      );
+      expect(response.statusCode).toBe(200);
+      expect(jsonBody(response)).toEqual(snapshot);
+      expect(response.headers).toMatchObject({
+        "cache-control":
+          "public, max-age=60, s-maxage=60, stale-while-revalidate=120",
+        etag: '"fame-landing-defi-snapshot-v1:120:0xabc"',
+        "x-fame-snapshot-id": "fame-landing-defi-snapshot-v1:120:0xabc",
+      });
+    } finally {
+      infoLog.mockRestore();
+    }
+  });
+
+  test("rejects query or body variation on the public route and never calls the reader", async () => {
+    const { handleFamePoolStateApiEvent } = await loadApiModule();
+    const warnLog = jest
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
+    const readLandingSnapshot = jest.fn<FameLandingSnapshotHandler>();
+    try {
+      for (const event of [
+        eventFixture({
+          path: "/fame/landing-defi-snapshot",
+          method: "GET",
+          headers: {},
+          rawQueryString: "block=120",
+        }),
+        eventFixture({
+          path: "/fame/landing-defi-snapshot",
+          method: "GET",
+          headers: {},
+          body: "{}",
+        }),
+        eventFixture({
+          path: "/fame/landing-defi-snapshot",
+          method: "GET",
+          headers: {},
+          cookies: ["session=x"],
+        }),
+      ]) {
+        const response = structuredResponse(
+          await handleFamePoolStateApiEvent({
+            event,
+            serviceToken: "unit-token",
+            tableName: "PoolState",
+            producerMaxFreshnessBlocks: 120,
+            maxBatchSize: 64,
+            readLandingSnapshot,
+          }),
+        );
+        expect(response.statusCode).toBe(400);
+        expect(response.headers).toMatchObject({ "cache-control": "no-store" });
+      }
+      expect(readLandingSnapshot).not.toHaveBeenCalled();
+    } finally {
+      warnLog.mockRestore();
+    }
+  });
+
+  test("returns no-store when the current snapshot is unavailable", async () => {
+    const { handleFamePoolStateApiEvent } = await loadApiModule();
+    const warnLog = jest
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
+    try {
+      const response = structuredResponse(
+        await handleFamePoolStateApiEvent({
+          event: eventFixture({
+            path: "/fame/landing-defi-snapshot",
+            method: "GET",
+            headers: {},
+          }),
+          serviceToken: "unit-token",
+          tableName: "PoolState",
+          producerMaxFreshnessBlocks: 120,
+          maxBatchSize: 64,
+          readLandingSnapshot: async () => ({
+            status: "unavailable",
+            reason: "snapshot-stale",
+          }),
+        }),
+      );
+      expect(response.statusCode).toBe(503);
+      expect(response.headers).toMatchObject({ "cache-control": "no-store" });
+      expect(jsonBody(response)).toEqual({
+        error: "snapshot-unavailable",
+        reason: "snapshot-stale",
+      });
+    } finally {
+      warnLog.mockRestore();
+    }
+  });
+
+  test("returns no-store when the public snapshot reader fails", async () => {
+    const { handleFamePoolStateApiEvent } = await loadApiModule();
+    const errorLog = jest
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    try {
+      const response = structuredResponse(
+        await handleFamePoolStateApiEvent({
+          event: eventFixture({
+            path: "/fame/landing-defi-snapshot",
+            method: "GET",
+            headers: {},
+          }),
+          serviceToken: "unit-token",
+          tableName: "PoolState",
+          producerMaxFreshnessBlocks: 120,
+          maxBatchSize: 64,
+          readLandingSnapshot: async () => {
+            throw new Error("DynamoDB URL and payload must not escape");
+          },
+        }),
+      );
+      expect(response.statusCode).toBe(500);
+      expect(response.headers).toMatchObject({ "cache-control": "no-store" });
+      expect(jsonBody(response)).toEqual({ error: "internal-error" });
+      expect(String(errorLog.mock.calls[0]?.[0])).not.toContain("DynamoDB URL");
+    } finally {
+      errorLog.mockRestore();
+    }
+  });
   test("returns request failure for malformed JSON without calling DynamoDB", async () => {
     const warnLog = jest.spyOn(console, "warn").mockImplementation(() => {
       return undefined;

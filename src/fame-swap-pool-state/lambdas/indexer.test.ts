@@ -21,6 +21,8 @@ function indexerResult(
 ): FamePoolStateIndexerResult {
   return {
     chainId: 8453,
+    safeBlockHash:
+      "0x1111111111111111111111111111111111111111111111111111111111111111",
     durationMs: 100,
     fromBlock: 100,
     observedThroughBlock: 120,
@@ -70,6 +72,7 @@ describe("FAME pool-state indexer Lambda", () => {
         handleFamePoolStateIndexer({
           tableName: "PoolState",
           confirmationBlocks: 2,
+          publishLandingSnapshot: async () => undefined,
           indexPools: async () => {
             throw providerError;
           },
@@ -103,6 +106,7 @@ describe("FAME pool-state indexer Lambda", () => {
         handleFamePoolStateIndexer({
           tableName: "PoolState",
           confirmationBlocks: 2,
+          publishLandingSnapshot: async () => undefined,
           indexPools: async () =>
             indexerResult({
               v4ClReplayFailedPools: 1,
@@ -143,6 +147,7 @@ describe("FAME pool-state indexer Lambda", () => {
       await handleFamePoolStateIndexer({
         tableName: "PoolState",
         confirmationBlocks: 2,
+        publishLandingSnapshot: async () => undefined,
         indexPools: async (options) => {
           expect(options.v4ZoraProvenance).toMatchObject({
             status: "verified",
@@ -162,5 +167,40 @@ describe("FAME pool-state indexer Lambda", () => {
     } finally {
       infoLog.mockRestore();
     }
+  });
+
+  test("publishes only after a fatal-clean index pass and forwards the safe block identity", async () => {
+    const { handleFamePoolStateIndexer } = await loadIndexerModule();
+    const infoLog = jest
+      .spyOn(console, "log")
+      .mockImplementation(() => undefined);
+    const publishLandingSnapshot = jest.fn(async () => undefined);
+    const result = indexerResult();
+
+    try {
+      await handleFamePoolStateIndexer({
+        tableName: "PoolState",
+        confirmationBlocks: 2,
+        indexPools: async () => result,
+        publishLandingSnapshot,
+      });
+
+      expect(publishLandingSnapshot).toHaveBeenCalledWith({
+        indexResult: result,
+        tableName: "PoolState",
+        runTimeoutMs: 10_000,
+      });
+    } finally {
+      infoLog.mockRestore();
+    }
+  });
+
+  test("derives the snapshot budget from post-index Lambda time remaining", async () => {
+    const { landingSnapshotRunBudgetMs } = await loadIndexerModule();
+    expect(landingSnapshotRunBudgetMs(20_000, 10_000)).toBe(10_000);
+    expect(landingSnapshotRunBudgetMs(7_500, 10_000)).toBe(2_500);
+    expect(() => landingSnapshotRunBudgetMs(5_000, 10_000)).toThrow(
+      /budget is exhausted/u,
+    );
   });
 });

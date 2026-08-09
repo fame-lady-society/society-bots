@@ -126,6 +126,26 @@ export class HttpApi extends Construct {
       authorizer: famePoolStateAuthorizer,
     });
 
+    httpApi.addRoutes({
+      path: "/fame/landing-defi-snapshot",
+      methods: [apigw2.HttpMethod.GET],
+      integration: new HttpLambdaIntegration(
+        "fame-landing-defi-snapshot",
+        famePoolStateHandler,
+      ),
+    });
+
+    const defaultStage = httpApi.defaultStage?.node.defaultChild;
+    if (!(defaultStage instanceof apigw2.CfnStage)) {
+      throw new Error("SocietyBot HTTP API requires its default stage.");
+    }
+    defaultStage.addPropertyOverride("RouteSettings", {
+      "GET /fame/landing-defi-snapshot": {
+        ThrottlingBurstLimit: 20,
+        ThrottlingRateLimit: 10,
+      },
+    });
+
     new route53.ARecord(this, "AliasIPv4Record", {
       zone: hostedZone,
       target: route53.RecordTarget.fromAlias(

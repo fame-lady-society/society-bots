@@ -64,6 +64,26 @@ export class FamePoolStateDevStack extends cdk.Stack {
       authorizer,
     });
 
+    httpApi.addRoutes({
+      path: "/fame/landing-defi-snapshot",
+      methods: [apigw2.HttpMethod.GET],
+      integration: new HttpLambdaIntegration(
+        "fame-landing-defi-snapshot-dev",
+        poolState.apiLambda,
+      ),
+    });
+
+    const defaultStage = httpApi.defaultStage?.node.defaultChild;
+    if (!(defaultStage instanceof apigw2.CfnStage)) {
+      throw new Error("FAME pool-state dev API requires its default stage.");
+    }
+    defaultStage.addPropertyOverride("RouteSettings", {
+      "GET /fame/landing-defi-snapshot": {
+        ThrottlingBurstLimit: 20,
+        ThrottlingRateLimit: 10,
+      },
+    });
+
     new cdk.CfnOutput(this, "FamePoolApiDevBaseUrl", {
       value: httpApi.apiEndpoint,
     });
@@ -72,6 +92,12 @@ export class FamePoolStateDevStack extends cdk.Stack {
     });
     new cdk.CfnOutput(this, "FamePoolQuotesDevEndpointUrl", {
       value: cdk.Fn.join("", [httpApi.apiEndpoint, "/fame/pool-quotes"]),
+    });
+    new cdk.CfnOutput(this, "FameLandingSnapshotDevEndpointUrl", {
+      value: cdk.Fn.join("", [
+        httpApi.apiEndpoint,
+        "/fame/landing-defi-snapshot",
+      ]),
     });
   }
 }

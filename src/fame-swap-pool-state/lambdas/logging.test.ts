@@ -190,6 +190,8 @@ function indexerResult(
 ): FamePoolStateIndexerResult {
   return {
     chainId: 8453,
+    safeBlockHash:
+      "0x1111111111111111111111111111111111111111111111111111111111111111",
     durationMs: 100,
     fromBlock: 100,
     observedThroughBlock: 120,

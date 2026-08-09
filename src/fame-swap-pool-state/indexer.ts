@@ -783,6 +783,7 @@ export type FameClReplayMaintenanceMode =
 
 export interface FamePoolStateIndexerResult {
   chainId: number;
+  safeBlockHash: Hex;
   durationMs: number;
   fromBlock: number;
   observedThroughBlock: number;
@@ -3086,6 +3087,10 @@ export async function indexFamePoolStates({
   const latestBlock = await client.getBlockNumber();
   const safeBlock = safeHeadBlock(latestBlock, confirmationBlocks);
   const observedThroughBlock = safeNumber(safeBlock, "safe head block");
+  const safeBlockIdentity = await client.getBlock({ blockNumber: safeBlock });
+  if (safeBlockIdentity.hash === null) {
+    throw new Error("Safe head block is missing its canonical block hash.");
+  }
   const cursor = await getPoolStateCursor({
     db,
     tableName,
@@ -4061,6 +4066,7 @@ export async function indexFamePoolStates({
 
   return {
     chainId: client.chain.id,
+    safeBlockHash: safeBlockIdentity.hash,
     durationMs: Date.now() - startedAtMs,
     fromBlock,
     observedThroughBlock,

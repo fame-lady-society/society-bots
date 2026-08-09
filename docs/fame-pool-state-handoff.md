@@ -39,6 +39,8 @@ The `society-bots` implementation adds a new `src/fame-swap-pool-state` module p
 - A scheduled Base indexer Lambda that scans safe blocks for reserve-changing `Sync` logs, seeds quiet pools with `getReserves`, and advances the cursor only after successful processing.
 - Reserve reconciliation after every log scan: every quote-model pool is read with `getReserves` at the safe block, and mismatched or missing latest rows are repaired before freshness/cursor advancement.
 - An authenticated HTTP API route, `POST /fame/pool-state`, for bounded batch latest-state reads, protected by both API Gateway Lambda authorizer and API Lambda token checks.
+- A fixed anonymous `GET /fame/landing-defi-snapshot` public-market-data route. It accepts no query/body/cookie variation, uses a path-only cache key and explicit API Gateway throttling, and leaves both existing POST routes protected.
+- A bounded same-safe-block landing producer with explicit per-leaf unavailability, validated prior-snapshot warm starts, at most 48 local exact-target evaluations, immutable 24-hour content rows, and a non-expiring monotonic current pointer.
 - Structured indexer/API logs for freshness, status counts, registry id, and block coverage.
 - Passive operational health signals: SQS-backed async failure destinations plus no-action CloudWatch alarms for indexer Lambda errors, indexer Lambda throttles, missed invocations, and failure queue depth.
 - Replay snapshot lanes for baseline `slipstream-usdc-weth-100` and selected candidate `slipstream-basedflick-fame`: slot0, current liquidity, dynamic fee, full initialized tick bitmap words, initialized tick liquidity records, block identity, chunk counts, and state hash.
@@ -162,7 +164,9 @@ Delta CL replay maintenance is separate from the quoteable replay pointer. The i
 - Scheduled indexer Lambda: requires `FAME_POOL_STATE_INDEXER_BASE_RPCS_JSON`, validated as a non-empty JSON array of non-empty RPC URLs. The bundled Lambda still receives that value as runtime `BASE_RPCS_JSON`; deploy-time config must not fall back to the shared app `BASE_RPCS_JSON`.
 - API Lambda: requires an environment-scoped service token. Main deploy uses `FAME_POOL_STATE_SERVICE_TOKEN`; PR deploy uses `FAME_POOL_STATE_PR_SERVICE_TOKEN`.
 - EventBridge schedule: defaults to once per minute.
-- HTTP API route: `POST /fame/pool-state`.
+- HTTP API routes: protected `POST /fame/pool-state`, protected `POST /fame/pool-quotes`, and public fixed `GET /fame/landing-defi-snapshot`.
+
+The public snapshot contract uses a 300-second maximum age, 60-second normal cache/revalidation, up to 120 seconds stale-while-revalidate without passing the freshness ceiling, and 30 seconds future tolerance. Only successful snapshot responses are cacheable; all unavailable and invalid responses are `no-store`. FLS WWW must consume this single document without homepage-time RPC, quote, marketplace, or liquidity fallback reads.
 
 The API accepts auth through `Authorization: Bearer <token>`. `www` should set `FAME_POOL_API_URL` and `FAME_POOL_STATE_SERVICE_TOKEN` only on the server side.
 
@@ -178,6 +182,7 @@ The scheduled indexer failure destination and passive alarms are intended for in
 
 - The indexer decodes both Uniswap V2-style `Sync(uint112,uint112)` and Solidly/Aerodrome-style `Sync(uint256,uint256)` events. Dropping either would make freshness misleading.
 - The Lambda bundle copies `base-v1-pools.json` beside `index.mjs`; the registry parser reads that file at runtime.
+- The Lambda bundle also copies the reviewed landing authority artifact. Capability rows fail closed: a quote is enabled only when every route leg can be evaluated from captured state. USDC landing leaves remain explicitly `captured-state-missing` until connector state is indexed and reviewed.
 - Latest-state writes are monotonic by reserve event version and `observedThroughBlock` so duplicate, out-of-order, or older overlapping runs cannot rewind state freshness.
 - `getReserves` reconciliation uses the safe block after log processing, so quiet pools stay fresh and missed/mismatched Sync-derived reserves are repaired without adding a historical backfill system.
 - Unknown Sync logs are treated as fatal before cursor advancement.

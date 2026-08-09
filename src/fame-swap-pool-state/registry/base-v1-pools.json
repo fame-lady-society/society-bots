@@ -5,11 +5,11 @@
     "repo": "www",
     "schemaVersion": 1,
     "pinnedBaseBlock": 45884844,
-    "poolsJsonHash": "0x7867763b3c520edb717f71186f8ee47364fb66871f82b9c8c830e7d911e3839b",
-    "poolsContentHash": "0xcf346fe2875d030a9b5872895e59e044e6e2b01613e3f3072c721c49c2234715",
+    "poolsJsonHash": "0x582b48fdaeb3c88bfc40415ba5a86d1cfd1bd4fe208fa6533f3681c02700f1c7",
+    "poolsContentHash": "0xca5d31d8b6266a075137c83d58b00bce1c763f30b73388719a6e2bce29085fcf",
     "solverRoutesJsonHash": "0x44cd1807a871080e02630714058ccd2545746712c9b382ffe4411223feeaf218",
     "solverRoutesContentHash": "0x053806dd44f7bf3751a0675b628dd4558a155a9608e8635f8cbdb180c48041a8",
-    "activationLedgerHash": "0xb533796d3cec89d202f49e0245c9769cba8aa7c92ad537fe33cfc44597927c0f"
+    "activationLedgerHash": "0x4212d61e225b7504c307c9ea60783147d485ea16e59bd8e0254257b5e6d59842"
   },
   "candidateDirections": [
     {
