@@ -342,19 +342,19 @@ describe("metadata refresh indexer lifecycle", () => {
     const setup = dependencies({
       store,
       metadataLogs: [metadataLog(0)],
-      purchases: [purchaseLog(), purchaseLog({ blockNumber: START_BLOCK + 200n, hash: laterHash })],
-      head: START_BLOCK + 208n,
+      purchases: [purchaseLog(), purchaseLog({ blockNumber: START_BLOCK + 1_000n, hash: laterHash })],
+      head: START_BLOCK + 1_008n,
       fetcher,
     });
 
     await expect(runMetadataRefreshIndexer(setup.dependencies as never)).rejects.toThrow("OpenSea metadata read failed");
     expect(setup.publish).toHaveBeenCalledTimes(1);
     expect(store.checkpoint()).toEqual({ nextBlock: Number(START_BLOCK), nextLogIndex: 0 });
-    expect(store.checkpoint(PURCHASE_CHECKPOINT)).toEqual({ nextBlock: Number(START_BLOCK + 200n), nextLogIndex: 0 });
+    expect(store.checkpoint(PURCHASE_CHECKPOINT)).toEqual({ nextBlock: Number(START_BLOCK + 1_000n), nextLogIndex: 0 });
 
     await expect(runMetadataRefreshIndexer(setup.dependencies as never)).rejects.toThrow("OpenSea metadata read failed");
     expect(setup.publish).toHaveBeenCalledTimes(2);
-    expect(store.checkpoint(PURCHASE_CHECKPOINT)).toEqual({ nextBlock: Number(START_BLOCK + 201n), nextLogIndex: 0 });
+    expect(store.checkpoint(PURCHASE_CHECKPOINT)).toEqual({ nextBlock: Number(START_BLOCK + 1_001n), nextLogIndex: 0 });
   });
 
   it("retries retryable OpenSea responses before accepting the job", async () => {
