@@ -99,6 +99,8 @@ describe("FamePoolState infrastructure", () => {
           FAME_POOL_STATE_SERVICE_TOKEN: "unit-token",
           FAME_POOL_STATE_DEFAULT_MAX_FRESHNESS_BLOCKS: "120",
           FAME_POOL_STATE_MAX_BATCH_SIZE: "64",
+          FAME_LANDING_SNAPSHOT_MAX_AGE_SECONDS: "300",
+          FAME_LANDING_SNAPSHOT_CACHE_SECONDS: "60",
         }),
       },
       Timeout: 5,
@@ -138,6 +140,9 @@ describe("FamePoolState infrastructure", () => {
           FAME_POOL_STATE_CL_REPLAY_TRUST_PROMOTION: "true",
           FAME_POOL_STATE_CL_REPLAY_MAX_RANGE_BLOCKS: "1000",
           FAME_POOL_STATE_RPC_GET_LOGS_BLOCK_RANGE: "500",
+          FAME_LANDING_SNAPSHOT_RUN_TIMEOUT_MS: "10000",
+          FAME_LANDING_SNAPSHOT_LEAF_TIMEOUT_MS: "1500",
+          FAME_LANDING_SNAPSHOT_TTL_SECONDS: "86400",
         }),
       },
       Timeout: 60,
@@ -155,6 +160,44 @@ describe("FamePoolState infrastructure", () => {
         ]),
       },
     });
+  });
+
+  test("limits DynamoDB IAM to exact read and indexer publication actions", () => {
+    const app = new cdk.App();
+    const stack = new cdk.Stack(app, "TestStack");
+    new FamePoolState(stack, "FamePoolState", {
+      indexerBaseRpcsJson: JSON.stringify(["https://indexer-base.example"]),
+      serviceToken: "unit-token",
+    });
+
+    const policies = Object.values(
+      Template.fromStack(stack).findResources("AWS::IAM::Policy"),
+    );
+    const dynamoActions = policies.flatMap((policy) => {
+      const statements = policy.Properties?.PolicyDocument?.Statement as
+        | Array<{ Action?: string | string[] }>
+        | undefined;
+      return (statements ?? []).flatMap(({ Action }) =>
+        (Array.isArray(Action) ? Action : Action ? [Action] : []).filter(
+          (action) => action.startsWith("dynamodb:"),
+        ),
+      );
+    });
+    expect(new Set(dynamoActions)).toEqual(
+      new Set([
+        "dynamodb:BatchGetItem",
+        "dynamodb:GetItem",
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem",
+      ]),
+    );
+    expect(dynamoActions).not.toEqual(
+      expect.arrayContaining([
+        "dynamodb:DeleteItem",
+        "dynamodb:Query",
+        "dynamodb:Scan",
+      ]),
+    );
   });
 
   test("allows explicit CL replay maintenance overrides", () => {
@@ -177,6 +220,30 @@ describe("FamePoolState infrastructure", () => {
         }),
       },
     });
+  });
+
+  test("rejects snapshot retention or work limits that violate the Lambda policy", () => {
+    const app = new cdk.App();
+    const stack = new cdk.Stack(app, "TestStack");
+    const baseProps = {
+      indexerBaseRpcsJson: JSON.stringify(["https://indexer-base.example"]),
+      serviceToken: "unit-token",
+    };
+
+    expect(
+      () =>
+        new FamePoolState(stack, "ShortRetention", {
+          ...baseProps,
+          landingSnapshotTtlSeconds: 420,
+        }),
+    ).toThrow(/TTL must exceed max age plus revalidation margin/u);
+    expect(
+      () =>
+        new FamePoolState(stack, "NoShutdownMargin", {
+          ...baseProps,
+          landingSnapshotRunTimeoutMs: 55_001,
+        }),
+    ).toThrow(/shutdown margin/u);
   });
 
   test("captures indexer async failures with passive health alarms", () => {
@@ -297,6 +364,18 @@ describe("FamePoolState infrastructure", () => {
       RouteKey: "POST /fame/pool-quotes",
       AuthorizationType: "CUSTOM",
     });
+    template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
+      RouteKey: "GET /fame/landing-defi-snapshot",
+      AuthorizationType: "NONE",
+    });
+    template.hasResourceProperties("AWS::ApiGatewayV2::Stage", {
+      RouteSettings: {
+        "GET /fame/landing-defi-snapshot": {
+          ThrottlingBurstLimit: 20,
+          ThrottlingRateLimit: 10,
+        },
+      },
+    });
     template.hasResourceProperties("AWS::ApiGatewayV2::Authorizer", {
       IdentitySource: ["$request.header.Authorization"],
     });
@@ -340,6 +419,10 @@ describe("FamePoolState infrastructure", () => {
       template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
         RouteKey: "POST /fame/pool-quotes",
         AuthorizationType: "CUSTOM",
+      });
+      template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
+        RouteKey: "GET /fame/landing-defi-snapshot",
+        AuthorizationType: "NONE",
       });
       template.hasResourceProperties("AWS::ApiGatewayV2::Authorizer", {
         IdentitySource: ["$request.header.Authorization"],

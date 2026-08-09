@@ -153,7 +153,15 @@ class InMemoryPoolStateDb implements PoolStateDocumentClient {
         }
         const incoming = eventVersion(item);
         const current = eventVersion(existing);
-        if (compareVersions(incoming, current) <= 0) throwConditionalFailure();
+        const sameVersionNewHash =
+          compareVersions(incoming, current) === 0 &&
+          numberField(item, "observedThroughBlock") ===
+            numberField(existing, "observedThroughBlock") &&
+          typeof item.observedThroughBlockHash === "string" &&
+          item.observedThroughBlockHash !== existing.observedThroughBlockHash;
+        if (compareVersions(incoming, current) <= 0 && !sameVersionNewHash) {
+          throwConditionalFailure();
+        }
       }
       this.items.set(key, item);
       return {};
@@ -164,15 +172,29 @@ class InMemoryPoolStateDb implements PoolStateDocumentClient {
       if (!existing) throwConditionalFailure();
       const values = parseItem(input.ExpressionAttributeValues);
       const observedThroughBlock = numberField(values, ":observedThroughBlock");
+      const observedThroughBlockHash = stringField(
+        values,
+        ":observedThroughBlockHash",
+      );
+      if (
+        existing.reserve0 !== stringField(values, ":reserve0") ||
+        existing.reserve1 !== stringField(values, ":reserve1") ||
+        existing.k !== stringField(values, ":k")
+      ) {
+        throwConditionalFailure();
+      }
       if (
         typeof existing.observedThroughBlock === "number" &&
-        existing.observedThroughBlock >= observedThroughBlock
+        (existing.observedThroughBlock > observedThroughBlock ||
+          (existing.observedThroughBlock === observedThroughBlock &&
+            existing.observedThroughBlockHash === observedThroughBlockHash))
       ) {
         throwConditionalFailure();
       }
       this.items.set(key, {
         ...existing,
         observedThroughBlock,
+        observedThroughBlockHash,
         sourceRegistryId: stringField(values, ":sourceRegistryId"),
         updatedAt: stringField(values, ":updatedAt"),
       });
@@ -227,6 +249,11 @@ class InMemoryPoolStateDb implements PoolStateDocumentClient {
 }
 
 class FakePoolStateClient implements FamePoolStateIndexerClient {
+  public blockHash: Hex =
+    "0x1111111111111111111111111111111111111111111111111111111111111111";
+  public parentHash: Hex =
+    "0x2222222222222222222222222222222222222222222222222222222222222222";
+  public readonly reserveBlockHashes: Hex[] = [];
   public reservesByAddress = new Map<
     string,
     readonly [bigint, bigint, number]
@@ -275,9 +302,8 @@ class FakePoolStateClient implements FamePoolStateIndexerClient {
       this.blockIdentitiesByNumber.get(
         options ? Number(options.blockNumber) : Number(this.latestBlock),
       ) ?? {
-        hash: "0x1111111111111111111111111111111111111111111111111111111111111111",
-        parentHash:
-          "0x2222222222222222222222222222222222222222222222222222222222222222",
+        hash: this.blockHash,
+        parentHash: this.parentHash,
       }
     );
   }
@@ -291,21 +317,27 @@ class FakePoolStateClient implements FamePoolStateIndexerClient {
   }
 
   async getReserves(options: {
-    poolAddress: Address;
-  }): Promise<readonly [bigint, bigint, number]> {
+    poolAddresses: readonly Address[];
+    blockHash: Hex;
+  }): Promise<readonly (readonly [bigint, bigint, number])[]> {
+    this.reserveBlockHashes.push(options.blockHash);
     if (
       this.failingReserveAddress &&
-      options.poolAddress.toLowerCase() ===
-        this.failingReserveAddress.toLowerCase()
+      options.poolAddresses.some(
+        (poolAddress) =>
+          poolAddress.toLowerCase() ===
+          this.failingReserveAddress?.toLowerCase(),
+      )
     ) {
       throw new Error("getReserves failed");
     }
-    return (
-      this.reservesByAddress.get(options.poolAddress.toLowerCase()) ?? [
-        1_000n,
-        2_000n,
-        0,
-      ]
+    return options.poolAddresses.map(
+      (poolAddress) =>
+        this.reservesByAddress.get(poolAddress.toLowerCase()) ?? [
+          1_000n,
+          2_000n,
+          0,
+        ],
     );
   }
 
@@ -1844,6 +1876,94 @@ describe("FAME pool-state indexer", () => {
     });
     expect(db.getCursor(8453)).toMatchObject({
       observedThroughBlock: 118,
+    });
+    expect(client.reserveBlockHashes).toEqual([client.blockHash]);
+  });
+
+  test("rejects publication provenance when the safe block identity changes", async () => {
+    const pool = quotePool("uniswap-v2-fame-direct");
+    const firstHash =
+      "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as Hex;
+    const secondHash =
+      "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" as Hex;
+    class ReorgingClient extends FakePoolStateClient {
+      private blockReadCount = 0;
+
+      override async getBlock(options: { blockNumber: bigint }) {
+        this.blockReadCount += 1;
+        if (this.blockReadCount === 1) {
+          return { hash: firstHash, parentHash: this.parentHash };
+        }
+        return { hash: secondHash, parentHash: this.parentHash };
+      }
+    }
+    const client = new ReorgingClient(120n);
+
+    await expect(
+      indexFamePoolStates({
+        client,
+        db: new InMemoryPoolStateDb(),
+        tableName: "PoolState",
+        registry: registryWithPools([pool]),
+        now: new Date("2026-05-17T00:00:00.000Z"),
+      }),
+    ).rejects.toThrow(/safe head block identity changed/u);
+    expect(client.reserveBlockHashes).toEqual([firstHash]);
+  });
+
+  test("atomically replaces reserves and provenance after a same-height reorg", async () => {
+    const pool = quotePool("uniswap-v2-fame-direct");
+    const registry = registryWithPools([pool]);
+    const db = new InMemoryPoolStateDb();
+    const firstHash =
+      "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as Hex;
+    const secondHash =
+      "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" as Hex;
+    const firstClient = new FakePoolStateClient(120n);
+    firstClient.blockIdentitiesByNumber.set(118, {
+      hash: firstHash,
+      parentHash: firstClient.parentHash,
+    });
+    firstClient.reservesByAddress.set(pool.poolAddress.toLowerCase(), [
+      100n,
+      200n,
+      0,
+    ]);
+
+    await indexFamePoolStates({
+      client: firstClient,
+      db,
+      tableName: "PoolState",
+      registry,
+      now: new Date("2026-05-17T00:00:00.000Z"),
+    });
+
+    const secondClient = new FakePoolStateClient(120n);
+    secondClient.blockIdentitiesByNumber.set(118, {
+      hash: secondHash,
+      parentHash: secondClient.parentHash,
+    });
+    secondClient.reservesByAddress.set(pool.poolAddress.toLowerCase(), [
+      300n,
+      400n,
+      0,
+    ]);
+
+    const result = await indexFamePoolStates({
+      client: secondClient,
+      db,
+      tableName: "PoolState",
+      registry,
+      now: new Date("2026-05-17T00:01:00.000Z"),
+    });
+
+    expect(result.reconciledPools).toBe(1);
+    expect(db.getLatest(pool)).toMatchObject({
+      reserve0: "300",
+      reserve1: "400",
+      k: "120000",
+      observedThroughBlock: 118,
+      observedThroughBlockHash: secondHash,
     });
   });
 

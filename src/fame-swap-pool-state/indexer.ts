@@ -9,6 +9,10 @@ import {
 import { UniswapV2PairReserveAbi } from "../events.ts";
 import type { baseClient } from "../viem.ts";
 import {
+  multicallAtBlockHash,
+  type BlockHashRpcClient,
+} from "./block-hash-multicall.ts";
+import {
   batchGetLatestClReplayCandidateStates,
   batchGetLatestClHeadStates,
   batchGetLatestClReplayMaintenanceStates,
@@ -559,9 +563,10 @@ export interface FamePoolStateIndexerClient {
     toBlock: bigint;
   }): Promise<readonly FameV4ClReplayRawLog[]>;
   getReserves(options: {
-    poolAddress: Address;
+    poolAddresses: readonly Address[];
     blockNumber: bigint;
-  }): Promise<readonly [bigint, bigint, number]>;
+    blockHash: Hex;
+  }): Promise<readonly (readonly [bigint, bigint, number])[]>;
   getClHeadSnapshot(options: {
     pool: ClHeadPool;
     blockNumber: bigint;
@@ -783,6 +788,7 @@ export type FameClReplayMaintenanceMode =
 
 export interface FamePoolStateIndexerResult {
   chainId: number;
+  safeBlockHash: Hex;
   durationMs: number;
   fromBlock: number;
   observedThroughBlock: number;
@@ -2744,12 +2750,30 @@ export function createViemPoolStateIndexerClient(
       }
       return logs;
     },
-    getReserves({ poolAddress, blockNumber }) {
-      return client.readContract({
-        address: poolAddress,
-        abi: UniswapV2PairReserveAbi,
-        functionName: "getReserves",
-        blockNumber,
+    async getReserves({ poolAddresses, blockHash }) {
+      const values = await multicallAtBlockHash({
+        rpc: client as unknown as BlockHashRpcClient,
+        blockHash,
+        allowFailure: false,
+        contracts: poolAddresses.map((address) => ({
+          address,
+          abi: UniswapV2PairReserveAbi,
+          functionName: "getReserves",
+        })),
+      });
+      if (values.length !== poolAddresses.length) {
+        throw new Error("Block-hash reserve read returned an invalid count.");
+      }
+      return values.map((reserves) => {
+        if (
+          !Array.isArray(reserves) ||
+          typeof reserves[0] !== "bigint" ||
+          typeof reserves[1] !== "bigint" ||
+          typeof reserves[2] !== "number"
+        ) {
+          throw new Error("Block-hash reserve read returned invalid data.");
+        }
+        return [reserves[0], reserves[1], reserves[2]] as const;
       });
     },
     async getClHeadSnapshot({ pool, blockNumber }) {
@@ -3086,6 +3110,11 @@ export async function indexFamePoolStates({
   const latestBlock = await client.getBlockNumber();
   const safeBlock = safeHeadBlock(latestBlock, confirmationBlocks);
   const observedThroughBlock = safeNumber(safeBlock, "safe head block");
+  const safeBlockIdentity = await client.getBlock({ blockNumber: safeBlock });
+  const safeBlockHash = safeBlockIdentity.hash;
+  if (safeBlockHash === null) {
+    throw new Error("Safe head block is missing its canonical block hash.");
+  }
   const cursor = await getPoolStateCursor({
     db,
     tableName,
@@ -3095,25 +3124,25 @@ export async function indexFamePoolStates({
     observedThroughBlock,
     (cursor?.observedThroughBlock ?? observedThroughBlock) + 1,
   );
-  const previousObservedThroughBlock = cursor?.observedThroughBlock ?? 0;
-  const writeObservedThroughBlock = Math.min(
-    previousObservedThroughBlock,
-    observedThroughBlock,
-  );
   const updatedAt = now.toISOString();
 
   const writtenEvents = 0;
   const ignoredEvents = 0;
+  const reserveReads = await client.getReserves({
+    poolAddresses: pools.map(({ poolAddress }) => poolAddress),
+    blockNumber: safeBlock,
+    blockHash: safeBlockHash,
+  });
+  if (reserveReads.length !== pools.length) {
+    throw new Error("Reserve snapshot count does not match the registry.");
+  }
   const reserveSnapshots = new Map(
-    await Promise.all(
-      pools.map(async (pool) => {
-        const [reserve0, reserve1] = await client.getReserves({
-          poolAddress: pool.poolAddress,
-          blockNumber: safeBlock,
-        });
-        return [addressKey(pool.poolAddress), { reserve0, reserve1 }] as const;
-      }),
-    ),
+    pools.map((pool, index) => {
+      const reserves = reserveReads[index];
+      if (!reserves) throw new Error(`${pool.id} missing reserve snapshot.`);
+      const [reserve0, reserve1] = reserves;
+      return [addressKey(pool.poolAddress), { reserve0, reserve1 }] as const;
+    }),
   );
 
   let seededPools = 0;
@@ -3151,7 +3180,8 @@ export async function indexFamePoolStates({
           pool,
           reserve0,
           reserve1,
-          observedThroughBlock: writeObservedThroughBlock,
+          observedThroughBlock,
+          observedThroughBlockHash: safeBlockHash,
           version: {
             blockNumber: observedThroughBlock,
             transactionIndex: Number.MAX_SAFE_INTEGER,
@@ -3171,12 +3201,21 @@ export async function indexFamePoolStates({
   }
 
   for (const pool of pools) {
+    const reserves = reserveSnapshots.get(addressKey(pool.poolAddress));
+    if (!reserves) {
+      throw new Error(`${pool.id} missing reserve snapshot.`);
+    }
+    const { reserve0, reserve1 } = reserves;
     await markPoolObservedThroughBlock({
       db,
       tableName,
       chainId: pool.chainId,
       poolAddress: pool.poolAddress,
       observedThroughBlock,
+      observedThroughBlockHash: safeBlockHash,
+      reserve0,
+      reserve1,
+      k: reserve0 * reserve1,
       sourceRegistryId,
       updatedAt,
     });
@@ -4059,8 +4098,19 @@ export async function indexFamePoolStates({
     });
   }
 
+  const finalSafeBlockIdentity = await client.getBlock({
+    blockNumber: safeBlock,
+  });
+  if (
+    finalSafeBlockIdentity.hash !== safeBlockHash ||
+    finalSafeBlockIdentity.parentHash !== safeBlockIdentity.parentHash
+  ) {
+    throw new Error("FAME safe head block identity changed during indexing.");
+  }
+
   return {
     chainId: client.chain.id,
+    safeBlockHash,
     durationMs: Date.now() - startedAtMs,
     fromBlock,
     observedThroughBlock,

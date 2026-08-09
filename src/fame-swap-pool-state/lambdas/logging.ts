@@ -12,12 +12,15 @@ import type {
   FamePoolQuoteResponseEntry,
 } from "../cl-quote.ts";
 import type { FamePoolStateIndexerResult } from "../indexer.ts";
+import type { FameLandingSnapshot } from "../landing-snapshot.ts";
 
 export type PoolStateLogLevel = "error" | "info" | "warn";
 export type PoolStateLogEvent =
   | "fame-pool-state-api-batch"
   | "fame-pool-state-api-error"
-  | "fame-pool-state-indexed";
+  | "fame-pool-state-indexed"
+  | "fame-landing-snapshot-produced"
+  | "fame-landing-snapshot-api";
 
 type PoolStateLogValue =
   | boolean
@@ -499,4 +502,32 @@ export function logPoolStateIndexerResult(
     "fame-pool-state-indexed",
     indexerResultLogFields(result),
   );
+}
+
+export function logFameLandingSnapshotProduced(
+  snapshot: FameLandingSnapshot,
+  publication: "advanced" | "ignored",
+): void {
+  const leafStates = [
+    snapshot.fields.marketplace,
+    ...Object.values(snapshot.fields.quotes),
+    snapshot.fields.liquidity,
+  ];
+  const reasonCounts: Record<string, number> = {};
+  for (const leaf of leafStates) {
+    if (leaf.status === "unavailable") {
+      reasonCounts[leaf.reason] = (reasonCounts[leaf.reason] ?? 0) + 1;
+    }
+  }
+  writePoolStateLog("info", "fame-landing-snapshot-produced", {
+    snapshotId: snapshot.provenance.snapshotId,
+    safeBlockNumber: snapshot.provenance.safeBlockNumber,
+    sourceRegistryId: snapshot.provenance.sourceRegistryId,
+    routeAuthorityRevision: snapshot.provenance.routeAuthorityRevision,
+    publication,
+    availableLeaves:
+      leafStates.length -
+      Object.values(reasonCounts).reduce((a, b) => a + b, 0),
+    unavailableReasonCounts: reasonCounts,
+  });
 }

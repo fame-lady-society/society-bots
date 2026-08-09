@@ -33,7 +33,10 @@ export interface PoolStateDynamoResponse {
 }
 
 export interface PoolStateDocumentClient {
-  send(command: PoolStateCommand): Promise<PoolStateDynamoResponse>;
+  send(
+    command: PoolStateCommand,
+    options?: { abortSignal?: AbortSignal },
+  ): Promise<PoolStateDynamoResponse>;
 }
 
 export const defaultDb: PoolStateDocumentClient = DynamoDBDocumentClient.from(
@@ -69,9 +72,14 @@ export interface FamePoolLatestState {
   lastEventLogIndex: number;
   lastEventTransactionHash: Hex | null;
   observedThroughBlock: number;
+  observedThroughBlockHash?: Hex;
   source: "sync-event" | "getReserves";
   sourceRegistryId: string;
   updatedAt: string;
+}
+
+export interface FameLandingPoolLatestState extends FamePoolLatestState {
+  observedThroughBlockHash: Hex;
 }
 
 export type FameClHeadSource = "pool-slot0-liquidity" | "v4-state-view";
@@ -862,6 +870,20 @@ function itemToLatestPoolState(
   return item ? parseLatestPoolStateItem(item) : null;
 }
 
+function itemToLandingPoolLatestState(
+  item?: Record<string, unknown> | null,
+): FameLandingPoolLatestState | null {
+  if (!item) return null;
+  return {
+    ...parseLatestPoolStateItem(item),
+    observedThroughBlockHash: hexField(
+      item,
+      "landing latest pool-state",
+      "observedThroughBlockHash",
+    ),
+  };
+}
+
 function itemToCursor(
   item?: Record<string, unknown> | null,
 ): FamePoolStateCursor | null {
@@ -1481,6 +1503,15 @@ function parseLatestPoolStateItem(
       "lastEventTransactionHash",
     ),
     observedThroughBlock: numberField(item, recordType, "observedThroughBlock"),
+    ...(item.observedThroughBlockHash === undefined
+      ? {}
+      : {
+          observedThroughBlockHash: hexField(
+            item,
+            recordType,
+            "observedThroughBlockHash",
+          ),
+        }),
     source: sourceField(item, recordType, "source"),
     sourceRegistryId: stringField(item, recordType, "sourceRegistryId"),
     updatedAt: stringField(item, recordType, "updatedAt"),
@@ -2673,6 +2704,7 @@ export function latestStateFromReserves(options: {
   reserve0: bigint;
   reserve1: bigint;
   observedThroughBlock: number;
+  observedThroughBlockHash?: Hex;
   version: FamePoolStateEventVersion;
   transactionHash: Hex | null;
   source: FamePoolLatestState["source"];
@@ -2698,6 +2730,9 @@ export function latestStateFromReserves(options: {
     lastEventLogIndex: options.version.logIndex,
     lastEventTransactionHash: options.transactionHash,
     observedThroughBlock: options.observedThroughBlock,
+    ...(options.observedThroughBlockHash === undefined
+      ? {}
+      : { observedThroughBlockHash: options.observedThroughBlockHash }),
     source: options.source,
     sourceRegistryId: options.sourceRegistryId,
     updatedAt: options.updatedAt,
@@ -3509,6 +3544,40 @@ export async function batchGetLatestPoolStates({
     .filter((item): item is FamePoolLatestState => item !== null);
 }
 
+export async function batchGetLatestPoolStatesForLanding({
+  db = defaultDb,
+  tableName,
+  pools,
+  signal,
+}: {
+  db?: PoolStateDocumentClient;
+  tableName: string;
+  pools: readonly (FamePoolStateRegistryEntry & { poolAddress: Address })[];
+  signal: AbortSignal;
+}): Promise<FameLandingPoolLatestState[]> {
+  if (pools.length === 0) return [];
+  const response = await db.send(
+    new BatchGetCommand({
+      RequestItems: {
+        [tableName]: {
+          Keys: pools.map((pool) =>
+            latestPoolStateKey(pool.chainId, pool.poolAddress),
+          ),
+          ConsistentRead: true,
+        },
+      },
+    }),
+    { abortSignal: signal },
+  );
+  const incompleteKeyCount = unprocessedKeyCount(response, tableName);
+  if (incompleteKeyCount > 0) {
+    throw new PoolStateIncompleteBatchReadError(tableName, incompleteKeyCount);
+  }
+  return (response.Responses?.[tableName] ?? [])
+    .map(itemToLandingPoolLatestState)
+    .filter((item): item is FameLandingPoolLatestState => item !== null);
+}
+
 export async function getLatestClHeadState({
   db = defaultDb,
   tableName,
@@ -4122,15 +4191,23 @@ export async function putLatestPoolState({
   tableName: string;
   state: FamePoolLatestState;
 }): Promise<PutLatestPoolStateResult> {
+  const hasObservedThroughBlockHash =
+    state.observedThroughBlockHash !== undefined;
   try {
     await db.send(
       new PutCommand({
         TableName: tableName,
         Item: state,
-        ConditionExpression:
-          "attribute_not_exists(pk) OR (observedThroughBlock <= :observedThroughBlock AND (lastReserveChangeBlock < :block OR (lastReserveChangeBlock = :block AND lastEventTransactionIndex < :transactionIndex) OR (lastReserveChangeBlock = :block AND lastEventTransactionIndex = :transactionIndex AND lastEventLogIndex < :logIndex)))",
+        ConditionExpression: hasObservedThroughBlockHash
+          ? "attribute_not_exists(pk) OR (observedThroughBlock <= :observedThroughBlock AND (lastReserveChangeBlock < :block OR (lastReserveChangeBlock = :block AND lastEventTransactionIndex < :transactionIndex) OR (lastReserveChangeBlock = :block AND lastEventTransactionIndex = :transactionIndex AND lastEventLogIndex < :logIndex) OR (observedThroughBlock = :observedThroughBlock AND lastReserveChangeBlock = :block AND lastEventTransactionIndex = :transactionIndex AND lastEventLogIndex = :logIndex AND (attribute_not_exists(observedThroughBlockHash) OR observedThroughBlockHash <> :observedThroughBlockHash))))"
+          : "attribute_not_exists(pk) OR (observedThroughBlock <= :observedThroughBlock AND (lastReserveChangeBlock < :block OR (lastReserveChangeBlock = :block AND lastEventTransactionIndex < :transactionIndex) OR (lastReserveChangeBlock = :block AND lastEventTransactionIndex = :transactionIndex AND lastEventLogIndex < :logIndex)))",
         ExpressionAttributeValues: {
           ":observedThroughBlock": state.observedThroughBlock,
+          ...(hasObservedThroughBlockHash
+            ? {
+                ":observedThroughBlockHash": state.observedThroughBlockHash,
+              }
+            : {}),
           ":block": state.lastReserveChangeBlock,
           ":transactionIndex": state.lastEventTransactionIndex,
           ":logIndex": state.lastEventLogIndex,
@@ -4417,6 +4494,10 @@ export async function markPoolObservedThroughBlock({
   chainId,
   poolAddress,
   observedThroughBlock,
+  observedThroughBlockHash,
+  reserve0,
+  reserve1,
+  k,
   sourceRegistryId,
   updatedAt,
 }: {
@@ -4425,6 +4506,10 @@ export async function markPoolObservedThroughBlock({
   chainId: number;
   poolAddress: Address;
   observedThroughBlock: number;
+  observedThroughBlockHash: Hex;
+  reserve0: bigint;
+  reserve1: bigint;
+  k: bigint;
   sourceRegistryId: string;
   updatedAt: string;
 }): Promise<void> {
@@ -4434,11 +4519,15 @@ export async function markPoolObservedThroughBlock({
         TableName: tableName,
         Key: latestPoolStateKey(chainId, poolAddress),
         UpdateExpression:
-          "SET observedThroughBlock = :observedThroughBlock, sourceRegistryId = :sourceRegistryId, updatedAt = :updatedAt",
+          "SET observedThroughBlock = :observedThroughBlock, observedThroughBlockHash = :observedThroughBlockHash, sourceRegistryId = :sourceRegistryId, updatedAt = :updatedAt",
         ConditionExpression:
-          "attribute_exists(pk) AND (attribute_not_exists(observedThroughBlock) OR observedThroughBlock < :observedThroughBlock)",
+          "attribute_exists(pk) AND reserve0 = :reserve0 AND reserve1 = :reserve1 AND k = :k AND (attribute_not_exists(observedThroughBlock) OR observedThroughBlock < :observedThroughBlock OR (observedThroughBlock = :observedThroughBlock AND (attribute_not_exists(observedThroughBlockHash) OR observedThroughBlockHash <> :observedThroughBlockHash)))",
         ExpressionAttributeValues: {
           ":observedThroughBlock": observedThroughBlock,
+          ":observedThroughBlockHash": observedThroughBlockHash,
+          ":reserve0": reserve0.toString(),
+          ":reserve1": reserve1.toString(),
+          ":k": k.toString(),
           ":sourceRegistryId": sourceRegistryId,
           ":updatedAt": updatedAt,
         },

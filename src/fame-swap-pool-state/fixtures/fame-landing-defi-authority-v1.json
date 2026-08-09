@@ -1,0 +1,253 @@
+{
+  "schemaVersion": "fame-landing-defi-authority-v1",
+  "sourceRegistryId": "pool-state-registry-v4:0x582b48fdaeb3c88bfc40415ba5a86d1cfd1bd4fe208fa6533f3681c02700f1c7:0x44cd1807a871080e02630714058ccd2545746712c9b382ffe4411223feeaf218:0x4212d61e225b7504c307c9ea60783147d485ea16e59bd8e0254257b5e6d59842",
+  "routeAuthorityRevision": "fame-landing-route-authority-v1:0x44cd1807a871080e02630714058ccd2545746712c9b382ffe4411223feeaf218:0xe12b694540180d42f640c9b660379eab7e38caef92f24e22c629f6b6da4c427e",
+  "fameToken": "0xf307e242bfe1ec1ff01a4cef2fdaa81b10a52418",
+  "defiFameAmount": "1000000000000000000000000",
+  "quoteDefinitions": [
+    {
+      "id": "defi-buy-usdc-v1",
+      "kind": "defiBuy",
+      "currency": "USDC",
+      "mode": "exactTarget",
+      "fameAmountSource": "fixed-defi-amount"
+    },
+    {
+      "id": "defi-buy-eth-v1",
+      "kind": "defiBuy",
+      "currency": "ETH",
+      "mode": "exactTarget",
+      "fameAmountSource": "fixed-defi-amount"
+    },
+    {
+      "id": "defi-sell-usdc-v1",
+      "kind": "defiSell",
+      "currency": "USDC",
+      "mode": "exactInput",
+      "fameAmountSource": "fixed-defi-amount"
+    },
+    {
+      "id": "defi-sell-eth-v1",
+      "kind": "defiSell",
+      "currency": "ETH",
+      "mode": "exactInput",
+      "fameAmountSource": "fixed-defi-amount"
+    },
+    {
+      "id": "nft-buy-usdc-v1",
+      "kind": "nftBuy",
+      "currency": "USDC",
+      "mode": "exactTarget",
+      "fameAmountSource": "marketplace-unit-plus-premium"
+    },
+    {
+      "id": "nft-buy-eth-v1",
+      "kind": "nftBuy",
+      "currency": "ETH",
+      "mode": "exactTarget",
+      "fameAmountSource": "marketplace-unit-plus-premium"
+    }
+  ],
+  "assets": [
+    {
+      "currency": "USDC",
+      "address": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      "wrappedAddress": null,
+      "symbol": "USDC",
+      "decimals": 6,
+      "native": false
+    },
+    {
+      "currency": "ETH",
+      "address": "0x0000000000000000000000000000000000000000",
+      "wrappedAddress": "0x4200000000000000000000000000000000000006",
+      "symbol": "ETH",
+      "decimals": 18,
+      "native": true
+    }
+  ],
+  "counterAssets": [
+    {
+      "address": "0x15e012abf9d32cd67fc6cf480ea0e318e9ed5926",
+      "symbol": "basedflick",
+      "decimals": 18
+    },
+    {
+      "address": "0x4200000000000000000000000000000000000006",
+      "symbol": "WETH",
+      "decimals": 18
+    },
+    {
+      "address": "0x54016a4848a38f257b6e96331f7404073fd9c32c",
+      "symbol": "SCALE",
+      "decimals": 18
+    },
+    {
+      "address": "0xe5020a6d073a794b6e7f05678707de47986fb0b6",
+      "symbol": "frxUSD",
+      "decimals": 18
+    }
+  ],
+  "directLiquidityPoolIds": [
+    "scale-equalizer-frxusd-fame",
+    "scale-equalizer-scale-fame",
+    "scale-equalizer-weth-fame",
+    "slipstream-basedflick-fame",
+    "uniswap-v2-fame-direct"
+  ],
+  "capabilities": [
+    {
+      "quoteDefinitionId": "defi-buy-usdc-v1",
+      "status": "enabled",
+      "evaluator": "constant-product-runtime-validated-v1",
+      "routeTemplates": [
+        {
+          "id": "solver-single_path-aerodrome-v2-usdc-weth--scale-equalizer-weth-fame",
+          "legs": ["aerodrome-v2-usdc-weth", "scale-equalizer-weth-fame"]
+        }
+      ]
+    },
+    {
+      "quoteDefinitionId": "defi-buy-eth-v1",
+      "status": "enabled",
+      "evaluator": "constant-product-captured-reserves-v1",
+      "routeTemplates": [
+        {
+          "id": "defi-buy-eth-scale",
+          "allocations": [
+            { "poolId": "scale-equalizer-weth-fame", "allocationBps": 10000 }
+          ]
+        },
+        {
+          "id": "defi-buy-eth-uniswap-v2",
+          "allocations": [
+            { "poolId": "uniswap-v2-fame-direct", "allocationBps": 10000 }
+          ]
+        },
+        {
+          "id": "defi-buy-eth-split-25-75",
+          "allocations": [
+            { "poolId": "scale-equalizer-weth-fame", "allocationBps": 2500 },
+            { "poolId": "uniswap-v2-fame-direct", "allocationBps": 7500 }
+          ]
+        },
+        {
+          "id": "defi-buy-eth-split-50-50",
+          "allocations": [
+            { "poolId": "scale-equalizer-weth-fame", "allocationBps": 5000 },
+            { "poolId": "uniswap-v2-fame-direct", "allocationBps": 5000 }
+          ]
+        },
+        {
+          "id": "defi-buy-eth-split-75-25",
+          "allocations": [
+            { "poolId": "scale-equalizer-weth-fame", "allocationBps": 7500 },
+            { "poolId": "uniswap-v2-fame-direct", "allocationBps": 2500 }
+          ]
+        }
+      ]
+    },
+    {
+      "quoteDefinitionId": "defi-sell-usdc-v1",
+      "status": "enabled",
+      "evaluator": "constant-product-runtime-validated-v1",
+      "routeTemplates": [
+        {
+          "id": "solver-single_path-scale-equalizer-weth-fame--aerodrome-v2-usdc-weth",
+          "legs": ["scale-equalizer-weth-fame", "aerodrome-v2-usdc-weth"]
+        }
+      ]
+    },
+    {
+      "quoteDefinitionId": "defi-sell-eth-v1",
+      "status": "enabled",
+      "evaluator": "constant-product-captured-reserves-v1",
+      "routeTemplates": [
+        {
+          "id": "defi-sell-eth-scale",
+          "allocations": [
+            { "poolId": "scale-equalizer-weth-fame", "allocationBps": 10000 }
+          ]
+        },
+        {
+          "id": "defi-sell-eth-uniswap-v2",
+          "allocations": [
+            { "poolId": "uniswap-v2-fame-direct", "allocationBps": 10000 }
+          ]
+        },
+        {
+          "id": "defi-sell-eth-split-25-75",
+          "allocations": [
+            { "poolId": "scale-equalizer-weth-fame", "allocationBps": 2500 },
+            { "poolId": "uniswap-v2-fame-direct", "allocationBps": 7500 }
+          ]
+        },
+        {
+          "id": "defi-sell-eth-split-50-50",
+          "allocations": [
+            { "poolId": "scale-equalizer-weth-fame", "allocationBps": 5000 },
+            { "poolId": "uniswap-v2-fame-direct", "allocationBps": 5000 }
+          ]
+        },
+        {
+          "id": "defi-sell-eth-split-75-25",
+          "allocations": [
+            { "poolId": "scale-equalizer-weth-fame", "allocationBps": 7500 },
+            { "poolId": "uniswap-v2-fame-direct", "allocationBps": 2500 }
+          ]
+        }
+      ]
+    },
+    {
+      "quoteDefinitionId": "nft-buy-usdc-v1",
+      "status": "enabled",
+      "evaluator": "constant-product-runtime-validated-v1",
+      "routeTemplates": [
+        {
+          "id": "solver-single_path-aerodrome-v2-usdc-weth--scale-equalizer-weth-fame",
+          "legs": ["aerodrome-v2-usdc-weth", "scale-equalizer-weth-fame"]
+        }
+      ]
+    },
+    {
+      "quoteDefinitionId": "nft-buy-eth-v1",
+      "status": "enabled",
+      "evaluator": "constant-product-captured-reserves-v1",
+      "routeTemplates": [
+        {
+          "id": "nft-buy-eth-scale",
+          "allocations": [
+            { "poolId": "scale-equalizer-weth-fame", "allocationBps": 10000 }
+          ]
+        },
+        {
+          "id": "nft-buy-eth-uniswap-v2",
+          "allocations": [
+            { "poolId": "uniswap-v2-fame-direct", "allocationBps": 10000 }
+          ]
+        },
+        {
+          "id": "nft-buy-eth-split-25-75",
+          "allocations": [
+            { "poolId": "scale-equalizer-weth-fame", "allocationBps": 2500 },
+            { "poolId": "uniswap-v2-fame-direct", "allocationBps": 7500 }
+          ]
+        },
+        {
+          "id": "nft-buy-eth-split-50-50",
+          "allocations": [
+            { "poolId": "scale-equalizer-weth-fame", "allocationBps": 5000 },
+            { "poolId": "uniswap-v2-fame-direct", "allocationBps": 5000 }
+          ]
+        },
+        {
+          "id": "nft-buy-eth-split-75-25",
+          "allocations": [
+            { "poolId": "scale-equalizer-weth-fame", "allocationBps": 7500 },
+            { "poolId": "uniswap-v2-fame-direct", "allocationBps": 2500 }
+          ]
+        }
+      ]
+    }
+  ]
+}

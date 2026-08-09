@@ -1,4 +1,5 @@
 import { baseClient } from "@/viem.ts";
+import type { Context } from "aws-lambda";
 import {
   FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE,
   FAME_POOL_STATE_CL_REPLAY_MAX_RANGE_BLOCKS,
@@ -6,6 +7,9 @@ import {
   FAME_POOL_STATE_CONFIRMATION_BLOCKS,
   FAME_POOL_STATE_RPC_GET_LOGS_BLOCK_RANGE,
   FAME_POOL_STATE_TABLE_NAME,
+  FAME_LANDING_SNAPSHOT_LEAF_TIMEOUT_MS,
+  FAME_LANDING_SNAPSHOT_RUN_TIMEOUT_MS,
+  FAME_LANDING_SNAPSHOT_TTL_SECONDS,
 } from "../config.ts";
 import {
   assertNoClReplaySnapshotFailures,
@@ -17,11 +21,32 @@ import {
 } from "../indexer.ts";
 import { FAME_V4_ZORA_APPROVED_PROVENANCE } from "../v4-zora-manifests.ts";
 import type { FamePoolStateV4ZoraProvenanceEvidence } from "../types.ts";
+import { produceAndPublishFameLandingSnapshot } from "../landing-snapshot-runtime.ts";
 import {
+  logFameLandingSnapshotProduced,
   logPoolStateIndexerResult,
   writePoolStateLog,
   type PoolStateLogFields,
 } from "./logging.ts";
+
+export type FameLandingSnapshotPublishRunner = (options: {
+  indexResult: FamePoolStateIndexerResult;
+  tableName: string;
+  runTimeoutMs: number;
+}) => Promise<void>;
+
+async function defaultPublishLandingSnapshot(options: {
+  indexResult: FamePoolStateIndexerResult;
+  tableName: string;
+  runTimeoutMs: number;
+}): Promise<void> {
+  const published = await produceAndPublishFameLandingSnapshot({
+    ...options,
+    leafTimeoutMs: FAME_LANDING_SNAPSHOT_LEAF_TIMEOUT_MS,
+    ttlSeconds: FAME_LANDING_SNAPSHOT_TTL_SECONDS,
+  });
+  logFameLandingSnapshotProduced(published.snapshot, published.publication);
+}
 
 export type FamePoolStateIndexRunner = (options: {
   client?: FamePoolStateIndexerClient;
@@ -115,6 +140,8 @@ export async function handleFamePoolStateIndexer({
   clReplayMaxRangeBlocks,
   v4ZoraProvenance = FAME_V4_ZORA_APPROVED_PROVENANCE,
   indexPools = defaultIndexPools,
+  publishLandingSnapshot = defaultPublishLandingSnapshot,
+  landingSnapshotRunBudget = () => FAME_LANDING_SNAPSHOT_RUN_TIMEOUT_MS,
 }: {
   client?: FamePoolStateIndexerClient;
   tableName: string;
@@ -124,6 +151,8 @@ export async function handleFamePoolStateIndexer({
   clReplayMaxRangeBlocks?: number;
   v4ZoraProvenance?: FamePoolStateV4ZoraProvenanceEvidence;
   indexPools?: FamePoolStateIndexRunner;
+  publishLandingSnapshot?: FameLandingSnapshotPublishRunner;
+  landingSnapshotRunBudget?: () => number;
 }): Promise<void> {
   let result: FamePoolStateIndexerResult;
   try {
@@ -150,14 +179,53 @@ export async function handleFamePoolStateIndexer({
 
   logPoolStateIndexerResult(result);
   assertNoClReplaySnapshotFailures(result);
+  try {
+    await publishLandingSnapshot({
+      indexResult: result,
+      tableName,
+      runTimeoutMs: landingSnapshotRunBudget(),
+    });
+  } catch (error) {
+    writePoolStateLog("error", "fame-landing-snapshot-produced", {
+      errorType: "snapshot-publication-failed",
+      errorClass: safeErrorClass(error),
+    });
+    throw new Error("FAME landing snapshot publication failed");
+  }
 }
 
-export async function handler(): Promise<void> {
+export const FAME_LANDING_SNAPSHOT_SHUTDOWN_MARGIN_MS = 5_000;
+
+export function landingSnapshotRunBudgetMs(
+  remainingTimeMs: number,
+  configuredTimeoutMs = FAME_LANDING_SNAPSHOT_RUN_TIMEOUT_MS,
+): number {
+  if (
+    !Number.isSafeInteger(remainingTimeMs) ||
+    !Number.isSafeInteger(configuredTimeoutMs) ||
+    configuredTimeoutMs <= 0
+  ) {
+    throw new Error("FAME landing snapshot Lambda budget is invalid");
+  }
+  const availableTimeMs =
+    remainingTimeMs - FAME_LANDING_SNAPSHOT_SHUTDOWN_MARGIN_MS;
+  if (availableTimeMs <= 0) {
+    throw new Error("FAME landing snapshot Lambda budget is exhausted");
+  }
+  return Math.min(configuredTimeoutMs, availableTimeMs);
+}
+
+export async function handler(
+  _event: unknown,
+  context: Context,
+): Promise<void> {
   await handleFamePoolStateIndexer({
     tableName: FAME_POOL_STATE_TABLE_NAME,
     confirmationBlocks: FAME_POOL_STATE_CONFIRMATION_BLOCKS,
     clReplayMaintenanceMode: FAME_POOL_STATE_CL_REPLAY_MAINTENANCE_MODE,
     clReplayTrustPromotion: FAME_POOL_STATE_CL_REPLAY_TRUST_PROMOTION,
     clReplayMaxRangeBlocks: FAME_POOL_STATE_CL_REPLAY_MAX_RANGE_BLOCKS,
+    landingSnapshotRunBudget: () =>
+      landingSnapshotRunBudgetMs(context.getRemainingTimeInMillis()),
   });
 }

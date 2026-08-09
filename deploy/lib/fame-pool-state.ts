@@ -5,6 +5,7 @@ import * as events from "aws-cdk-lib/aws-events";
 import * as eventTargets from "aws-cdk-lib/aws-events-targets";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as lambdaDestinations from "aws-cdk-lib/aws-lambda-destinations";
+import * as iam from "aws-cdk-lib/aws-iam";
 import * as sqs from "aws-cdk-lib/aws-sqs";
 import * as fs from "fs";
 import { buildSync, type BuildOptions } from "esbuild";
@@ -26,6 +27,20 @@ export interface FamePoolStateProps {
   readonly clReplayMaxRangeBlocks?: number;
   readonly rpcGetLogsBlockRange?: number;
   readonly schedule?: cdk.Duration;
+  readonly landingSnapshotMaxAgeSeconds?: number;
+  readonly landingSnapshotCacheSeconds?: number;
+  readonly landingSnapshotStaleWhileRevalidateSeconds?: number;
+  readonly landingSnapshotFutureToleranceSeconds?: number;
+  readonly landingSnapshotRunTimeoutMs?: number;
+  readonly landingSnapshotLeafTimeoutMs?: number;
+  readonly landingSnapshotTtlSeconds?: number;
+}
+
+function positiveSafeInteger(value: number, name: string): number {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`${name} must be a positive safe integer.`);
+  }
+  return value;
 }
 
 export function famePoolStateClReplayMaintenanceModeFromEnv(
@@ -73,12 +88,21 @@ function bundlePoolStateLambda(entrypoint: string, options?: BuildOptions) {
     ...options,
   });
   const outputDirectory = path.dirname(outfile);
+  const landingFixtureDirectory = path.join(outputDirectory, "fixtures");
+  fs.mkdirSync(landingFixtureDirectory);
   fs.copyFileSync(
     path.join(
       __dirname,
       "../../src/fame-swap-pool-state/registry/base-v1-pools.json",
     ),
     path.join(outputDirectory, "base-v1-pools.json"),
+  );
+  fs.copyFileSync(
+    path.join(
+      __dirname,
+      "../../src/fame-swap-pool-state/fixtures/fame-landing-defi-authority-v1.json",
+    ),
+    path.join(landingFixtureDirectory, "fame-landing-defi-authority-v1.json"),
   );
   return outputDirectory;
 }
@@ -146,6 +170,57 @@ export class FamePoolState extends Construct {
       props.clReplayMaxRangeBlocks?.toString() ?? "1000";
     const rpcGetLogsBlockRange =
       props.rpcGetLogsBlockRange?.toString() ?? "500";
+    const landingSnapshotMaxAgeSeconds = positiveSafeInteger(
+      props.landingSnapshotMaxAgeSeconds ?? 300,
+      "landingSnapshotMaxAgeSeconds",
+    );
+    const landingSnapshotCacheSeconds = positiveSafeInteger(
+      props.landingSnapshotCacheSeconds ?? 60,
+      "landingSnapshotCacheSeconds",
+    );
+    const landingSnapshotStaleWhileRevalidateSeconds = positiveSafeInteger(
+      props.landingSnapshotStaleWhileRevalidateSeconds ?? 120,
+      "landingSnapshotStaleWhileRevalidateSeconds",
+    );
+    const landingSnapshotFutureToleranceSeconds = positiveSafeInteger(
+      props.landingSnapshotFutureToleranceSeconds ?? 30,
+      "landingSnapshotFutureToleranceSeconds",
+    );
+    const landingSnapshotRunTimeoutMs = positiveSafeInteger(
+      props.landingSnapshotRunTimeoutMs ?? 10_000,
+      "landingSnapshotRunTimeoutMs",
+    );
+    const landingSnapshotLeafTimeoutMs = positiveSafeInteger(
+      props.landingSnapshotLeafTimeoutMs ?? 1_500,
+      "landingSnapshotLeafTimeoutMs",
+    );
+    const landingSnapshotTtlSeconds = positiveSafeInteger(
+      props.landingSnapshotTtlSeconds ?? 86_400,
+      "landingSnapshotTtlSeconds",
+    );
+    if (landingSnapshotCacheSeconds > landingSnapshotMaxAgeSeconds) {
+      throw new Error(
+        "landing snapshot cache lifetime must not exceed max age.",
+      );
+    }
+    if (landingSnapshotLeafTimeoutMs > landingSnapshotRunTimeoutMs) {
+      throw new Error(
+        "landing snapshot leaf timeout must not exceed run timeout.",
+      );
+    }
+    if (
+      landingSnapshotTtlSeconds <=
+      landingSnapshotMaxAgeSeconds + landingSnapshotStaleWhileRevalidateSeconds
+    ) {
+      throw new Error(
+        "landing snapshot TTL must exceed max age plus revalidation margin.",
+      );
+    }
+    if (landingSnapshotRunTimeoutMs > 55_000) {
+      throw new Error(
+        "landing snapshot run timeout must leave the indexer Lambda shutdown margin.",
+      );
+    }
 
     const table = new dynamodb.Table(this, "FamePoolState", {
       partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
@@ -160,6 +235,19 @@ export class FamePoolState extends Construct {
       FAME_POOL_STATE_TABLE_NAME: table.tableName,
       FAME_POOL_STATE_DEFAULT_MAX_FRESHNESS_BLOCKS: defaultMaxFreshnessBlocks,
       FAME_POOL_STATE_MAX_BATCH_SIZE: maxBatchSize,
+      FAME_LANDING_SNAPSHOT_MAX_AGE_SECONDS:
+        landingSnapshotMaxAgeSeconds.toString(),
+      FAME_LANDING_SNAPSHOT_CACHE_SECONDS:
+        landingSnapshotCacheSeconds.toString(),
+      FAME_LANDING_SNAPSHOT_STALE_WHILE_REVALIDATE_SECONDS:
+        landingSnapshotStaleWhileRevalidateSeconds.toString(),
+      FAME_LANDING_SNAPSHOT_FUTURE_TOLERANCE_SECONDS:
+        landingSnapshotFutureToleranceSeconds.toString(),
+      FAME_LANDING_SNAPSHOT_RUN_TIMEOUT_MS:
+        landingSnapshotRunTimeoutMs.toString(),
+      FAME_LANDING_SNAPSHOT_LEAF_TIMEOUT_MS:
+        landingSnapshotLeafTimeoutMs.toString(),
+      FAME_LANDING_SNAPSHOT_TTL_SECONDS: landingSnapshotTtlSeconds.toString(),
       LOG_LEVEL: "INFO",
     };
 
@@ -188,7 +276,17 @@ export class FamePoolState extends Construct {
         FAME_POOL_STATE_RPC_GET_LOGS_BLOCK_RANGE: rpcGetLogsBlockRange,
       },
     });
-    table.grantReadWriteData(indexerLambda);
+    indexerLambda.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: [
+          "dynamodb:BatchGetItem",
+          "dynamodb:GetItem",
+          "dynamodb:PutItem",
+          "dynamodb:UpdateItem",
+        ],
+        resources: [table.tableArn],
+      }),
+    );
 
     const indexerFailureQueue = new sqs.Queue(
       this,
@@ -313,7 +411,12 @@ export class FamePoolState extends Construct {
         FAME_POOL_STATE_SERVICE_TOKEN: serviceToken,
       },
     });
-    table.grantReadData(apiLambda);
+    apiLambda.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["dynamodb:BatchGetItem", "dynamodb:GetItem"],
+        resources: [table.tableArn],
+      }),
+    );
 
     const scheduleRule = new events.Rule(this, "FamePoolStateScheduleRule", {
       schedule: events.Schedule.rate(props.schedule ?? cdk.Duration.minutes(1)),
