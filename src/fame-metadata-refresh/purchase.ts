@@ -1,4 +1,4 @@
-import { decodeEventLog, erc721Abi, formatUnits, isAddressEqual, zeroAddress, type Address, type Log } from "viem";
+import { BaseError, ContractFunctionRevertedError, decodeEventLog, erc721Abi, formatUnits, isAddressEqual, zeroAddress, type Address, type Log } from "viem";
 import { base } from "viem/chains";
 import { BASE_FAME_ADDRESS, BASE_FAME_CHECKOUT_ADDRESS, BASE_FAME_NFT_ADDRESS, BASE_UNIVERSAL_MARKETPLACE_ADDRESS, BASE_USDC_ADDRESS, BASE_WETH_ADDRESS } from "@/constants.ts";
 import { artworkPurchasedEvent, checkoutSettledEvent, ERC721TransferEventAbi } from "@/events.ts";
@@ -7,6 +7,10 @@ import type { PurchaseNotification } from "./types.ts";
 
 type ReceiptLog = Pick<Log, "address" | "data" | "topics">;
 type DecodedEvent = { eventName: string; args: Record<string, unknown> };
+const fameNftMetadataAbi = [
+  ...erc721Abi,
+  { type: "error", inputs: [], name: "TokenDoesNotExist" },
+] as const;
 
 function decode(log: ReceiptLog, event: typeof artworkPurchasedEvent | typeof checkoutSettledEvent): DecodedEvent {
   return decodeEventLog({ abi: [event], data: log.data, topics: log.topics, strict: true }) as DecodedEvent;
@@ -69,8 +73,15 @@ export function projectPurchaseNotification({ transactionHash, logs }: { transac
   return null;
 }
 
-export async function authoritativeMetadata({ client, tokenId, fetcher = fetch }: { client: { readContract(args: { abi: typeof erc721Abi; address: Address; functionName: "tokenURI"; args: [bigint] }): Promise<string> }; tokenId: bigint; fetcher?: typeof fetch }) {
-  const tokenUri = await client.readContract({ abi: erc721Abi, address: BASE_FAME_NFT_ADDRESS as Address, functionName: "tokenURI", args: [tokenId] });
+export function isMissingFameNft(error: unknown) {
+  const reverted = error instanceof BaseError
+    ? error.walk((cause) => cause instanceof ContractFunctionRevertedError)
+    : null;
+  return reverted instanceof ContractFunctionRevertedError && reverted.data?.errorName === "TokenDoesNotExist";
+}
+
+export async function authoritativeMetadata({ client, tokenId, fetcher = fetch }: { client: { readContract(args: { abi: typeof fameNftMetadataAbi; address: Address; functionName: "tokenURI"; args: [bigint] }): Promise<string> }; tokenId: bigint; fetcher?: typeof fetch }) {
+  const tokenUri = await client.readContract({ abi: fameNftMetadataAbi, address: BASE_FAME_NFT_ADDRESS as Address, functionName: "tokenURI", args: [tokenId] });
   const response = await fetcher(tokenUri, { signal: AbortSignal.timeout(METADATA_REQUEST_TIMEOUT_MS) });
   if (!response.ok) throw new Error("Authoritative metadata read failed");
   const value: unknown = await response.json();

@@ -8,7 +8,7 @@ export type MetadataRefreshJob = {
   logIndex: number;
   tokenId: bigint;
   blockNumber: bigint;
-  state: "pending" | "in_flight" | "accepted";
+  state: "pending" | "in_flight" | "accepted" | "skipped";
   attempts: number;
 };
 
