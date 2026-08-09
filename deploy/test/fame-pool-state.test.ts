@@ -42,6 +42,28 @@ function expectOutputMatching(template: Template, logicalIdPart: string) {
   );
 }
 
+function expectLandingSnapshotStageDependsOnRoute(template: Template) {
+  const landingRouteLogicalId = Object.entries(
+    template.findResources("AWS::ApiGatewayV2::Route"),
+  ).find(
+    ([, route]) =>
+      route.Properties?.RouteKey === "GET /fame/landing-defi-snapshot",
+  )?.[0];
+  if (!landingRouteLogicalId) {
+    throw new Error("Expected the landing snapshot route to be synthesized.");
+  }
+
+  const stages = Object.values(
+    template.findResources("AWS::ApiGatewayV2::Stage"),
+  );
+  expect(stages).toHaveLength(1);
+  expect(stages[0]).toEqual(
+    expect.objectContaining({
+      DependsOn: expect.arrayContaining([landingRouteLogicalId]),
+    }),
+  );
+}
+
 describe("FamePoolState infrastructure", () => {
   test("synthesizes latest-state table, lambdas, and schedule without a GSI", () => {
     const app = new cdk.App();
@@ -376,6 +398,7 @@ describe("FamePoolState infrastructure", () => {
         },
       },
     });
+    expectLandingSnapshotStageDependsOnRoute(template);
     template.hasResourceProperties("AWS::ApiGatewayV2::Authorizer", {
       IdentitySource: ["$request.header.Authorization"],
     });
@@ -424,6 +447,7 @@ describe("FamePoolState infrastructure", () => {
         RouteKey: "GET /fame/landing-defi-snapshot",
         AuthorizationType: "NONE",
       });
+      expectLandingSnapshotStageDependsOnRoute(template);
       template.hasResourceProperties("AWS::ApiGatewayV2::Authorizer", {
         IdentitySource: ["$request.header.Authorization"],
       });
