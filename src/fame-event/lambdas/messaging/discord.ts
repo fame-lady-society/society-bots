@@ -1,17 +1,12 @@
 import { SNS } from "@aws-sdk/client-sns";
 import { baseClient, mainnetClient, sepoliaClient } from "@/viem.js";
-import { fetchMetadata } from "./metadata.js";
 import { APIEmbed, APIEmbedField } from "discord-api-types/v10";
 import { sendDiscordMessage } from "@/discord/pubsub/send.js";
 
 import { erc20Abi, formatEther, formatUnits, parseUnits } from "viem";
-import { fameSocietyTokenAddress } from "@/wagmi.generated.ts";
-import { base } from "viem/chains";
 import { AggregateSwapEvents } from "./aggregate.ts";
-import { imageHost } from "@/discord/config.ts";
 import { logger } from "@/utils/logging.ts";
 import { fillGrid } from "./grid.ts";
-import { generateTokenIdListString } from "./utils.ts";
 
 export const formatToken = (
   amount: bigint,
@@ -51,156 +46,6 @@ export const formatToken = (
 
   return `${formattedLeft}${suffix}${right ? "." + right : ""}`;
 };
-
-export async function notifyDiscordMint({
-  tokenIds,
-  toAddress,
-  testnet,
-  txHash,
-  client,
-}: {
-  tokenIds: bigint[];
-  toAddress: `0x${string}`;
-  testnet: boolean;
-  txHash: `0x${string}`;
-  client: typeof sepoliaClient | typeof baseClient;
-}) {
-  if (tokenIds.length === 0) {
-    return [];
-  }
-  let displayName: string = toAddress;
-  try {
-    const ensName = await mainnetClient.getEnsName({ address: toAddress });
-    if (ensName) {
-      displayName = ensName;
-    }
-  } catch (error) {
-    logger.warn({ error, toAddress }, "Failed to fetch ENS name");
-  }
-  const fields: APIEmbedField[] = [];
-  if (tokenIds.length === 1) {
-    fields.push({
-      name: "token id",
-      value: tokenIds[0].toString(),
-      inline: true,
-    });
-  } else {
-    fields.push({
-      name: "minted",
-      value: tokenIds.length.toString(),
-      inline: true,
-    });
-    fields.push({
-      name: "token ids",
-      value: generateTokenIdListString(tokenIds.map(Number)),
-      inline: true,
-    });
-  }
-  fields.push({
-    name: "by",
-    value: displayName,
-    inline: true,
-  });
-  if (testnet) {
-    fields.push({
-      name: "testnet",
-      value: "true",
-      inline: true,
-    });
-  }
-
-  return [
-    {
-      title: "$FAME Society Mint",
-      description: `New $FAME Society was minted${
-        testnet ? " on testnet" : ""
-      }`,
-      url: `${client.chain.blockExplorers.default.url}/tx/${txHash}`,
-      image: {
-        url:
-          tokenIds.length === 1
-            ? `https://${imageHost.get()}/thumb/${tokenIds[0]}`
-            : `https://${imageHost.get()}/mosaic/${tokenIds.join(",")}`,
-      },
-      fields,
-    },
-  ] as APIEmbed[];
-}
-
-export async function notifyDiscordBurn({
-  tokenIds,
-  fromAddress,
-  testnet,
-  txHash,
-  client,
-}: {
-  tokenIds: bigint[];
-  fromAddress: `0x${string}`;
-  testnet: boolean;
-  txHash: `0x${string}`;
-  client: typeof sepoliaClient | typeof baseClient;
-}) {
-  if (tokenIds.length === 0) {
-    return [];
-  }
-  let displayName: string = fromAddress;
-  try {
-    const ensName = await mainnetClient.getEnsName({ address: fromAddress });
-    if (ensName) {
-      displayName = ensName;
-    }
-  } catch (error) {
-    logger.warn({ error, fromAddress }, "Failed to fetch ENS name");
-  }
-  const fields: APIEmbedField[] = [];
-  if (tokenIds.length === 1) {
-    fields.push({
-      name: "token id",
-      value: tokenIds[0].toString(),
-      inline: true,
-    });
-  } else {
-    fields.push({
-      name: "burned",
-      value: tokenIds.length.toString(),
-      inline: true,
-    });
-    fields.push({
-      name: "token ids",
-      value: generateTokenIdListString(tokenIds.map(Number)),
-      inline: true,
-    });
-  }
-  fields.push({
-    name: "by",
-    value: displayName,
-    inline: true,
-  });
-  if (testnet) {
-    fields.push({
-      name: "sepolia",
-      value: "true",
-      inline: true,
-    });
-  }
-
-  return [
-    {
-      title: "$FAME Society Mint",
-      description: `New $FAME Society was burned${
-        testnet ? " on testnet" : ""
-      }`,
-      url: `${client.chain.blockExplorers.default.url}/tx/${txHash}`,
-      image: {
-        url:
-          tokenIds.length === 1
-            ? `https://${imageHost.get()}/thumb/${tokenIds[0]}`
-            : `https://${imageHost.get()}/mosaic/${tokenIds.join(",")}`,
-      },
-      fields,
-    },
-  ] as APIEmbed[];
-}
 
 const MAX_AMOUNT = parseUnits("1", 18);
 const MIN_AMOUNT = parseUnits("0.001", 18);

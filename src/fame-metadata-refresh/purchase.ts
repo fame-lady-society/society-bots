@@ -91,12 +91,12 @@ export async function authoritativeMetadata({ client, tokenId, fetcher = fetch }
   return { name: metadata.name, description: metadata.description, image: metadata.image };
 }
 
-export function purchaseEmbed(purchase: PurchaseNotification, recipientDisplayName: string = purchase.recipient) {
+export function purchaseEmbed(purchase: PurchaseNotification, recipientDisplayName: string, imageUrl: string) {
   return {
     title: "$FAME Society Purchased",
     description: `FAME Society #${purchase.tokenId.toString()} was purchased.`,
     url: `${base.blockExplorers.default.url}/tx/${purchase.transactionHash}`,
-    image: { url: `https://${process.env.IMAGE_HOST}/thumb/${purchase.tokenId.toString()}` },
+    image: { url: imageUrl },
     fields: [
       { name: "new owner", value: recipientDisplayName, inline: true },
       { name: "paid", value: `${formatUnits(purchase.payment.amount, purchase.payment.decimals)} ${purchase.payment.asset}`, inline: true },

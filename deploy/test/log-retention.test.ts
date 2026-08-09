@@ -89,20 +89,19 @@ describe("Lambda CloudWatch log retention", () => {
     assertEveryLambdaUsesManagedLogGroup(template);
   });
 
-  test("image Lambdas use Base seven-day and Ethereum thirty-day log groups", () => {
+  test("only the FLS image Lambdas remain", () => {
     const app = new cdk.App();
     const stack = new cdk.Stack(app, "TestStack");
 
     new ImageLambdas(stack, "ImageLambdas", {
-      baseRpcsJson: JSON.stringify(["https://base.example"]),
       mainnetRpcsJson: JSON.stringify(["https://mainnet.example"]),
       domain: ["images", "example.com"],
       corsAllowedOriginsJson: JSON.stringify(["https://example.com"]),
     });
 
     const template = Template.fromStack(stack);
-    expect(lambdaFunctions(template)).toHaveLength(4);
-    assertManagedLogGroups(template, [7, 7, 30, 30]);
+    expect(lambdaFunctions(template)).toHaveLength(2);
+    assertManagedLogGroups(template, [30, 30]);
     assertEveryLambdaUsesManagedLogGroup(template);
   });
 

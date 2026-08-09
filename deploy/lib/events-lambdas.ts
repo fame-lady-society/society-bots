@@ -198,7 +198,6 @@ export class EventLambdas extends Construct {
       timeout: cdk.Duration.seconds(60),
       memorySize: 512,
       environment: {
-        IMAGE_HOST: domainName,
         BASE_RPCS_JSON: baseRpcsJson,
         SEPOLIA_RPCS_JSON: sepoliaRpcsJson,
         MAINNET_RPCS_JSON: mainnetRpcsJson,
@@ -247,7 +246,6 @@ export class EventLambdas extends Construct {
           DYNAMODB_FAME_METADATA_REFRESH_TABLE_NAME: metadataRefreshTable.tableName,
           DISCORD_CHANNEL_ID: discordChannelId,
           DISCORD_MESSAGE_TOPIC_ARN: deferredMessageTopic.topicArn,
-          IMAGE_HOST: domainName,
           OPENSEA_API_KEY: props.openSeaApiKey,
           LOG_LEVEL: "INFO",
         },

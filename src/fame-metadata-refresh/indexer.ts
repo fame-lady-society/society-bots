@@ -5,7 +5,7 @@ import { BASE_FAME_NFT_ADDRESS, BASE_UNIVERSAL_MARKETPLACE_ADDRESS } from "@/con
 import { artworkPurchasedEvent, metadataEvent } from "@/events.ts";
 import { sendDiscordMessage } from "@/discord/pubsub/send.ts";
 import { createLogger } from "@/utils/logging.ts";
-import { advanceCheckpoint, getCheckpoint, initializeCheckpoint, markAccepted, markInFlight, markMissingTokenSkipped, markPurchaseNotificationPublished, putJob, shouldPublishPurchaseNotification, type MetadataRefreshCheckpoint, type MetadataRefreshCheckpointId, type MetadataRefreshStore } from "./dynamodb.ts";
+import { advanceCheckpoint, getCheckpoint, initializeCheckpoint, markAccepted, markInFlight, markMissingTokenSkipped, markPurchaseNotificationPublished, markPurchaseNotificationSkipped, putJob, shouldPublishPurchaseNotification, type MetadataRefreshCheckpoint, type MetadataRefreshCheckpointId, type MetadataRefreshStore } from "./dynamodb.ts";
 import { isRetryableOpenSeaStatus, metadataMatches, OpenSeaResponseError, readOpenSeaMetadata, refreshOpenSeaMetadata } from "./opensea.ts";
 import { authoritativeMetadata, isMissingFameNft, projectPurchaseNotification, purchaseEmbed } from "./purchase.ts";
 import { BASE_CHAIN_ID, type MetadataRefreshJob } from "./types.ts";
@@ -15,6 +15,7 @@ const FINALITY_BLOCKS = 8n;
 const MAX_BLOCKS = 1_000n;
 const MAX_EVENTS = 20;
 const MAX_RETRY_DELAY_MS = 1_000;
+const MINIMUM_PURCHASE_TIME_MS = 10_000;
 const MINIMUM_METADATA_JOB_TIME_MS = 45_000;
 const INITIAL_CHECKPOINT = 49_729_692n;
 const METADATA_CHECKPOINT: MetadataRefreshCheckpointId = "base-metadata-update";
@@ -124,23 +125,48 @@ async function processPurchaseWindow(dependencies: IndexerDependencies, checkpoi
   if (window.logs.length > 0) {
     const topicArn = requiredEnv("DISCORD_MESSAGE_TOPIC_ARN");
     const channelId = requiredEnv("DISCORD_CHANNEL_ID");
+    let firstFailure: unknown;
+    let hasFailure = false;
     for (const purchaseLog of window.logs) {
-      const receipt = await dependencies.client.getTransactionReceipt({ hash: purchaseLog.transactionHash });
-      const notification = projectPurchaseNotification({ transactionHash: receipt.transactionHash, logs: receipt.logs });
-      if (!notification) {
-        logger.warn({ event: "marketplace_purchase_decode_failed", transactionHash: receipt.transactionHash }, "marketplace purchase was not notified");
-        continue;
+      const remainingTimeMs = dependencies.remainingTimeInMillis?.();
+      if (remainingTimeMs !== undefined && remainingTimeMs < MINIMUM_PURCHASE_TIME_MS) {
+        firstFailure = new Error("Insufficient Lambda time remains for another purchase notification");
+        hasFailure = true;
+        break;
       }
-      if (!(await shouldPublishPurchaseNotification(receipt.transactionHash, Number(purchaseLog.logIndex), dependencies.store))) continue;
-      let recipientDisplayName: string = notification.recipient;
       try {
-        recipientDisplayName = (await dependencies.ensClient.getEnsName({ address: notification.recipient })) ?? notification.recipient;
-      } catch (error) {
-        logger.warn({ event: "marketplace_purchase_ens_lookup_failed", recipient: notification.recipient, error }, "Failed to fetch ENS name");
+        const receipt = await dependencies.client.getTransactionReceipt({ hash: purchaseLog.transactionHash });
+        const notification = projectPurchaseNotification({ transactionHash: receipt.transactionHash, logs: receipt.logs });
+        if (!notification) {
+          logger.warn({ event: "marketplace_purchase_decode_failed", transactionHash: receipt.transactionHash }, "marketplace purchase was not notified");
+          continue;
+        }
+        const logIndex = Number(purchaseLog.logIndex);
+        if (!(await shouldPublishPurchaseNotification(receipt.transactionHash, logIndex, dependencies.store))) continue;
+        try {
+          const [metadata, recipientDisplayName] = await Promise.all([
+            authoritativeMetadata({ client: dependencies.client, tokenId: notification.tokenId, fetcher: dependencies.fetcher }),
+            dependencies.ensClient.getEnsName({ address: notification.recipient })
+              .then((name) => name ?? notification.recipient)
+              .catch((error) => {
+                logger.warn({ event: "marketplace_purchase_ens_lookup_failed", recipient: notification.recipient, error }, "Failed to fetch ENS name");
+                return notification.recipient;
+              }),
+          ]);
+          await sendDiscordMessage({ topicArn, channelId, message: { embeds: [purchaseEmbed(notification, recipientDisplayName, metadata.image)] }, sns: dependencies.sns });
+          await markPurchaseNotificationPublished(receipt.transactionHash, logIndex, dependencies.store);
+        } catch (error: unknown) {
+          if (!isMissingFameNft(error)) throw error;
+          await markPurchaseNotificationSkipped(receipt.transactionHash, logIndex, dependencies.store);
+          logger.warn({ event: "marketplace_purchase_skipped", tokenId: notification.tokenId.toString(), transactionHash: receipt.transactionHash, logIndex, reason: "token_not_found" }, "Marketplace purchase notification skipped for a token that no longer exists");
+        }
+      } catch (error: unknown) {
+        if (!hasFailure) firstFailure = error;
+        hasFailure = true;
+        logger.error({ event: "marketplace_purchase_failed", transactionHash: purchaseLog.transactionHash, logIndex: purchaseLog.logIndex, error }, "Marketplace purchase notification failed");
       }
-      await sendDiscordMessage({ topicArn, channelId, message: { embeds: [purchaseEmbed(notification, recipientDisplayName)] }, sns: dependencies.sns });
-      await markPurchaseNotificationPublished(receipt.transactionHash, Number(purchaseLog.logIndex), dependencies.store);
     }
+    if (hasFailure) throw firstFailure;
   }
   await advanceCheckpoint(checkpoint, window.nextCheckpoint, dependencies.store, PURCHASE_CHECKPOINT);
   logger.info({ event: "marketplace_purchase_checkpoint_advanced", nextBlock: window.nextCheckpoint.nextBlock.toString(), nextLogIndex: window.nextCheckpoint.nextLogIndex }, "marketplace purchase checkpoint advanced");
@@ -184,9 +210,17 @@ export async function runMetadataRefreshIndexer(dependencies: IndexerDependencie
   const head = await dependencies.client.getBlockNumber();
   const finalizedHead = head > FINALITY_BLOCKS ? head - FINALITY_BLOCKS : 0n;
   const purchaseCheckpoint = await loadCheckpoint(PURCHASE_CHECKPOINT, dependencies.store);
-  await processPurchaseWindow(dependencies, purchaseCheckpoint, finalizedHead);
+  let purchaseFailure: unknown;
+  let purchaseFailed = false;
+  try {
+    await processPurchaseWindow(dependencies, purchaseCheckpoint, finalizedHead);
+  } catch (error: unknown) {
+    purchaseFailure = error;
+    purchaseFailed = true;
+  }
   const metadataCheckpoint = await loadCheckpoint(METADATA_CHECKPOINT, dependencies.store);
   await processMetadataWindow(dependencies, metadataCheckpoint, finalizedHead);
+  if (purchaseFailed) throw purchaseFailure;
 }
 
 function requiredEnv(name: string) {

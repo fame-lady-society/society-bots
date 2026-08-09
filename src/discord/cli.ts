@@ -57,8 +57,6 @@ commandCommand
                       .addChoices([
                         { name: "$FAME Buy", value: "fame-buy" },
                         { name: "$FAME Sell", value: "fame-sell" },
-                        { name: "$FAME NFT Mint", value: "fame-nft-mint" },
-                        { name: "$FAME NFT Burn", value: "fame-nft-burn" },
                       ])
                   )
               )
@@ -74,8 +72,6 @@ commandCommand
                       .addChoices([
                         { name: "$FAME Buy", value: "fame-buy" },
                         { name: "$FAME Sell", value: "fame-sell" },
-                        { name: "$FAME NFT Mint", value: "fame-nft-mint" },
-                        { name: "$FAME NFT Burn", value: "fame-nft-burn" },
                       ])
                   )
               ),

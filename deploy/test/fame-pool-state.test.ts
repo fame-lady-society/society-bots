@@ -368,8 +368,6 @@ describe("FamePoolState infrastructure", () => {
     new HttpApi(stack, "HttpApi", {
       domain: ["fame", "support"],
       hostedZone,
-      fameImageThumbHandler: handler,
-      fameImageMosaicHandler: handler,
       flsImageThumbHandler: handler,
       flsImageMosaicHandler: handler,
       discordInteractionHandler: handler,
@@ -402,6 +400,11 @@ describe("FamePoolState infrastructure", () => {
     template.hasResourceProperties("AWS::ApiGatewayV2::Authorizer", {
       IdentitySource: ["$request.header.Authorization"],
     });
+    const synthesized = JSON.stringify(template.toJSON());
+    expect(synthesized).not.toContain("GET /thumb/{tokenId}");
+    expect(synthesized).not.toContain("GET /mosaic/{tokenId}");
+    expect(synthesized).toContain("GET /fls/thumb/{tokenId}");
+    expect(synthesized).toContain("GET /fls/mosaic/{tokenId}");
   });
 
   test("synthesizes pool-state-only dev stack without legacy app env", () => {

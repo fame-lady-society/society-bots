@@ -58,7 +58,7 @@ export async function shouldPublishPurchaseNotification(transactionHash: `0x${st
     if ((error as { name?: string }).name !== "ConditionalCheckFailedException") throw error;
   }
   const result = await store.send(new GetCommand({ TableName: tableName(), Key: key }));
-  if (result.Item?.state === "published") return false;
+  if (result.Item?.state === "published" || result.Item?.state === "skipped") return false;
   if (result.Item?.state === "pending") return true;
   throw new Error("Purchase notification state is malformed");
 }
@@ -71,6 +71,17 @@ export async function markPurchaseNotificationPublished(transactionHash: `0x${st
     ConditionExpression: "#state = :pending",
     ExpressionAttributeNames: { "#state": "state" },
     ExpressionAttributeValues: { ":pending": "pending", ":published": "published" },
+  }));
+}
+
+export async function markPurchaseNotificationSkipped(transactionHash: `0x${string}`, logIndex: number, store: MetadataRefreshStore = defaultDb) {
+  await store.send(new UpdateCommand({
+    TableName: tableName(),
+    Key: purchaseNotificationKey(transactionHash, logIndex),
+    UpdateExpression: "SET #state = :skipped, skipReason = :reason",
+    ConditionExpression: "#state = :pending",
+    ExpressionAttributeNames: { "#state": "state" },
+    ExpressionAttributeValues: { ":pending": "pending", ":skipped": "skipped", ":reason": "token_not_found" },
   }));
 }
 

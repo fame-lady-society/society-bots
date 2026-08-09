@@ -91,7 +91,6 @@ The deploy app creates managed `AWS::Logs::LogGroup` resources and passes them t
 
 | Surface                              | Lambdas                                                                  | Retention |
 | ------------------------------------ | ------------------------------------------------------------------------ | --------: |
-| Base image and Base-only operational | `FameThumb`, `Mosaic`                                                    |    7 days |
 | Ethereum/FLS image                   | `FlsThumb`, `FlsMosaic`                                                  |   30 days |
 | Discord/app audit                    | `interactionHandler`, `deferredMessage`                                  |   30 days |
 | Mixed Base/Ethereum eventing         | `FameEvent`                                                              |   30 days |
