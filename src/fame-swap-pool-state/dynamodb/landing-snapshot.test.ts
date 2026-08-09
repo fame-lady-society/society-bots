@@ -127,7 +127,7 @@ describe("FAME landing snapshot DynamoDB publication", () => {
     const snapshot = snapshotFixture();
     snapshot.fields.quotes.defiBuyUsdc = {
       status: "unavailable",
-      reason: "captured-state-missing",
+      reason: "dependency-unavailable",
     };
     await publishFameLandingSnapshot({
       db,
@@ -141,7 +141,7 @@ describe("FAME landing snapshot DynamoDB publication", () => {
     });
     expect(current?.fields.quotes.defiBuyUsdc).toEqual({
       status: "unavailable",
-      reason: "captured-state-missing",
+      reason: "dependency-unavailable",
     });
     const reads = db.commands.filter(
       (command): command is GetCommand => command instanceof GetCommand,

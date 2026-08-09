@@ -6,6 +6,7 @@ import {
   type FameLandingMulticallClient,
 } from "./landing-snapshot-runtime.ts";
 import { fameLandingAuthority } from "./landing-snapshot.ts";
+import { famePoolStateRegistry } from "./registry/index.ts";
 import type { PoolStateDocumentClient } from "./dynamodb/pool-state.ts";
 import type { FamePoolStateIndexerResult } from "./indexer.ts";
 
@@ -114,6 +115,199 @@ describe("FAME landing production reads", () => {
       allowFailure: false,
       blockNumber: 456n,
     });
+  });
+
+  test("reads connector reserves once at the safe block without indexing them", async () => {
+    const connector = famePoolStateRegistry.pools.find(
+      ({ id }) => id === "aerodrome-v2-usdc-weth",
+    );
+    if (!connector?.poolAddress) throw new Error("Missing connector fixture.");
+    const multicall = jest.fn<FameLandingMulticallClient["multicall"]>(
+      async () => [[11n, 22n, 123]],
+    );
+    const deps = createFameLandingSnapshotDependencies({
+      tableName: "PoolState",
+      rpc: { multicall },
+    });
+
+    await expect(
+      deps.readRuntimePoolReserves({
+        blockNumber: 789n,
+        pools: [
+          {
+            poolId: connector.id,
+            poolAddress: connector.poolAddress,
+          },
+        ],
+      }),
+    ).resolves.toEqual([
+      {
+        poolId: connector.id,
+        blockNumber: 789n,
+        reserve0: 11n,
+        reserve1: 22n,
+      },
+    ]);
+    expect(multicall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        allowFailure: false,
+        blockNumber: 789n,
+        contracts: [
+          expect.objectContaining({
+            address: connector.poolAddress,
+            functionName: "getReserves",
+          }),
+        ],
+      }),
+    );
+  });
+
+  test("rejects runtime reserve pools outside the fixed landing authority", async () => {
+    const unrelated = famePoolStateRegistry.pools.find(
+      ({ id }) => id === "scale-equalizer-usdc-scale",
+    );
+    if (!unrelated?.poolAddress) {
+      throw new Error("Missing unrelated tracked pool fixture.");
+    }
+    const multicall = jest.fn<FameLandingMulticallClient["multicall"]>();
+    const deps = createFameLandingSnapshotDependencies({
+      tableName: "PoolState",
+      rpc: { multicall },
+    });
+
+    await expect(
+      deps.readRuntimePoolReserves({
+        blockNumber: 789n,
+        pools: [
+          {
+            poolId: unrelated.id,
+            poolAddress: unrelated.poolAddress,
+          },
+        ],
+      }),
+    ).rejects.toThrow(/outside authority/u);
+    expect(multicall).not.toHaveBeenCalled();
+  });
+
+  test("validates final connector quotes in one safe-block batch with per-leaf failures", async () => {
+    const connector = famePoolStateRegistry.pools.find(
+      ({ id }) => id === "aerodrome-v2-usdc-weth",
+    );
+    if (!connector?.poolAddress) throw new Error("Missing connector fixture.");
+    const multicall = jest.fn<FameLandingMulticallClient["multicall"]>(
+      async () => [
+        { status: "success", result: 22n },
+        { status: "failure", error: new Error("single quote failed") },
+      ],
+    );
+    const deps = createFameLandingSnapshotDependencies({
+      tableName: "PoolState",
+      rpc: { multicall },
+    });
+    const requests = [
+      {
+        quoteDefinitionId: "defi-buy-usdc-v1" as const,
+        poolId: connector.id,
+        poolAddress: connector.poolAddress,
+        tokenIn: connector.token1,
+        amountIn: 10n,
+      },
+      {
+        quoteDefinitionId: "defi-sell-usdc-v1" as const,
+        poolId: connector.id,
+        poolAddress: connector.poolAddress,
+        tokenIn: connector.token0,
+        amountIn: 20n,
+      },
+    ];
+
+    await expect(
+      deps.readRuntimePoolQuotes({ blockNumber: 790n, requests }),
+    ).resolves.toEqual([
+      {
+        quoteDefinitionId: "defi-buy-usdc-v1",
+        status: "available",
+        blockNumber: 790n,
+        amountOut: 22n,
+      },
+      {
+        quoteDefinitionId: "defi-sell-usdc-v1",
+        status: "unavailable",
+      },
+    ]);
+    expect(multicall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        allowFailure: true,
+        blockNumber: 790n,
+        contracts: [
+          expect.objectContaining({
+            address: connector.poolAddress,
+            functionName: "getAmountOut",
+            args: [10n, connector.token1],
+          }),
+          expect.objectContaining({
+            address: connector.poolAddress,
+            functionName: "getAmountOut",
+            args: [20n, connector.token0],
+          }),
+        ],
+      }),
+    );
+  });
+
+  test("rejects runtime quote requests outside the fixed definition and direction authority", async () => {
+    const connector = famePoolStateRegistry.pools.find(
+      ({ id }) => id === "aerodrome-v2-usdc-weth",
+    );
+    const unrelated = famePoolStateRegistry.pools.find(
+      ({ id }) => id === "scale-equalizer-usdc-scale",
+    );
+    if (!connector?.poolAddress || !unrelated?.poolAddress) {
+      throw new Error("Missing runtime authority fixtures.");
+    }
+    const multicall = jest.fn<FameLandingMulticallClient["multicall"]>();
+    const deps = createFameLandingSnapshotDependencies({
+      tableName: "PoolState",
+      rpc: { multicall },
+    });
+    const valid = {
+      quoteDefinitionId: "defi-buy-usdc-v1" as const,
+      poolId: connector.id,
+      poolAddress: connector.poolAddress,
+      tokenIn: connector.token1,
+      amountIn: 10n,
+    };
+    const invalidBatches = [
+      [valid, { ...valid, amountIn: 11n }],
+      [
+        {
+          ...valid,
+          poolId: unrelated.id,
+          poolAddress: unrelated.poolAddress,
+          tokenIn: unrelated.token0,
+        },
+      ],
+      [
+        {
+          ...valid,
+          poolAddress: "0x1111111111111111111111111111111111111111" as Address,
+        },
+      ],
+      [
+        {
+          ...valid,
+          tokenIn: "0x2222222222222222222222222222222222222222" as Address,
+        },
+      ],
+      [{ ...valid, amountIn: 0n }],
+    ];
+
+    for (const requests of invalidBatches) {
+      await expect(
+        deps.readRuntimePoolQuotes({ blockNumber: 790n, requests }),
+      ).rejects.toThrow(/authority|unique/u);
+    }
+    expect(multicall).not.toHaveBeenCalled();
   });
 
   test("applies the run deadline to warm-start reads as well as production", async () => {

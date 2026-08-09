@@ -17,8 +17,24 @@ import {
   type FameLandingSnapshot,
   type FameLandingUnavailableReason,
 } from "./landing-snapshot.ts";
-import { famePoolStateRegistry } from "./registry/index.ts";
+import {
+  famePoolStateRegistry,
+  getFamePoolStateRegistryEntry,
+} from "./registry/index.ts";
+import {
+  bestRouteQuote,
+  bestRuntimeRouteQuote,
+  quoteRuntimeTemplate,
+  quoteTemplate,
+  type CapturedQuoteCapability,
+  type FameLandingRuntimeQuoteRequest,
+  type RouteQuote,
+  type RuntimeQuoteCapability,
+  type RuntimeQuoteValidation,
+} from "./landing-snapshot-quote.ts";
 import type { FamePoolStateRegistryEntry } from "./types.ts";
+
+export type { FameLandingRuntimeQuoteRequest } from "./landing-snapshot-quote.ts";
 
 export interface FameLandingMarketplaceRead {
   unit: bigint;
@@ -31,6 +47,25 @@ export interface FameLandingConcentratedPoolBalances {
   poolId: string;
   balances: Record<string, bigint>;
 }
+
+export interface FameLandingRuntimePoolReserves {
+  poolId: string;
+  blockNumber: bigint;
+  reserve0: bigint;
+  reserve1: bigint;
+}
+
+export type FameLandingRuntimeQuoteResult =
+  | {
+      quoteDefinitionId: FameLandingQuoteDefinition["id"];
+      status: "available";
+      blockNumber: bigint;
+      amountOut: bigint;
+    }
+  | {
+      quoteDefinitionId: FameLandingQuoteDefinition["id"];
+      status: "unavailable";
+    };
 
 export interface FameLandingSnapshotProducerDependencies {
   readMarketplace(options: {
@@ -45,6 +80,17 @@ export interface FameLandingSnapshotProducerDependencies {
     poolAddress: Address;
     tokenAddresses: readonly Address[];
   }): Promise<FameLandingConcentratedPoolBalances>;
+  readRuntimePoolReserves(options: {
+    blockNumber: bigint;
+    pools: readonly {
+      poolId: string;
+      poolAddress: Address;
+    }[];
+  }): Promise<readonly FameLandingRuntimePoolReserves[]>;
+  readRuntimePoolQuotes(options: {
+    blockNumber: bigint;
+    requests: readonly FameLandingRuntimeQuoteRequest[];
+  }): Promise<readonly FameLandingRuntimeQuoteResult[]>;
 }
 
 interface SettledLeaf<T> {
@@ -124,7 +170,7 @@ function marketplaceField(
 }
 
 function poolById(poolId: string): FamePoolStateRegistryEntry | undefined {
-  return famePoolStateRegistry.pools.find(({ id }) => id === poolId);
+  return getFamePoolStateRegistryEntry({ poolId });
 }
 
 function canonicalDecimal(value: string): boolean {
@@ -172,115 +218,6 @@ function capturedReserveState(
   return { pool, reserve0, reserve1 };
 }
 
-function constantProductAmountOut({
-  amountIn,
-  reserveIn,
-  reserveOut,
-  feeBps,
-}: {
-  amountIn: bigint;
-  reserveIn: bigint;
-  reserveOut: bigint;
-  feeBps: number;
-}): bigint | null {
-  if (
-    amountIn <= 0n ||
-    reserveIn <= 0n ||
-    reserveOut <= 0n ||
-    !Number.isSafeInteger(feeBps) ||
-    feeBps < 0 ||
-    feeBps >= 10_000
-  ) {
-    return null;
-  }
-  const amountInWithFee = amountIn * BigInt(10_000 - feeBps);
-  const denominator = reserveIn * 10_000n + amountInWithFee;
-  if (denominator <= 0n) return null;
-  const output = (amountInWithFee * reserveOut) / denominator;
-  return output > 0n && output < reserveOut ? output : null;
-}
-
-interface RouteQuote {
-  amountOut: bigint;
-  routeId: string;
-}
-
-function quoteTemplate({
-  template,
-  amountIn,
-  tokenIn,
-  tokenOut,
-  reserves,
-}: {
-  template: Extract<
-    FameLandingQuoteCapability,
-    { status: "enabled" }
-  >["routeTemplates"][number];
-  amountIn: bigint;
-  tokenIn: Address;
-  tokenOut: Address;
-  reserves: Map<
-    string,
-    { pool: FamePoolStateRegistryEntry; reserve0: bigint; reserve1: bigint }
-  >;
-}): RouteQuote | null {
-  let allocated = 0n;
-  let totalOutput = 0n;
-  for (let index = 0; index < template.allocations.length; index += 1) {
-    const allocation = template.allocations[index];
-    if (!allocation) return null;
-    const captured = reserves.get(allocation.poolId);
-    if (!captured || captured.pool.fee.status !== "available") return null;
-    const input =
-      index === template.allocations.length - 1
-        ? amountIn - allocated
-        : (amountIn * BigInt(allocation.allocationBps)) / 10_000n;
-    allocated += input;
-    if (input === 0n) continue;
-    const zeroForOne =
-      captured.pool.token0.toLowerCase() === tokenIn.toLowerCase() &&
-      captured.pool.token1.toLowerCase() === tokenOut.toLowerCase();
-    const oneForZero =
-      captured.pool.token1.toLowerCase() === tokenIn.toLowerCase() &&
-      captured.pool.token0.toLowerCase() === tokenOut.toLowerCase();
-    if (!zeroForOne && !oneForZero) return null;
-    const output = constantProductAmountOut({
-      amountIn: input,
-      reserveIn: zeroForOne ? captured.reserve0 : captured.reserve1,
-      reserveOut: zeroForOne ? captured.reserve1 : captured.reserve0,
-      feeBps: captured.pool.fee.feeBps,
-    });
-    if (output === null) return null;
-    totalOutput += output;
-  }
-  return totalOutput > 0n
-    ? { amountOut: totalOutput, routeId: template.id }
-    : null;
-}
-
-function bestRouteQuote(options: {
-  capability: Extract<FameLandingQuoteCapability, { status: "enabled" }>;
-  amountIn: bigint;
-  tokenIn: Address;
-  tokenOut: Address;
-  reserves: Map<
-    string,
-    { pool: FamePoolStateRegistryEntry; reserve0: bigint; reserve1: bigint }
-  >;
-}): RouteQuote | null {
-  const quotes = options.capability.routeTemplates
-    .map((template) => quoteTemplate({ ...options, template }))
-    .filter((quote): quote is RouteQuote => quote !== null)
-    .sort((left, right) =>
-      left.amountOut === right.amountOut
-        ? left.routeId.localeCompare(right.routeId)
-        : left.amountOut > right.amountOut
-          ? -1
-          : 1,
-    );
-  return quotes[0] ?? null;
-}
-
 function assetForDefinition(
   definition: FameLandingQuoteDefinition,
   authority: FameLandingAuthority,
@@ -297,7 +234,7 @@ function routeReserves({
   safeBlockNumber,
   authority,
 }: {
-  capability: Extract<FameLandingQuoteCapability, { status: "enabled" }>;
+  capability: CapturedQuoteCapability;
   states: readonly FamePoolLatestState[];
   safeBlockNumber: number;
   authority: FameLandingAuthority;
@@ -328,6 +265,65 @@ function routeReserves({
   return result;
 }
 
+function runtimeRouteReserves({
+  capability,
+  states,
+  runtimeStates,
+  safeBlockNumber,
+  authority,
+}: {
+  capability: RuntimeQuoteCapability;
+  states: readonly FamePoolLatestState[];
+  runtimeStates: readonly FameLandingRuntimePoolReserves[];
+  safeBlockNumber: number;
+  authority: FameLandingAuthority;
+}): Map<
+  string,
+  { pool: FamePoolStateRegistryEntry; reserve0: bigint; reserve1: bigint }
+> | null {
+  const statesByPoolId = new Map(states.map((state) => [state.poolId, state]));
+  const runtimeByPoolId = new Map(
+    runtimeStates.map((state) => [state.poolId, state]),
+  );
+  const poolIds = new Set(
+    capability.routeTemplates.flatMap(({ legs }) => legs),
+  );
+  const result = new Map<
+    string,
+    { pool: FamePoolStateRegistryEntry; reserve0: bigint; reserve1: bigint }
+  >();
+  for (const poolId of poolIds) {
+    const pool = poolById(poolId);
+    if (!pool?.poolAddress) return null;
+    if (pool.capability === "quote-model") {
+      const captured = capturedReserveState(
+        poolId,
+        statesByPoolId,
+        safeBlockNumber,
+        authority,
+      );
+      if (!captured) return null;
+      result.set(poolId, captured);
+      continue;
+    }
+    const runtime = runtimeByPoolId.get(poolId);
+    if (
+      pool.capability !== "tracked-only" ||
+      runtime?.blockNumber !== BigInt(safeBlockNumber) ||
+      runtime.reserve0 <= 0n ||
+      runtime.reserve1 <= 0n
+    ) {
+      return null;
+    }
+    result.set(poolId, {
+      pool,
+      reserve0: runtime.reserve0,
+      reserve1: runtime.reserve1,
+    });
+  }
+  return result;
+}
+
 function previousQuote(
   previousSnapshot: FameLandingSnapshot | null,
   field: FameLandingQuoteField,
@@ -347,31 +343,24 @@ function previousQuote(
 }
 
 function exactTargetQuote({
-  capability,
   targetOutput,
-  tokenIn,
-  tokenOut,
-  reserves,
   prior,
   maximumInput,
   precision,
+  evaluateBest,
+  evaluateRoute,
 }: {
-  capability: Extract<FameLandingQuoteCapability, { status: "enabled" }>;
   targetOutput: bigint;
-  tokenIn: Address;
-  tokenOut: Address;
-  reserves: Map<
-    string,
-    { pool: FamePoolStateRegistryEntry; reserve0: bigint; reserve1: bigint }
-  >;
   prior: FameLandingQuoteValue | null;
   maximumInput: bigint;
   precision: bigint;
+  evaluateBest(amountIn: bigint): RouteQuote | null;
+  evaluateRoute(routeId: string, amountIn: bigint): RouteQuote | null;
 }):
   | {
       status: "available";
       amountIn: bigint;
-      routeId: string;
+      quote: RouteQuote;
     }
   | {
       status: "unavailable";
@@ -382,13 +371,7 @@ function exactTargetQuote({
     if (evaluations >= FAME_LANDING_SNAPSHOT_MAX_SOLVER_EVALUATIONS)
       return null;
     evaluations += 1;
-    return bestRouteQuote({
-      capability,
-      amountIn,
-      tokenIn,
-      tokenOut,
-      reserves,
-    });
+    return evaluateBest(amountIn);
   };
   let low = 0n;
   let high = maximumInput;
@@ -396,19 +379,8 @@ function exactTargetQuote({
   let warmStartUsed = false;
 
   if (prior && BigInt(prior.amount) > 0n) {
-    const priorTemplate = capability.routeTemplates.find(
-      ({ id }) => id === prior.routeId,
-    );
     const priorInput = BigInt(prior.amount);
-    const validation = priorTemplate
-      ? quoteTemplate({
-          template: priorTemplate,
-          amountIn: priorInput,
-          tokenIn,
-          tokenOut,
-          reserves,
-        })
-      : null;
+    const validation = evaluateRoute(prior.routeId, priorInput);
     evaluations += 1;
     if (validation && validation.amountOut >= targetOutput) {
       const candidateLow = (priorInput * 95n) / 100n;
@@ -457,15 +429,27 @@ function exactTargetQuote({
   return {
     status: "available",
     amountIn: high,
-    routeId: highQuote.routeId,
+    quote: highQuote,
   };
 }
 
-function quoteField({
+interface FameLandingQuoteDraft {
+  field: FameLandingFieldState<FameLandingQuoteValue>;
+  runtimeValidation: RuntimeQuoteValidation | null;
+}
+
+function unavailableQuoteDraft(
+  reason: FameLandingUnavailableReason,
+): FameLandingQuoteDraft {
+  return { field: unavailable(reason), runtimeValidation: null };
+}
+
+function quoteFieldDraft({
   field,
   definition,
   capability,
   reserveResult,
+  runtimeReserveResult,
   marketplace,
   safeBlockNumber,
   authority,
@@ -475,71 +459,179 @@ function quoteField({
   definition: FameLandingQuoteDefinition;
   capability: FameLandingQuoteCapability;
   reserveResult: LeafResult<readonly FamePoolLatestState[]>;
+  runtimeReserveResult: LeafResult<readonly FameLandingRuntimePoolReserves[]>;
   marketplace: FameLandingFieldState<FameLandingMarketplaceValue>;
   safeBlockNumber: number;
   authority: FameLandingAuthority;
   previousSnapshot: FameLandingSnapshot | null;
-}): FameLandingFieldState<FameLandingQuoteValue> {
+}): FameLandingQuoteDraft {
   if (capability.status === "unavailable")
-    return unavailable(capability.reason);
+    return unavailableQuoteDraft(capability.reason);
   if (reserveResult.status === "unavailable")
-    return unavailable(reserveResult.reason);
-  const reserves = routeReserves({
-    capability,
-    states: reserveResult.value,
-    safeBlockNumber,
-    authority,
-  });
-  if (!reserves) return unavailable("invalid-pool-state");
+    return unavailableQuoteDraft(reserveResult.reason);
   const asset = assetForDefinition(definition, authority);
-  if (!asset) return unavailable("invalid-pool-state");
+  if (!asset) return unavailableQuoteDraft("invalid-pool-state");
   const fameAmount =
     definition.fameAmountSource === "marketplace-unit-plus-premium"
       ? marketplace.status === "available"
         ? BigInt(marketplace.value.unit) + BigInt(marketplace.value.premium)
         : null
       : BigInt(authority.defiFameAmount);
-  if (fameAmount === null) return unavailable("invalid-marketplace-state");
+  if (fameAmount === null)
+    return unavailableQuoteDraft("invalid-marketplace-state");
+
+  const capturedReserves =
+    capability.evaluator === "constant-product-captured-reserves-v1"
+      ? routeReserves({
+          capability,
+          states: reserveResult.value,
+          safeBlockNumber,
+          authority,
+        })
+      : null;
+  if (
+    capability.evaluator === "constant-product-runtime-validated-v1" &&
+    runtimeReserveResult.status === "unavailable"
+  ) {
+    return unavailableQuoteDraft(runtimeReserveResult.reason);
+  }
+  const runtimeReserves =
+    capability.evaluator === "constant-product-runtime-validated-v1" &&
+    runtimeReserveResult.status === "available"
+      ? runtimeRouteReserves({
+          capability,
+          states: reserveResult.value,
+          runtimeStates: runtimeReserveResult.value,
+          safeBlockNumber,
+          authority,
+        })
+      : null;
+  const reserves = capturedReserves ?? runtimeReserves;
+  if (!reserves) return unavailableQuoteDraft("invalid-pool-state");
+
+  const evaluateBest = (amountIn: bigint): RouteQuote | null =>
+    capability.evaluator === "constant-product-captured-reserves-v1"
+      ? bestRouteQuote({
+          capability,
+          amountIn,
+          tokenIn:
+            definition.mode === "exactInput" ? authority.fameToken : asset,
+          tokenOut:
+            definition.mode === "exactInput" ? asset : authority.fameToken,
+          reserves,
+        })
+      : bestRuntimeRouteQuote({
+          capability,
+          definition,
+          amountIn,
+          tokenIn:
+            definition.mode === "exactInput" ? authority.fameToken : asset,
+          tokenOut:
+            definition.mode === "exactInput" ? asset : authority.fameToken,
+          reserves,
+        });
+  const evaluateRoute = (
+    routeId: string,
+    amountIn: bigint,
+  ): RouteQuote | null => {
+    if (capability.evaluator === "constant-product-captured-reserves-v1") {
+      const template = capability.routeTemplates.find(
+        ({ id }) => id === routeId,
+      );
+      return template
+        ? quoteTemplate({
+            template,
+            amountIn,
+            tokenIn:
+              definition.mode === "exactInput" ? authority.fameToken : asset,
+            tokenOut:
+              definition.mode === "exactInput" ? asset : authority.fameToken,
+            reserves,
+          })
+        : null;
+    }
+    const template = capability.routeTemplates.find(({ id }) => id === routeId);
+    return template
+      ? quoteRuntimeTemplate({
+          template,
+          definition,
+          amountIn,
+          tokenIn:
+            definition.mode === "exactInput" ? authority.fameToken : asset,
+          tokenOut:
+            definition.mode === "exactInput" ? asset : authority.fameToken,
+          reserves,
+        })
+      : null;
+  };
+
   if (definition.mode === "exactInput") {
-    const quote = bestRouteQuote({
-      capability,
-      amountIn: fameAmount,
-      tokenIn: authority.fameToken,
-      tokenOut: asset,
-      reserves,
-    });
+    const quote = evaluateBest(fameAmount);
     return quote
       ? {
-          status: "available",
-          value: {
-            amount: quote.amountOut.toString(),
-            quoteDefinitionId: definition.id,
-            routeId: quote.routeId,
+          field: {
+            status: "available",
+            value: {
+              amount: quote.amountOut.toString(),
+              quoteDefinitionId: definition.id,
+              routeId: quote.routeId,
+            },
           },
+          runtimeValidation: quote.runtimeValidation,
         }
-      : unavailable("no-safe-route");
+      : unavailableQuoteDraft("no-safe-route");
   }
   const solved = exactTargetQuote({
-    capability,
     targetOutput: fameAmount,
-    tokenIn: asset,
-    tokenOut: authority.fameToken,
-    reserves,
     prior: previousQuote(previousSnapshot, field, authority),
     maximumInput:
       definition.currency === "USDC" ? 100_000n * 10n ** 6n : 100n * 10n ** 18n,
     precision: definition.currency === "USDC" ? 100n : 10n ** 10n,
+    evaluateBest,
+    evaluateRoute,
   });
   return solved.status === "available"
     ? {
-        status: "available",
-        value: {
-          amount: solved.amountIn.toString(),
-          quoteDefinitionId: definition.id,
-          routeId: solved.routeId,
+        field: {
+          status: "available",
+          value: {
+            amount: solved.amountIn.toString(),
+            quoteDefinitionId: definition.id,
+            routeId: solved.quote.routeId,
+          },
         },
+        runtimeValidation: solved.quote.runtimeValidation,
       }
-    : unavailable(solved.reason);
+    : unavailableQuoteDraft(solved.reason);
+}
+
+function finalizeQuoteDraft(
+  draft: FameLandingQuoteDraft,
+  runtimeQuoteResult: LeafResult<readonly FameLandingRuntimeQuoteResult[]>,
+  safeBlockNumber: number,
+): FameLandingFieldState<FameLandingQuoteValue> {
+  if (draft.field.status === "unavailable" || !draft.runtimeValidation) {
+    return draft.field;
+  }
+  if (runtimeQuoteResult.status === "unavailable") {
+    return unavailable(runtimeQuoteResult.reason);
+  }
+  const expected = draft.runtimeValidation;
+  const matches = runtimeQuoteResult.value.filter(
+    ({ quoteDefinitionId }) =>
+      quoteDefinitionId === expected.request.quoteDefinitionId,
+  );
+  const actual = matches[0];
+  if (matches.length !== 1 || !actual || actual.status === "unavailable") {
+    return unavailable("dependency-unavailable");
+  }
+  if (
+    actual.blockNumber !== BigInt(safeBlockNumber) ||
+    actual.amountOut !== expected.expectedAmountOut
+  ) {
+    return unavailable("runtime-quote-mismatch");
+  }
+  return draft.field;
 }
 
 function liquidityField({
@@ -661,7 +753,8 @@ export async function produceFameLandingSnapshot({
     ...new Set([
       ...authority.directLiquidityPoolIds,
       ...authority.capabilities.flatMap((capability) =>
-        capability.status === "enabled"
+        capability.status === "enabled" &&
+        capability.evaluator === "constant-product-captured-reserves-v1"
           ? capability.routeTemplates.flatMap(({ allocations }) =>
               allocations.map(({ poolId }) => poolId),
             )
@@ -677,6 +770,22 @@ export async function produceFameLandingSnapshot({
   if (!concentratedPool?.poolAddress) {
     throw new Error("Landing authority requires one concentrated direct pool.");
   }
+  const runtimePools = [
+    ...new Set(
+      authority.capabilities.flatMap((capability) =>
+        capability.status === "enabled" &&
+        capability.evaluator === "constant-product-runtime-validated-v1"
+          ? capability.routeTemplates.flatMap(({ legs }) => legs)
+          : [],
+      ),
+    ),
+  ]
+    .map((poolId) => poolById(poolId))
+    .filter(
+      (pool): pool is FamePoolStateRegistryEntry & { poolAddress: Address } =>
+        pool?.capability === "tracked-only" && pool.poolAddress !== null,
+    )
+    .map(({ id: poolId, poolAddress }) => ({ poolId, poolAddress }));
   const marketplaceResultPromise = settleLeaf(
     () => deps.readMarketplace({ blockNumber: BigInt(safeBlockNumber) }),
     leafTimeoutMs,
@@ -695,14 +804,27 @@ export async function produceFameLandingSnapshot({
       }),
     leafTimeoutMs,
   );
-  const [marketplaceResult, reserveResult, concentratedResult] =
-    await Promise.all([
-      marketplaceResultPromise,
-      reserveResultPromise,
-      concentratedResultPromise,
-    ]);
+  const runtimeReserveResultPromise = settleLeaf(
+    () =>
+      deps.readRuntimePoolReserves({
+        blockNumber: BigInt(safeBlockNumber),
+        pools: runtimePools,
+      }),
+    leafTimeoutMs,
+  );
+  const [
+    marketplaceResult,
+    reserveResult,
+    concentratedResult,
+    runtimeReserveResult,
+  ] = await Promise.all([
+    marketplaceResultPromise,
+    reserveResultPromise,
+    concentratedResultPromise,
+    runtimeReserveResultPromise,
+  ]);
   const marketplace = marketplaceField(marketplaceResult);
-  const quotes = Object.fromEntries(
+  const quoteDrafts = Object.fromEntries(
     FAME_LANDING_QUOTE_FIELDS.map((field) => {
       const definition = definitionByField(field, authority);
       const capability = authority.capabilities.find(
@@ -712,11 +834,12 @@ export async function produceFameLandingSnapshot({
         throw new Error(`Missing capability for ${definition.id}.`);
       return [
         field,
-        quoteField({
+        quoteFieldDraft({
           field,
           definition,
           capability,
           reserveResult,
+          runtimeReserveResult,
           marketplace,
           safeBlockNumber,
           authority,
@@ -724,6 +847,30 @@ export async function produceFameLandingSnapshot({
         }),
       ];
     }),
+  ) as Record<FameLandingQuoteField, FameLandingQuoteDraft>;
+  const runtimeQuoteRequests = Object.values(quoteDrafts).flatMap(
+    ({ runtimeValidation }) =>
+      runtimeValidation ? [runtimeValidation.request] : [],
+  );
+  const runtimeQuoteResult = await settleLeaf(
+    () =>
+      runtimeQuoteRequests.length === 0
+        ? Promise.resolve([])
+        : deps.readRuntimePoolQuotes({
+            blockNumber: BigInt(safeBlockNumber),
+            requests: runtimeQuoteRequests,
+          }),
+    leafTimeoutMs,
+  );
+  const quotes = Object.fromEntries(
+    FAME_LANDING_QUOTE_FIELDS.map((field) => [
+      field,
+      finalizeQuoteDraft(
+        quoteDrafts[field],
+        runtimeQuoteResult,
+        safeBlockNumber,
+      ),
+    ]),
   ) as FameLandingSnapshot["fields"]["quotes"];
   const snapshot: FameLandingSnapshot = {
     schemaVersion: "fame-landing-defi-snapshot-v1",

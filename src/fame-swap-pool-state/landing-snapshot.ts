@@ -1,6 +1,13 @@
 import { isAddress, isHex, type Address, type Hex } from "viem";
 import { readFileSync } from "node:fs";
 import { sourceRegistryIdFor } from "./dynamodb/pool-state.ts";
+import {
+  directFamePool,
+  hasUniqueRouteTemplates,
+  validateRuntimeRouteTemplate,
+  type FameLandingCapturedRouteTemplate,
+  type FameLandingRuntimeRouteTemplate,
+} from "./landing-snapshot-authority-route.ts";
 import { famePoolStateRegistry } from "./registry/index.ts";
 import type {
   FamePoolStateRegistryEntry,
@@ -66,6 +73,7 @@ export type FameLandingUnavailableReason =
   | "invalid-marketplace-state"
   | "invalid-pool-state"
   | "no-safe-route"
+  | "runtime-quote-mismatch"
   | "solver-limit-reached";
 
 const UNAVAILABLE_REASONS = new Set<FameLandingUnavailableReason>([
@@ -75,6 +83,7 @@ const UNAVAILABLE_REASONS = new Set<FameLandingUnavailableReason>([
   "invalid-marketplace-state",
   "invalid-pool-state",
   "no-safe-route",
+  "runtime-quote-mismatch",
   "solver-limit-reached",
 ]);
 
@@ -90,20 +99,23 @@ export interface FameLandingQuoteDefinition {
   fameAmountSource: "fixed-defi-amount" | "marketplace-unit-plus-premium";
 }
 
-export interface FameLandingRouteTemplate {
-  id: string;
-  allocations: {
-    poolId: string;
-    allocationBps: number;
-  }[];
-}
+export type {
+  FameLandingCapturedRouteTemplate,
+  FameLandingRuntimeRouteTemplate,
+} from "./landing-snapshot-authority-route.ts";
 
 export type FameLandingQuoteCapability =
   | {
       quoteDefinitionId: FameLandingQuoteDefinitionId;
       status: "enabled";
       evaluator: "constant-product-captured-reserves-v1";
-      routeTemplates: FameLandingRouteTemplate[];
+      routeTemplates: FameLandingCapturedRouteTemplate[];
+    }
+  | {
+      quoteDefinitionId: FameLandingQuoteDefinitionId;
+      status: "enabled";
+      evaluator: "constant-product-runtime-validated-v1";
+      routeTemplates: FameLandingRuntimeRouteTemplate[];
     }
   | {
       quoteDefinitionId: FameLandingQuoteDefinitionId;
@@ -305,17 +317,6 @@ function definitionShape(id: FameLandingQuoteDefinitionId) {
   };
 }
 
-function directFamePool(
-  pool: FamePoolStateRegistryEntry,
-  fame: Address,
-): boolean {
-  const normalized = fame.toLowerCase();
-  return (
-    pool.token0.toLowerCase() === normalized ||
-    pool.token1.toLowerCase() === normalized
-  );
-}
-
 function parseAuthorityDefinition(
   value: unknown,
   index: number,
@@ -350,7 +351,7 @@ function parseRouteTemplate(
   registryById: Map<string, FamePoolStateRegistryEntry>,
   fameToken: Address,
   assetAddress: Address,
-): FameLandingRouteTemplate {
+): FameLandingCapturedRouteTemplate {
   const record = object(value, path);
   exactKeys(record, ["id", "allocations"], path);
   const allocations = array(record.allocations, `${path}.allocations`).map(
@@ -400,6 +401,33 @@ function parseRouteTemplate(
     invalid(`${path}.allocations`, "duplicate pool allocation");
   }
   return { id: string(record.id, `${path}.id`), allocations };
+}
+
+function parseRuntimeRouteTemplate(
+  value: unknown,
+  path: string,
+  registryById: Map<string, FamePoolStateRegistryEntry>,
+  fameToken: Address,
+  assetAddress: Address,
+  mode: FameLandingQuoteDefinition["mode"],
+): FameLandingRuntimeRouteTemplate {
+  const record = object(value, path);
+  exactKeys(record, ["id", "legs"], path);
+  const id = string(record.id, `${path}.id`);
+  const legs = array(record.legs, `${path}.legs`).map((value, index) =>
+    string(value, `${path}.legs[${index.toString()}]`),
+  );
+  const failure = validateRuntimeRouteTemplate({
+    id,
+    legs,
+    path,
+    registryById,
+    fameToken,
+    assetAddress,
+    mode,
+  });
+  if (failure) invalid(failure.path, failure.message);
+  return { id, legs };
 }
 
 export function parseFameLandingAuthority(
@@ -610,33 +638,59 @@ export function parseFameLandingAuthority(
       if (!definition || !asset)
         invalid(path, "missing quote definition asset");
       const assetAddress = asset.wrappedAddress ?? asset.address;
-      const routeTemplates = array(
+      const evaluator = oneOf(
+        capability.evaluator,
+        [
+          "constant-product-captured-reserves-v1",
+          "constant-product-runtime-validated-v1",
+        ] as const,
+        `${path}.evaluator`,
+      );
+      const routeTemplateValues = array(
         capability.routeTemplates,
         `${path}.routeTemplates`,
-      ).map((template, templateIndex) =>
-        parseRouteTemplate(
-          template,
-          `${path}.routeTemplates[${templateIndex.toString()}]`,
-          registryById,
-          fameToken,
-          assetAddress,
-        ),
       );
-      if (
-        routeTemplates.length === 0 ||
-        new Set(routeTemplates.map(({ id }) => id)).size !==
-          routeTemplates.length
-      ) {
+      if (evaluator === "constant-product-captured-reserves-v1") {
+        const routeTemplates = routeTemplateValues.map(
+          (template, templateIndex) =>
+            parseRouteTemplate(
+              template,
+              `${path}.routeTemplates[${templateIndex.toString()}]`,
+              registryById,
+              fameToken,
+              assetAddress,
+            ),
+        );
+        if (!hasUniqueRouteTemplates(routeTemplates)) {
+          invalid(`${path}.routeTemplates`, "expected unique route templates");
+        }
+        return {
+          quoteDefinitionId: definitionId,
+          status,
+          evaluator,
+          routeTemplates,
+        };
+      }
+      const routeTemplates = routeTemplateValues.map(
+        (template, templateIndex) => {
+          const templatePath = `${path}.routeTemplates[${templateIndex.toString()}]`;
+          return parseRuntimeRouteTemplate(
+            template,
+            templatePath,
+            registryById,
+            fameToken,
+            assetAddress,
+            definition.mode,
+          );
+        },
+      );
+      if (!hasUniqueRouteTemplates(routeTemplates)) {
         invalid(`${path}.routeTemplates`, "expected unique route templates");
       }
       return {
         quoteDefinitionId: definitionId,
         status,
-        evaluator: literal(
-          capability.evaluator,
-          "constant-product-captured-reserves-v1",
-          `${path}.evaluator`,
-        ),
+        evaluator,
         routeTemplates,
       };
     },

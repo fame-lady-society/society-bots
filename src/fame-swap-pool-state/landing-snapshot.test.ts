@@ -6,6 +6,7 @@ import {
   parseFameLandingSnapshot,
 } from "./landing-snapshot.ts";
 import { famePoolStateRegistry } from "./registry/index.ts";
+import type { FamePoolStateRegistryFile } from "./types.ts";
 
 function fixture(name: string): unknown {
   return JSON.parse(
@@ -30,8 +31,13 @@ describe("FAME landing snapshot contract", () => {
     expect(snapshot.provenance.safeBlockNumber).toBe(45_884_844);
     expect(Object.values(snapshot.fields.quotes)).toHaveLength(6);
     expect(snapshot.fields.quotes.defiBuyUsdc).toEqual({
-      status: "unavailable",
-      reason: "captured-state-missing",
+      status: "available",
+      value: {
+        amount: "250000000",
+        quoteDefinitionId: "defi-buy-usdc-v1",
+        routeId:
+          "solver-single_path-aerodrome-v2-usdc-weth--scale-equalizer-weth-fame",
+      },
     });
   });
 
@@ -40,21 +46,16 @@ describe("FAME landing snapshot contract", () => {
       fixture("fame-landing-defi-authority-v1.json"),
       famePoolStateRegistry,
     );
-    const disabledValue = structuredClone(
+    const wrongRoute = structuredClone(
       fixture("fame-landing-defi-snapshot-v1.json"),
     ) as Record<string, unknown>;
-    const disabledFields = disabledValue.fields as Record<string, unknown>;
-    const disabledQuotes = disabledFields.quotes as Record<string, unknown>;
-    disabledQuotes.defiBuyUsdc = {
-      status: "available",
-      value: {
-        amount: "1",
-        quoteDefinitionId: "defi-buy-usdc-v1",
-        routeId: "invented-usdc-route",
-      },
-    };
-    expect(() => parseFameLandingSnapshot(disabledValue, authority)).toThrow(
-      /capability requires captured-state-missing/u,
+    const wrongRouteFields = wrongRoute.fields as Record<string, unknown>;
+    const wrongRouteQuotes = wrongRouteFields.quotes as Record<string, unknown>;
+    const usdcBuy = wrongRouteQuotes.defiBuyUsdc as Record<string, unknown>;
+    const usdcBuyValue = usdcBuy.value as Record<string, unknown>;
+    usdcBuyValue.routeId = "invented-usdc-route";
+    expect(() => parseFameLandingSnapshot(wrongRoute, authority)).toThrow(
+      /route id is not in the enabled capability matrix/u,
     );
 
     const inventedRoute = structuredClone(
@@ -105,8 +106,6 @@ describe("FAME landing snapshot contract", () => {
       ({ quoteDefinitionId }) => quoteDefinitionId === "defi-buy-usdc-v1",
     );
     if (!usdc) throw new Error("Missing USDC capability fixture.");
-    usdc.status = "enabled";
-    delete usdc.reason;
     usdc.evaluator = "constant-product-captured-reserves-v1";
     usdc.routeTemplates = [
       {
@@ -119,6 +118,90 @@ describe("FAME landing snapshot contract", () => {
     expect(() =>
       parseFameLandingAuthority(capabilityMismatch, famePoolStateRegistry),
     ).toThrow(/captured-state evaluator/u);
+  });
+
+  test("rejects malformed fixed runtime route templates", () => {
+    const mutations: Array<{
+      name: string;
+      mutate(template: Record<string, unknown>): void;
+    }> = [
+      {
+        name: "noncanonical id",
+        mutate(template) {
+          template.id = "invented-runtime-route";
+        },
+      },
+      {
+        name: "duplicate legs",
+        mutate(template) {
+          template.legs = ["aerodrome-v2-usdc-weth", "aerodrome-v2-usdc-weth"];
+        },
+      },
+      {
+        name: "disconnected order",
+        mutate(template) {
+          template.legs = [
+            "scale-equalizer-weth-fame",
+            "aerodrome-v2-usdc-weth",
+          ];
+          template.id =
+            "solver-single_path-scale-equalizer-weth-fame--aerodrome-v2-usdc-weth";
+        },
+      },
+      {
+        name: "stable connector",
+        mutate(template) {
+          template.legs = [
+            "scale-equalizer-usdc-frxusd",
+            "scale-equalizer-weth-fame",
+          ];
+          template.id =
+            "solver-single_path-scale-equalizer-usdc-frxusd--scale-equalizer-weth-fame";
+        },
+      },
+    ];
+
+    for (const { name, mutate } of mutations) {
+      const raw = structuredClone(
+        fixture("fame-landing-defi-authority-v1.json"),
+      ) as Record<string, unknown>;
+      const capabilities = raw.capabilities as Array<Record<string, unknown>>;
+      const capability = capabilities.find(
+        ({ quoteDefinitionId }) => quoteDefinitionId === "defi-buy-usdc-v1",
+      );
+      const template = (
+        capability?.routeTemplates as Array<Record<string, unknown>>
+      )?.[0];
+      if (!template) throw new Error(`Missing ${name} route fixture.`);
+      mutate(template);
+      expect(() =>
+        parseFameLandingAuthority(raw, famePoolStateRegistry),
+      ).toThrow(/runtime route|runtime evaluator|fixed route topology/u);
+    }
+  });
+
+  test("requires exactly one tracked-only runtime pool per fixed route", () => {
+    const registry = structuredClone(
+      famePoolStateRegistry,
+    ) as FamePoolStateRegistryFile;
+    const index = registry.pools.findIndex(
+      ({ id }) => id === "scale-equalizer-weth-fame",
+    );
+    const direct = registry.pools[index];
+    if (!direct) throw new Error("Missing direct WETH/FAME fixture.");
+    registry.pools[index] = {
+      ...direct,
+      capability: "tracked-only",
+      stateSurface: null,
+      quoteModel: null,
+    };
+
+    expect(() =>
+      parseFameLandingAuthority(
+        fixture("fame-landing-defi-authority-v1.json"),
+        registry,
+      ),
+    ).toThrow(/exactly one runtime pool/u);
   });
 
   test("rejects malformed decimals and duplicate counter assets", () => {

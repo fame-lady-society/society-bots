@@ -1,4 +1,5 @@
 import type { Address } from "viem";
+import { UniswapV2PairReserveAbi } from "@/events.ts";
 import { baseClient } from "@/viem.ts";
 import {
   batchGetLatestPoolStates,
@@ -21,7 +22,10 @@ import {
   produceFameLandingSnapshot,
   type FameLandingSnapshotProducerDependencies,
 } from "./landing-snapshot-producer.ts";
-import { famePoolStateRegistry } from "./registry/index.ts";
+import {
+  famePoolStateRegistry,
+  getFamePoolStateRegistryEntry,
+} from "./registry/index.ts";
 import type { FamePoolStateIndexerResult } from "./indexer.ts";
 
 const MARKETPLACE = "0x54e7E4F2d439Be599706f51068f7EB2ce2D2a27e" as Address;
@@ -67,10 +71,22 @@ const balanceOfAbi = [
     outputs: [{ type: "uint256" }],
   },
 ] as const;
+const getAmountOutAbi = [
+  {
+    type: "function",
+    name: "getAmountOut",
+    stateMutability: "view",
+    inputs: [
+      { name: "amountIn", type: "uint256" },
+      { name: "tokenIn", type: "address" },
+    ],
+    outputs: [{ name: "amountOut", type: "uint256" }],
+  },
+] as const;
 
 export interface FameLandingMulticallClient {
   multicall(options: {
-    allowFailure: false;
+    allowFailure: boolean;
     blockNumber: bigint;
     contracts: readonly Record<string, unknown>[];
   }): Promise<readonly unknown[]>;
@@ -79,6 +95,74 @@ export interface FameLandingMulticallClient {
 function sameAddress(left: unknown, right: Address): boolean {
   return typeof left === "string" && left.toLowerCase() === right.toLowerCase();
 }
+
+interface ApprovedRuntimePool {
+  poolId: string;
+  poolAddress: Address;
+}
+
+interface ApprovedRuntimeQuoteDirection extends ApprovedRuntimePool {
+  tokenIn: Address;
+}
+
+function landingRuntimeAuthority(): {
+  pools: Map<string, ApprovedRuntimePool>;
+  quotes: Map<string, ApprovedRuntimeQuoteDirection[]>;
+} {
+  const pools = new Map<string, ApprovedRuntimePool>();
+  const quotes = new Map<string, ApprovedRuntimeQuoteDirection[]>();
+  for (const capability of fameLandingAuthority.capabilities) {
+    if (
+      capability.status !== "enabled" ||
+      capability.evaluator !== "constant-product-runtime-validated-v1"
+    ) {
+      continue;
+    }
+    const definition = fameLandingAuthority.quoteDefinitions.find(
+      ({ id }) => id === capability.quoteDefinitionId,
+    );
+    const asset = fameLandingAuthority.assets.find(
+      ({ currency }) => currency === definition?.currency,
+    );
+    if (!definition || !asset) {
+      throw new Error("Landing runtime authority is incomplete.");
+    }
+    for (const template of capability.routeTemplates) {
+      let currentToken =
+        definition.mode === "exactInput"
+          ? fameLandingAuthority.fameToken
+          : (asset.wrappedAddress ?? asset.address);
+      for (const poolId of template.legs) {
+        const pool = getFamePoolStateRegistryEntry({ poolId });
+        if (!pool?.poolAddress) {
+          throw new Error("Landing runtime authority pool is incomplete.");
+        }
+        if (pool.capability === "tracked-only") {
+          const approved = {
+            poolId,
+            poolAddress: pool.poolAddress,
+            tokenIn: currentToken,
+          };
+          pools.set(poolId, approved);
+          quotes.set(capability.quoteDefinitionId, [
+            ...(quotes.get(capability.quoteDefinitionId) ?? []),
+            approved,
+          ]);
+        }
+        if (sameAddress(currentToken, pool.token0)) {
+          currentToken = pool.token1;
+        } else if (sameAddress(currentToken, pool.token1)) {
+          currentToken = pool.token0;
+        } else {
+          throw new Error("Landing runtime authority route is disconnected.");
+        }
+      }
+    }
+  }
+  return { pools, quotes };
+}
+
+const APPROVED_RUNTIME_AUTHORITY = landingRuntimeAuthority();
 
 function requiredBigint(value: unknown, field: string): bigint {
   if (typeof value !== "bigint" || value < 0n) {
@@ -98,6 +182,22 @@ function requiredDecimals(value: unknown): number {
     throw new Error("Landing marketplace decimals are invalid.");
   }
   return decimals;
+}
+
+function requiredReserveTuple(
+  value: unknown,
+  poolId: string,
+): readonly [bigint, bigint] {
+  if (
+    !Array.isArray(value) ||
+    typeof value[0] !== "bigint" ||
+    typeof value[1] !== "bigint" ||
+    value[0] <= 0n ||
+    value[1] <= 0n
+  ) {
+    throw new Error(`Landing runtime reserves are invalid for ${poolId}.`);
+  }
+  return [value[0], value[1]];
 }
 
 export function createFameLandingSnapshotDependencies({
@@ -230,6 +330,101 @@ export function createFameLandingSnapshotDependencies({
           ]),
         ),
       };
+    },
+    async readRuntimePoolReserves({ blockNumber, pools }) {
+      if (
+        pools.length !== APPROVED_RUNTIME_AUTHORITY.pools.size ||
+        new Set(pools.map(({ poolId }) => poolId)).size !== pools.length ||
+        pools.some(({ poolId, poolAddress }) => {
+          const approved = APPROVED_RUNTIME_AUTHORITY.pools.get(poolId);
+          return !approved || !sameAddress(poolAddress, approved.poolAddress);
+        })
+      ) {
+        throw new Error(
+          "Landing runtime reserve request is outside authority.",
+        );
+      }
+      const values = await rpc.multicall({
+        allowFailure: false,
+        blockNumber,
+        contracts: pools.map(({ poolAddress }) => ({
+          address: poolAddress,
+          abi: UniswapV2PairReserveAbi,
+          functionName: "getReserves",
+        })),
+      });
+      if (values.length !== pools.length) {
+        throw new Error("Landing runtime reserves are incomplete.");
+      }
+      return pools.map(({ poolId }, index) => {
+        const [reserve0, reserve1] = requiredReserveTuple(
+          values[index],
+          poolId,
+        );
+        return { poolId, blockNumber, reserve0, reserve1 };
+      });
+    },
+    async readRuntimePoolQuotes({ blockNumber, requests }) {
+      const definitionIds = new Set(
+        requests.map(({ quoteDefinitionId }) => quoteDefinitionId),
+      );
+      if (definitionIds.size !== requests.length) {
+        throw new Error("Landing runtime quote definitions must be unique.");
+      }
+      for (const request of requests) {
+        const approved = APPROVED_RUNTIME_AUTHORITY.quotes.get(
+          request.quoteDefinitionId,
+        );
+        if (
+          !approved?.some(
+            ({ poolId, poolAddress, tokenIn }) =>
+              request.poolId === poolId &&
+              sameAddress(request.poolAddress, poolAddress) &&
+              sameAddress(request.tokenIn, tokenIn),
+          ) ||
+          request.amountIn <= 0n
+        ) {
+          throw new Error(
+            "Landing runtime quote request is outside authority.",
+          );
+        }
+      }
+      const values = await rpc.multicall({
+        allowFailure: true,
+        blockNumber,
+        contracts: requests.map((request) => ({
+          address: request.poolAddress,
+          abi: getAmountOutAbi,
+          functionName: "getAmountOut",
+          args: [request.amountIn, request.tokenIn],
+        })),
+      });
+      if (values.length !== requests.length) {
+        throw new Error("Landing runtime quotes are incomplete.");
+      }
+      return requests.map((request, index) => {
+        const value = values[index];
+        if (
+          !value ||
+          typeof value !== "object" ||
+          !("status" in value) ||
+          value.status !== "success" ||
+          !("result" in value) ||
+          typeof value.result !== "bigint" ||
+          value.result <= 0n
+        ) {
+          return {
+            quoteDefinitionId: request.quoteDefinitionId,
+            status: "unavailable" as const,
+          };
+        }
+        return {
+          quoteDefinitionId: request.quoteDefinitionId,
+          status: "available" as const,
+          blockNumber,
+          amountOut: value.result,
+        };
+      });
     },
   };
 }
