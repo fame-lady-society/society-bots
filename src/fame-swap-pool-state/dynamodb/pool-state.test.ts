@@ -298,27 +298,26 @@ function clHeadPool(id: string): FameClHeadSnapshotRegistryEntry {
   };
 }
 
-function firstV4ClHeadPool(): FameClHeadSnapshotRegistryEntry {
+function v4ClHeadPoolFixture(): FameClHeadSnapshotRegistryEntry {
   const pool = famePoolStateRegistry.pools.find(
-    (entry) => entry.venue === "uniswap-v4",
+    (entry) => entry.id === "uniswap-v4-basedflick-zora",
   );
-  if (
-    !pool ||
-    pool.stateSurface !== "cl-head-snapshot" ||
-    pool.tickSpacing === null
-  ) {
+  if (!pool || pool.tickSpacing === null) {
     throw new Error("Missing V4 CL head pool.");
   }
   return {
     ...pool,
-    stateSurface: pool.stateSurface,
+    capability: "market-state",
+    activationStatus: "unsupported",
+    stateSurface: "cl-head-snapshot",
+    unsupportedReason: null,
     tickSpacing: pool.tickSpacing,
   };
 }
 
 function clReplayPool(): FameClReplayRegistryEntry {
   const pool = famePoolStateRegistry.pools.find(
-    (entry) => entry.id === "slipstream-usdc-weth-100",
+    (entry) => entry.id === "slipstream-basedflick-fame",
   );
   if (
     !pool ||
@@ -368,7 +367,6 @@ function v4ClReplayPool(): FameV4ClReplayRegistryEntry {
   );
   if (
     !pool ||
-    pool.stateSurface !== "cl-head-snapshot" ||
     pool.poolAddress !== null ||
     pool.poolKey === null ||
     pool.stateViewAddress === null ||
@@ -380,7 +378,10 @@ function v4ClReplayPool(): FameV4ClReplayRegistryEntry {
   }
   return {
     ...pool,
-    stateSurface: pool.stateSurface,
+    capability: "market-state",
+    activationStatus: "unsupported",
+    stateSurface: "cl-head-snapshot",
+    unsupportedReason: null,
     poolAddress: pool.poolAddress,
     poolKey: pool.poolKey,
     stateViewAddress: pool.stateViewAddress,
@@ -469,7 +470,7 @@ describe("FAME pool-state DynamoDB mapping", () => {
   });
 
   test("round-trips address-backed CL head rows", async () => {
-    const pool = clHeadPool("uniswap-v3-usdc-weth-5bps");
+    const pool = clHeadPool("slipstream-basedflick-fame");
     const state = latestClHeadStateFromSnapshot({
       pool,
       sqrtPriceX96: 2n ** 96n,
@@ -484,7 +485,7 @@ describe("FAME pool-state DynamoDB mapping", () => {
     expect(state).toMatchObject({
       ...latestClHeadStateKey(pool),
       stateKind: "cl-head-snapshot",
-      poolId: "uniswap-v3-usdc-weth-5bps",
+      poolId: pool.id,
       poolAddress: pool.poolAddress,
       poolKey: null,
       sqrtPriceX96: (2n ** 96n).toString(),
@@ -503,7 +504,7 @@ describe("FAME pool-state DynamoDB mapping", () => {
   });
 
   test("round-trips V4 CL head rows by pool key", async () => {
-    const pool = firstV4ClHeadPool();
+    const pool = v4ClHeadPoolFixture();
     const state = latestClHeadStateFromSnapshot({
       pool,
       sqrtPriceX96: 99n,
@@ -1380,7 +1381,7 @@ describe("FAME pool-state DynamoDB mapping", () => {
   });
 
   test("rejects incomplete CL head batch reads with unprocessed keys", async () => {
-    const pool = clHeadPool("uniswap-v3-usdc-weth-5bps");
+    const pool = clHeadPool("slipstream-basedflick-fame");
 
     await expect(
       batchGetLatestClHeadStates({
@@ -1418,7 +1419,7 @@ describe("FAME pool-state DynamoDB mapping", () => {
   });
 
   test("rejects malformed persisted CL head items", async () => {
-    const pool = clHeadPool("uniswap-v3-usdc-weth-5bps");
+    const pool = clHeadPool("slipstream-basedflick-fame");
     const state = latestClHeadStateFromSnapshot({
       pool,
       sqrtPriceX96: 2n ** 96n,
@@ -1444,7 +1445,7 @@ describe("FAME pool-state DynamoDB mapping", () => {
 
   test("returns ignored for stale CL head conditional writes", async () => {
     const db = new ConditionalFailureDb();
-    const pool = clHeadPool("uniswap-v3-usdc-weth-5bps");
+    const pool = clHeadPool("slipstream-basedflick-fame");
     const result = await putLatestClHeadState({
       db,
       tableName: "PoolState",
