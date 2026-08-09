@@ -1,5 +1,5 @@
 import { describe, expect, jest, test } from "@jest/globals";
-import type { Address } from "viem";
+import type { Address, Hex } from "viem";
 import {
   createFameLandingSnapshotDependencies,
   produceAndPublishFameLandingSnapshot,
@@ -10,11 +10,17 @@ import { famePoolStateRegistry } from "./registry/index.ts";
 import type { PoolStateDocumentClient } from "./dynamodb/pool-state.ts";
 import type { FamePoolStateIndexerResult } from "./indexer.ts";
 
+const SAFE_HASH =
+  "0x1111111111111111111111111111111111111111111111111111111111111111" as Hex;
+
+function activeSignal(): AbortSignal {
+  return new AbortController().signal;
+}
+
 function indexerResult(): FamePoolStateIndexerResult {
   return {
     chainId: 8453,
-    safeBlockHash:
-      "0x1111111111111111111111111111111111111111111111111111111111111111",
+    safeBlockHash: SAFE_HASH,
     durationMs: 100,
     fromBlock: 100,
     observedThroughBlock: 120,
@@ -66,7 +72,14 @@ describe("FAME landing production reads", () => {
       rpc: { multicall },
     });
 
-    await expect(deps.readMarketplace({ blockNumber: 123n })).resolves.toEqual({
+    const signal = activeSignal();
+    await expect(
+      deps.readMarketplace({
+        blockNumber: 123n,
+        blockHash: SAFE_HASH,
+        signal,
+      }),
+    ).resolves.toEqual({
       premium: 50n,
       unit: 1_000_000n,
       totalSupply: 888_000_000n,
@@ -76,6 +89,8 @@ describe("FAME landing production reads", () => {
     expect(multicall.mock.calls[0]?.[0]).toMatchObject({
       allowFailure: false,
       blockNumber: 123n,
+      blockHash: SAFE_HASH,
+      signal,
       contracts: expect.arrayContaining([
         expect.objectContaining({ functionName: "premium" }),
         expect.objectContaining({ functionName: "unit" }),
@@ -96,9 +111,12 @@ describe("FAME landing production reads", () => {
       fameLandingAuthority.fameToken,
       "0x4200000000000000000000000000000000000006" as Address,
     ] as const;
+    const signal = activeSignal();
     await expect(
       deps.readConcentratedPoolBalances({
         blockNumber: 456n,
+        blockHash: SAFE_HASH,
+        signal,
         poolId: "slipstream-basedflick-fame",
         poolAddress: "0x1111111111111111111111111111111111111111",
         tokenAddresses: tokens,
@@ -114,6 +132,8 @@ describe("FAME landing production reads", () => {
     expect(multicall.mock.calls[0]?.[0]).toMatchObject({
       allowFailure: false,
       blockNumber: 456n,
+      blockHash: SAFE_HASH,
+      signal,
     });
   });
 
@@ -130,9 +150,12 @@ describe("FAME landing production reads", () => {
       rpc: { multicall },
     });
 
+    const signal = activeSignal();
     await expect(
       deps.readRuntimePoolReserves({
         blockNumber: 789n,
+        blockHash: SAFE_HASH,
+        signal,
         pools: [
           {
             poolId: connector.id,
@@ -152,6 +175,8 @@ describe("FAME landing production reads", () => {
       expect.objectContaining({
         allowFailure: false,
         blockNumber: 789n,
+        blockHash: SAFE_HASH,
+        signal,
         contracts: [
           expect.objectContaining({
             address: connector.poolAddress,
@@ -178,6 +203,8 @@ describe("FAME landing production reads", () => {
     await expect(
       deps.readRuntimePoolReserves({
         blockNumber: 789n,
+        blockHash: SAFE_HASH,
+        signal: activeSignal(),
         pools: [
           {
             poolId: unrelated.id,
@@ -221,8 +248,14 @@ describe("FAME landing production reads", () => {
       },
     ];
 
+    const signal = activeSignal();
     await expect(
-      deps.readRuntimePoolQuotes({ blockNumber: 790n, requests }),
+      deps.readRuntimePoolQuotes({
+        blockNumber: 790n,
+        blockHash: SAFE_HASH,
+        signal,
+        requests,
+      }),
     ).resolves.toEqual([
       {
         quoteDefinitionId: "defi-buy-usdc-v1",
@@ -239,6 +272,8 @@ describe("FAME landing production reads", () => {
       expect.objectContaining({
         allowFailure: true,
         blockNumber: 790n,
+        blockHash: SAFE_HASH,
+        signal,
         contracts: [
           expect.objectContaining({
             address: connector.poolAddress,
@@ -304,7 +339,12 @@ describe("FAME landing production reads", () => {
 
     for (const requests of invalidBatches) {
       await expect(
-        deps.readRuntimePoolQuotes({ blockNumber: 790n, requests }),
+        deps.readRuntimePoolQuotes({
+          blockNumber: 790n,
+          blockHash: SAFE_HASH,
+          signal: activeSignal(),
+          requests,
+        }),
       ).rejects.toThrow(/authority|unique/u);
     }
     expect(multicall).not.toHaveBeenCalled();
@@ -312,8 +352,23 @@ describe("FAME landing production reads", () => {
 
   test("applies the run deadline to warm-start reads as well as production", async () => {
     jest.useFakeTimers();
+    let readSignal: AbortSignal | undefined;
+    const commands: string[] = [];
+    type SentCommand = Parameters<PoolStateDocumentClient["send"]>[0];
     const db = {
-      send: jest.fn(() => new Promise<never>(() => undefined)),
+      send: jest.fn(
+        (command: SentCommand, options?: { abortSignal?: AbortSignal }) => {
+          commands.push(command.constructor.name);
+          readSignal = options?.abortSignal;
+          return new Promise<never>((_resolve, reject) => {
+            options?.abortSignal?.addEventListener(
+              "abort",
+              () => reject(options.abortSignal?.reason),
+              { once: true },
+            );
+          });
+        },
+      ),
     } as unknown as PoolStateDocumentClient;
 
     try {
@@ -329,6 +384,108 @@ describe("FAME landing production reads", () => {
       );
       await jest.advanceTimersByTimeAsync(11);
       await rejection;
+      expect(readSignal?.aborted).toBe(true);
+      expect(commands).toEqual(["GetCommand"]);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test("does not advance the pointer when the safe block hash changes", async () => {
+    type SentCommand = Parameters<PoolStateDocumentClient["send"]>[0];
+    const commands: SentCommand[] = [];
+    const db: PoolStateDocumentClient = {
+      async send(command) {
+        commands.push(command);
+        return {};
+      },
+    };
+    const unavailable = async () => {
+      throw new Error("dependency unavailable");
+    };
+    const deps = {
+      readMarketplace: unavailable,
+      readReserveStates: unavailable,
+      readConcentratedPoolBalances: unavailable,
+      readRuntimePoolReserves: unavailable,
+      readRuntimePoolQuotes: unavailable,
+    };
+
+    await expect(
+      produceAndPublishFameLandingSnapshot({
+        indexResult: indexerResult(),
+        tableName: "PoolState",
+        db,
+        deps,
+        readBlockIdentity: async () => ({
+          hash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          parentHash:
+            "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        }),
+      }),
+    ).rejects.toThrow(/changed before publication/u);
+    expect(commands.map((command) => command.constructor.name)).toEqual([
+      "GetCommand",
+      "PutCommand",
+    ]);
+  });
+
+  test("aborts the final identity read without starting the pointer write", async () => {
+    jest.useFakeTimers();
+    type SentCommand = Parameters<PoolStateDocumentClient["send"]>[0];
+    const commands: SentCommand[] = [];
+    const db: PoolStateDocumentClient = {
+      async send(command) {
+        commands.push(command);
+        return {};
+      },
+    };
+    const unavailable = async () => {
+      throw new Error("dependency unavailable");
+    };
+    const deps = {
+      readMarketplace: unavailable,
+      readReserveStates: unavailable,
+      readConcentratedPoolBalances: unavailable,
+      readRuntimePoolReserves: unavailable,
+      readRuntimePoolQuotes: unavailable,
+    };
+    let identitySignal: AbortSignal | undefined;
+    let identityStartedResolve: (() => void) | undefined;
+    const identityStarted = new Promise<void>((resolve) => {
+      identityStartedResolve = resolve;
+    });
+
+    try {
+      const result = produceAndPublishFameLandingSnapshot({
+        indexResult: indexerResult(),
+        tableName: "PoolState",
+        db,
+        deps,
+        runTimeoutMs: 10,
+        leafTimeoutMs: 5,
+        readBlockIdentity: ({ signal }) => {
+          identitySignal = signal;
+          identityStartedResolve?.();
+          return new Promise<never>((_resolve, reject) => {
+            signal.addEventListener("abort", () => reject(signal.reason), {
+              once: true,
+            });
+          });
+        },
+      });
+      const rejection = expect(result).rejects.toThrow(
+        "FAME landing snapshot run deadline exceeded",
+      );
+      await identityStarted;
+      await jest.advanceTimersByTimeAsync(11);
+      await rejection;
+
+      expect(identitySignal?.aborted).toBe(true);
+      expect(commands.map((command) => command.constructor.name)).toEqual([
+        "GetCommand",
+        "PutCommand",
+      ]);
     } finally {
       jest.useRealTimers();
     }

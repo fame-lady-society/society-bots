@@ -1,5 +1,5 @@
 import type { Address, Hex } from "viem";
-import type { FamePoolLatestState } from "./dynamodb/pool-state.ts";
+import type { FameLandingPoolLatestState } from "./dynamodb/pool-state.ts";
 import {
   FAME_LANDING_QUOTE_FIELDS,
   FAME_LANDING_SNAPSHOT_LEAF_TIMEOUT_MS,
@@ -70,18 +70,27 @@ export type FameLandingRuntimeQuoteResult =
 export interface FameLandingSnapshotProducerDependencies {
   readMarketplace(options: {
     blockNumber: bigint;
+    blockHash: Hex;
+    signal: AbortSignal;
   }): Promise<FameLandingMarketplaceRead>;
   readReserveStates(options: {
     poolIds: readonly string[];
-  }): Promise<readonly FamePoolLatestState[]>;
+    blockNumber: bigint;
+    blockHash: Hex;
+    signal: AbortSignal;
+  }): Promise<readonly FameLandingPoolLatestState[]>;
   readConcentratedPoolBalances(options: {
     blockNumber: bigint;
+    blockHash: Hex;
+    signal: AbortSignal;
     poolId: string;
     poolAddress: Address;
     tokenAddresses: readonly Address[];
   }): Promise<FameLandingConcentratedPoolBalances>;
   readRuntimePoolReserves(options: {
     blockNumber: bigint;
+    blockHash: Hex;
+    signal: AbortSignal;
     pools: readonly {
       poolId: string;
       poolAddress: Address;
@@ -89,6 +98,8 @@ export interface FameLandingSnapshotProducerDependencies {
   }): Promise<readonly FameLandingRuntimePoolReserves[]>;
   readRuntimePoolQuotes(options: {
     blockNumber: bigint;
+    blockHash: Hex;
+    signal: AbortSignal;
     requests: readonly FameLandingRuntimeQuoteRequest[];
   }): Promise<readonly FameLandingRuntimeQuoteResult[]>;
 }
@@ -116,14 +127,25 @@ class LeafDeadlineError extends Error {
 }
 
 function settleLeaf<T>(
-  operation: () => Promise<T>,
+  operation: (signal: AbortSignal) => Promise<T>,
   timeoutMs: number,
+  runSignal: AbortSignal,
 ): Promise<LeafResult<T>> {
+  runSignal.throwIfAborted();
+  const controller = new AbortController();
+  const signal = AbortSignal.any([runSignal, controller.signal]);
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => reject(new LeafDeadlineError()), timeoutMs);
+    timer = setTimeout(() => {
+      const error = new LeafDeadlineError();
+      reject(error);
+      controller.abort(error);
+    }, timeoutMs);
   });
-  return Promise.race([operation(), deadline])
+  return Promise.race([
+    Promise.resolve().then(() => operation(signal)),
+    deadline,
+  ])
     .then((value) => ({ status: "available", value }) as const)
     .catch((error: unknown) => ({
       status: "unavailable" as const,
@@ -179,8 +201,9 @@ function canonicalDecimal(value: string): boolean {
 
 function capturedReserveState(
   poolId: string,
-  statesByPoolId: Map<string, FamePoolLatestState>,
+  statesByPoolId: Map<string, FameLandingPoolLatestState>,
   safeBlockNumber: number,
+  safeBlockHash: Hex,
   authority: FameLandingAuthority,
 ): {
   pool: FamePoolStateRegistryEntry;
@@ -197,6 +220,8 @@ function capturedReserveState(
     pool.quoteModel !== "constant-product-reserves" ||
     !state ||
     state.observedThroughBlock !== safeBlockNumber ||
+    state.observedThroughBlockHash.toLowerCase() !==
+      safeBlockHash.toLowerCase() ||
     state.sourceRegistryId !== authority.sourceRegistryId ||
     state.poolAddress.toLowerCase() !== pool.poolAddress.toLowerCase() ||
     state.token0.toLowerCase() !== pool.token0.toLowerCase() ||
@@ -232,11 +257,13 @@ function routeReserves({
   capability,
   states,
   safeBlockNumber,
+  safeBlockHash,
   authority,
 }: {
   capability: CapturedQuoteCapability;
-  states: readonly FamePoolLatestState[];
+  states: readonly FameLandingPoolLatestState[];
   safeBlockNumber: number;
+  safeBlockHash: Hex;
   authority: FameLandingAuthority;
 }): Map<
   string,
@@ -257,6 +284,7 @@ function routeReserves({
       poolId,
       statesByPoolId,
       safeBlockNumber,
+      safeBlockHash,
       authority,
     );
     if (!captured) return null;
@@ -270,12 +298,14 @@ function runtimeRouteReserves({
   states,
   runtimeStates,
   safeBlockNumber,
+  safeBlockHash,
   authority,
 }: {
   capability: RuntimeQuoteCapability;
-  states: readonly FamePoolLatestState[];
+  states: readonly FameLandingPoolLatestState[];
   runtimeStates: readonly FameLandingRuntimePoolReserves[];
   safeBlockNumber: number;
+  safeBlockHash: Hex;
   authority: FameLandingAuthority;
 }): Map<
   string,
@@ -300,6 +330,7 @@ function runtimeRouteReserves({
         poolId,
         statesByPoolId,
         safeBlockNumber,
+        safeBlockHash,
         authority,
       );
       if (!captured) return null;
@@ -452,16 +483,18 @@ function quoteFieldDraft({
   runtimeReserveResult,
   marketplace,
   safeBlockNumber,
+  safeBlockHash,
   authority,
   previousSnapshot,
 }: {
   field: FameLandingQuoteField;
   definition: FameLandingQuoteDefinition;
   capability: FameLandingQuoteCapability;
-  reserveResult: LeafResult<readonly FamePoolLatestState[]>;
+  reserveResult: LeafResult<readonly FameLandingPoolLatestState[]>;
   runtimeReserveResult: LeafResult<readonly FameLandingRuntimePoolReserves[]>;
   marketplace: FameLandingFieldState<FameLandingMarketplaceValue>;
   safeBlockNumber: number;
+  safeBlockHash: Hex;
   authority: FameLandingAuthority;
   previousSnapshot: FameLandingSnapshot | null;
 }): FameLandingQuoteDraft {
@@ -486,6 +519,7 @@ function quoteFieldDraft({
           capability,
           states: reserveResult.value,
           safeBlockNumber,
+          safeBlockHash,
           authority,
         })
       : null;
@@ -503,6 +537,7 @@ function quoteFieldDraft({
           states: reserveResult.value,
           runtimeStates: runtimeReserveResult.value,
           safeBlockNumber,
+          safeBlockHash,
           authority,
         })
       : null;
@@ -638,11 +673,13 @@ function liquidityField({
   reserveResult,
   concentratedResult,
   safeBlockNumber,
+  safeBlockHash,
   authority,
 }: {
-  reserveResult: LeafResult<readonly FamePoolLatestState[]>;
+  reserveResult: LeafResult<readonly FameLandingPoolLatestState[]>;
   concentratedResult: LeafResult<FameLandingConcentratedPoolBalances>;
   safeBlockNumber: number;
+  safeBlockHash: Hex;
   authority: FameLandingAuthority;
 }): FameLandingSnapshot["fields"]["liquidity"] {
   if (reserveResult.status === "unavailable")
@@ -668,6 +705,7 @@ function liquidityField({
         poolId,
         statesByPoolId,
         safeBlockNumber,
+        safeBlockHash,
         authority,
       );
       if (!captured) return unavailable("invalid-pool-state");
@@ -731,6 +769,7 @@ export async function produceFameLandingSnapshot({
   previousSnapshot = null,
   authority = fameLandingAuthority,
   leafTimeoutMs = FAME_LANDING_SNAPSHOT_LEAF_TIMEOUT_MS,
+  signal = new AbortController().signal,
 }: {
   chainId: number;
   safeBlockNumber: number;
@@ -740,6 +779,7 @@ export async function produceFameLandingSnapshot({
   previousSnapshot?: FameLandingSnapshot | null;
   authority?: FameLandingAuthority;
   leafTimeoutMs?: number;
+  signal?: AbortSignal;
 }): Promise<FameLandingSnapshot> {
   if (chainId !== 8453) throw new Error("FAME landing snapshots require Base.");
   if (!Number.isSafeInteger(safeBlockNumber) || safeBlockNumber < 0) {
@@ -748,6 +788,7 @@ export async function produceFameLandingSnapshot({
   if (!Number.isSafeInteger(leafTimeoutMs) || leafTimeoutMs <= 0) {
     throw new Error("leafTimeoutMs must be a positive safe integer.");
   }
+  signal.throwIfAborted();
   const capturedAtIso = capturedAt.toISOString();
   const reservePoolIds = [
     ...new Set([
@@ -787,30 +828,49 @@ export async function produceFameLandingSnapshot({
     )
     .map(({ id: poolId, poolAddress }) => ({ poolId, poolAddress }));
   const marketplaceResultPromise = settleLeaf(
-    () => deps.readMarketplace({ blockNumber: BigInt(safeBlockNumber) }),
+    (leafSignal) =>
+      deps.readMarketplace({
+        blockNumber: BigInt(safeBlockNumber),
+        blockHash: safeBlockHash,
+        signal: leafSignal,
+      }),
     leafTimeoutMs,
+    signal,
   );
   const reserveResultPromise = settleLeaf(
-    () => deps.readReserveStates({ poolIds: reservePoolIds }),
+    (leafSignal) =>
+      deps.readReserveStates({
+        poolIds: reservePoolIds,
+        blockNumber: BigInt(safeBlockNumber),
+        blockHash: safeBlockHash,
+        signal: leafSignal,
+      }),
     leafTimeoutMs,
+    signal,
   );
   const concentratedResultPromise = settleLeaf(
-    () =>
+    (leafSignal) =>
       deps.readConcentratedPoolBalances({
         blockNumber: BigInt(safeBlockNumber),
+        blockHash: safeBlockHash,
+        signal: leafSignal,
         poolId: concentratedPool.id,
         poolAddress: concentratedPool.poolAddress as Address,
         tokenAddresses: [concentratedPool.token0, concentratedPool.token1],
       }),
     leafTimeoutMs,
+    signal,
   );
   const runtimeReserveResultPromise = settleLeaf(
-    () =>
+    (leafSignal) =>
       deps.readRuntimePoolReserves({
         blockNumber: BigInt(safeBlockNumber),
+        blockHash: safeBlockHash,
+        signal: leafSignal,
         pools: runtimePools,
       }),
     leafTimeoutMs,
+    signal,
   );
   const [
     marketplaceResult,
@@ -823,6 +883,7 @@ export async function produceFameLandingSnapshot({
     concentratedResultPromise,
     runtimeReserveResultPromise,
   ]);
+  signal.throwIfAborted();
   const marketplace = marketplaceField(marketplaceResult);
   const quoteDrafts = Object.fromEntries(
     FAME_LANDING_QUOTE_FIELDS.map((field) => {
@@ -842,6 +903,7 @@ export async function produceFameLandingSnapshot({
           runtimeReserveResult,
           marketplace,
           safeBlockNumber,
+          safeBlockHash,
           authority,
           previousSnapshot,
         }),
@@ -853,15 +915,19 @@ export async function produceFameLandingSnapshot({
       runtimeValidation ? [runtimeValidation.request] : [],
   );
   const runtimeQuoteResult = await settleLeaf(
-    () =>
+    (leafSignal) =>
       runtimeQuoteRequests.length === 0
         ? Promise.resolve([])
         : deps.readRuntimePoolQuotes({
             blockNumber: BigInt(safeBlockNumber),
+            blockHash: safeBlockHash,
+            signal: leafSignal,
             requests: runtimeQuoteRequests,
           }),
     leafTimeoutMs,
+    signal,
   );
+  signal.throwIfAborted();
   const quotes = Object.fromEntries(
     FAME_LANDING_QUOTE_FIELDS.map((field) => [
       field,
@@ -894,9 +960,11 @@ export async function produceFameLandingSnapshot({
         reserveResult,
         concentratedResult,
         safeBlockNumber,
+        safeBlockHash,
         authority,
       }),
     },
   };
+  signal.throwIfAborted();
   return parseFameLandingSnapshot(snapshot, authority);
 }

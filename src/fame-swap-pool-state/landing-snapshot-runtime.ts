@@ -1,8 +1,12 @@
-import type { Address } from "viem";
+import type { Address, ContractFunctionParameters, Hex } from "viem";
 import { UniswapV2PairReserveAbi } from "@/events.ts";
-import { baseClient } from "@/viem.ts";
 import {
-  batchGetLatestPoolStates,
+  getCanonicalBlockIdentity,
+  multicallAtBlockHash,
+  type CanonicalBlockIdentity,
+} from "./block-hash-multicall.ts";
+import {
+  batchGetLatestPoolStatesForLanding,
   defaultDb,
   type PoolStateDocumentClient,
 } from "./dynamodb/pool-state.ts";
@@ -88,9 +92,22 @@ export interface FameLandingMulticallClient {
   multicall(options: {
     allowFailure: boolean;
     blockNumber: bigint;
-    contracts: readonly Record<string, unknown>[];
+    blockHash: Hex;
+    signal: AbortSignal;
+    contracts: readonly ContractFunctionParameters[];
   }): Promise<readonly unknown[]>;
 }
+
+const defaultFameLandingMulticallClient: FameLandingMulticallClient = {
+  multicall({ allowFailure, blockHash, signal, contracts }) {
+    return multicallAtBlockHash({
+      allowFailure,
+      blockHash,
+      signal,
+      contracts,
+    });
+  },
+};
 
 function sameAddress(left: unknown, right: Address): boolean {
   return typeof left === "string" && left.toLowerCase() === right.toLowerCase();
@@ -203,18 +220,20 @@ function requiredReserveTuple(
 export function createFameLandingSnapshotDependencies({
   tableName,
   db = defaultDb,
-  rpc = baseClient as unknown as FameLandingMulticallClient,
+  rpc = defaultFameLandingMulticallClient,
 }: {
   tableName: string;
   db?: PoolStateDocumentClient;
   rpc?: FameLandingMulticallClient;
 }): FameLandingSnapshotProducerDependencies {
   return {
-    async readMarketplace({ blockNumber }) {
+    async readMarketplace({ blockNumber, blockHash, signal }) {
       const fame = fameLandingAuthority.fameToken;
       const values = await rpc.multicall({
         allowFailure: false,
         blockNumber,
+        blockHash,
+        signal,
         contracts: [
           {
             address: MARKETPLACE,
@@ -291,7 +310,7 @@ export function createFameLandingSnapshotDependencies({
         decimals,
       };
     },
-    async readReserveStates({ poolIds }) {
+    async readReserveStates({ poolIds, signal }) {
       const wanted = new Set(poolIds);
       const pools = famePoolStateRegistry.pools.filter(
         (pool): pool is typeof pool & { poolAddress: Address } =>
@@ -300,10 +319,17 @@ export function createFameLandingSnapshotDependencies({
       if (pools.length !== wanted.size) {
         throw new Error("Landing reserve pool authority is incomplete.");
       }
-      return batchGetLatestPoolStates({ db, tableName, pools });
+      return batchGetLatestPoolStatesForLanding({
+        db,
+        tableName,
+        pools,
+        signal,
+      });
     },
     async readConcentratedPoolBalances({
       blockNumber,
+      blockHash,
+      signal,
       poolId,
       poolAddress,
       tokenAddresses,
@@ -311,6 +337,8 @@ export function createFameLandingSnapshotDependencies({
       const values = await rpc.multicall({
         allowFailure: false,
         blockNumber,
+        blockHash,
+        signal,
         contracts: tokenAddresses.map((address) => ({
           address,
           abi: balanceOfAbi,
@@ -331,7 +359,7 @@ export function createFameLandingSnapshotDependencies({
         ),
       };
     },
-    async readRuntimePoolReserves({ blockNumber, pools }) {
+    async readRuntimePoolReserves({ blockNumber, blockHash, signal, pools }) {
       if (
         pools.length !== APPROVED_RUNTIME_AUTHORITY.pools.size ||
         new Set(pools.map(({ poolId }) => poolId)).size !== pools.length ||
@@ -347,6 +375,8 @@ export function createFameLandingSnapshotDependencies({
       const values = await rpc.multicall({
         allowFailure: false,
         blockNumber,
+        blockHash,
+        signal,
         contracts: pools.map(({ poolAddress }) => ({
           address: poolAddress,
           abi: UniswapV2PairReserveAbi,
@@ -364,7 +394,7 @@ export function createFameLandingSnapshotDependencies({
         return { poolId, blockNumber, reserve0, reserve1 };
       });
     },
-    async readRuntimePoolQuotes({ blockNumber, requests }) {
+    async readRuntimePoolQuotes({ blockNumber, blockHash, signal, requests }) {
       const definitionIds = new Set(
         requests.map(({ quoteDefinitionId }) => quoteDefinitionId),
       );
@@ -392,6 +422,8 @@ export function createFameLandingSnapshotDependencies({
       const values = await rpc.multicall({
         allowFailure: true,
         blockNumber,
+        blockHash,
+        signal,
         contracts: requests.map((request) => ({
           address: request.poolAddress,
           abi: getAmountOutAbi,
@@ -437,17 +469,19 @@ class FameLandingRunDeadlineError extends Error {
 }
 
 async function withRunDeadline<T>(
-  operation: Promise<T>,
+  operation: (signal: AbortSignal) => Promise<T>,
   timeoutMs: number,
 ): Promise<T> {
+  const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(
-      () => reject(new FameLandingRunDeadlineError()),
-      timeoutMs,
-    );
+    timer = setTimeout(() => {
+      const error = new FameLandingRunDeadlineError();
+      reject(error);
+      controller.abort(error);
+    }, timeoutMs);
   });
-  return Promise.race([operation, deadline]).finally(() => {
+  return Promise.race([operation(controller.signal), deadline]).finally(() => {
     if (timer) clearTimeout(timer);
   });
 }
@@ -466,6 +500,7 @@ export async function produceAndPublishFameLandingSnapshot({
   runTimeoutMs = FAME_LANDING_SNAPSHOT_RUN_TIMEOUT_MS,
   leafTimeoutMs = FAME_LANDING_SNAPSHOT_LEAF_TIMEOUT_MS,
   ttlSeconds = FAME_LANDING_SNAPSHOT_CONTENT_TTL_SECONDS,
+  readBlockIdentity = getCanonicalBlockIdentity,
 }: {
   indexResult: FamePoolStateIndexerResult;
   tableName: string;
@@ -475,6 +510,10 @@ export async function produceAndPublishFameLandingSnapshot({
   runTimeoutMs?: number;
   leafTimeoutMs?: number;
   ttlSeconds?: number;
+  readBlockIdentity?: (options: {
+    blockNumber: bigint;
+    signal: AbortSignal;
+  }) => Promise<CanonicalBlockIdentity>;
 }): Promise<FameLandingPublication> {
   if (
     !Number.isSafeInteger(runTimeoutMs) ||
@@ -485,35 +524,53 @@ export async function produceAndPublishFameLandingSnapshot({
   ) {
     throw new Error("Landing run and leaf deadlines are invalid.");
   }
-  return withRunDeadline(
-    (async () => {
-      let previousSnapshot: FameLandingSnapshot | null = null;
-      try {
-        previousSnapshot = await getCurrentFameLandingSnapshot({
-          db,
-          tableName,
-        });
-      } catch {
-        // A warm start is optional; a corrupt prior pointer must not poison a new pass.
-      }
-      const snapshot = await produceFameLandingSnapshot({
-        chainId: indexResult.chainId,
-        safeBlockNumber: indexResult.observedThroughBlock,
-        safeBlockHash: indexResult.safeBlockHash,
-        capturedAt,
-        deps,
-        previousSnapshot,
-        leafTimeoutMs,
-      });
-      const publication = await publishFameLandingSnapshot({
+  return withRunDeadline(async (signal) => {
+    let previousSnapshot: FameLandingSnapshot | null = null;
+    try {
+      previousSnapshot = await getCurrentFameLandingSnapshot({
         db,
         tableName,
-        snapshot,
-        publishedAt: capturedAt,
-        ttlSeconds,
+        signal,
       });
-      return { snapshot, publication };
-    })(),
-    runTimeoutMs,
-  );
+    } catch {
+      // A warm start is optional; a corrupt prior pointer must not poison a new pass.
+      signal.throwIfAborted();
+    }
+    const snapshot = await produceFameLandingSnapshot({
+      chainId: indexResult.chainId,
+      safeBlockNumber: indexResult.observedThroughBlock,
+      safeBlockHash: indexResult.safeBlockHash,
+      capturedAt,
+      deps,
+      previousSnapshot,
+      leafTimeoutMs,
+      signal,
+    });
+    signal.throwIfAborted();
+    const publication = await publishFameLandingSnapshot({
+      db,
+      tableName,
+      snapshot,
+      publishedAt: capturedAt,
+      ttlSeconds,
+      signal,
+      beforePointerWrite: async () => {
+        signal.throwIfAborted();
+        const finalBlockIdentity = await readBlockIdentity({
+          blockNumber: BigInt(indexResult.observedThroughBlock),
+          signal,
+        });
+        if (
+          finalBlockIdentity.hash.toLowerCase() !==
+          indexResult.safeBlockHash.toLowerCase()
+        ) {
+          throw new Error(
+            "FAME safe head block identity changed before publication.",
+          );
+        }
+        signal.throwIfAborted();
+      },
+    });
+    return { snapshot, publication };
+  }, runTimeoutMs);
 }

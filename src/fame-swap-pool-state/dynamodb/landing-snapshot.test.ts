@@ -246,4 +246,30 @@ describe("FAME landing snapshot DynamoDB publication", () => {
       getCurrentFameLandingSnapshot({ db, tableName: "PoolState" }),
     ).rejects.toThrow(/pointer and content disagree/u);
   });
+
+  test("does not start the pointer write after publication is aborted", async () => {
+    const snapshot = snapshotFixture();
+    const controller = new AbortController();
+    const commands: Command[] = [];
+    const db: PoolStateDocumentClient = {
+      async send(command) {
+        commands.push(command);
+        if (command instanceof PutCommand)
+          controller.abort(new Error("expired"));
+        return {};
+      },
+    };
+
+    await expect(
+      publishFameLandingSnapshot({
+        db,
+        tableName: "PoolState",
+        snapshot,
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow("expired");
+    expect(
+      commands.filter((command) => command instanceof PutCommand),
+    ).toHaveLength(1);
+  });
 });

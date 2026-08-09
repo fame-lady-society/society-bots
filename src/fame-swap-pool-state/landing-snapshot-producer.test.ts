@@ -10,7 +10,7 @@ import {
   type FameLandingSnapshot,
 } from "./landing-snapshot.ts";
 import { famePoolStateRegistry } from "./registry/index.ts";
-import type { FamePoolLatestState } from "./dynamodb/pool-state.ts";
+import type { FameLandingPoolLatestState } from "./dynamodb/pool-state.ts";
 
 const SAFE_BLOCK = 45_884_844;
 const SAFE_HASH =
@@ -57,7 +57,7 @@ function reserveState(
   poolId: string,
   reserve0: bigint,
   reserve1: bigint,
-): FamePoolLatestState {
+): FameLandingPoolLatestState {
   const pool = famePoolStateRegistry.pools.find(({ id }) => id === poolId);
   if (!pool?.poolAddress) throw new Error(`Missing reserve pool ${poolId}.`);
   return {
@@ -76,6 +76,7 @@ function reserveState(
     lastEventLogIndex: Number.MAX_SAFE_INTEGER,
     lastEventTransactionHash: null,
     observedThroughBlock: SAFE_BLOCK,
+    observedThroughBlockHash: SAFE_HASH,
     source: "getReserves",
     sourceRegistryId: fameLandingAuthority.sourceRegistryId,
     updatedAt: "2026-08-09T12:00:00.000Z",
@@ -175,15 +176,18 @@ describe("FAME landing snapshot producer", () => {
     let runtimeQuoteReads = 0;
     const snapshot = await produce(
       dependencies({
-        async readReserveStates({ poolIds }) {
+        async readReserveStates(options) {
           reserveReads += 1;
-          indexedPoolIds = poolIds;
-          return dependencies().readReserveStates({ poolIds: [] });
+          indexedPoolIds = options.poolIds;
+          return dependencies().readReserveStates({
+            ...options,
+            poolIds: [],
+          });
         },
-        async readRuntimePoolReserves({ blockNumber, pools }) {
-          runtimeBlock = blockNumber;
-          runtimePoolIds = pools.map(({ poolId }) => poolId);
-          return dependencies().readRuntimePoolReserves({ blockNumber, pools });
+        async readRuntimePoolReserves(options) {
+          runtimeBlock = options.blockNumber;
+          runtimePoolIds = options.pools.map(({ poolId }) => poolId);
+          return dependencies().readRuntimePoolReserves(options);
         },
         async readRuntimePoolQuotes(options) {
           runtimeQuoteReads += 1;
@@ -361,13 +365,22 @@ describe("FAME landing snapshot producer", () => {
   });
 
   test("turns a leaf deadline into explicit unavailability without rejecting the snapshot", async () => {
+    let marketplaceSignal: AbortSignal | undefined;
     const snapshot = await produce(
       dependencies({
-        readMarketplace: () => new Promise(() => undefined),
+        readMarketplace: ({ signal }) => {
+          marketplaceSignal = signal;
+          return new Promise((_resolve, reject) => {
+            signal.addEventListener("abort", () => reject(signal.reason), {
+              once: true,
+            });
+          });
+        },
       }),
       null,
       5,
     );
+    expect(marketplaceSignal?.aborted).toBe(true);
     expect(snapshot.fields.marketplace).toEqual({
       status: "unavailable",
       reason: "deadline-exceeded",
@@ -379,8 +392,9 @@ describe("FAME landing snapshot producer", () => {
     const previous = await produce();
     const snapshot = await produce(
       dependencies({
-        async readReserveStates() {
+        async readReserveStates(options) {
           const states = await dependencies().readReserveStates({
+            ...options,
             poolIds: [],
           });
           return states.filter(

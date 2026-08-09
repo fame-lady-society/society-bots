@@ -33,7 +33,9 @@ export const mainnetClient = createPublicClient({
   },
 });
 
-const baseRpcs: string[] = JSON.parse(process.env.BASE_RPCS_JSON || "[]");
+export const baseRpcs: string[] = JSON.parse(
+  process.env.BASE_RPCS_JSON || "[]",
+);
 
 export const baseClient = createPublicClient({
   transport: fallback(baseRpcs.map((rpc) => http(rpc, { batch: true }))),

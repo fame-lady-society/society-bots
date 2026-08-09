@@ -189,6 +189,8 @@ export async function publishFameLandingSnapshot({
   authority = fameLandingAuthority,
   publishedAt = new Date(),
   ttlSeconds = FAME_LANDING_SNAPSHOT_CONTENT_TTL_SECONDS,
+  signal,
+  beforePointerWrite,
 }: {
   db?: PoolStateDocumentClient;
   tableName: string;
@@ -196,10 +198,13 @@ export async function publishFameLandingSnapshot({
   authority?: FameLandingAuthority;
   publishedAt?: Date;
   ttlSeconds?: number;
+  signal?: AbortSignal;
+  beforePointerWrite?: () => Promise<void>;
 }): Promise<PublishFameLandingSnapshotResult> {
   const snapshot = parseFameLandingSnapshot(inputSnapshot, authority);
   const content = contentFromSnapshot({ snapshot, publishedAt, ttlSeconds });
   try {
+    signal?.throwIfAborted();
     await db.send(
       new PutCommand({
         TableName: tableName,
@@ -207,15 +212,18 @@ export async function publishFameLandingSnapshot({
         ConditionExpression:
           "attribute_not_exists(pk) AND attribute_not_exists(sk)",
       }),
+      { abortSignal: signal },
     );
   } catch (error) {
     if (!isConditionalCheckFailed(error)) throw error;
+    signal?.throwIfAborted();
     const existing = await db.send(
       new GetCommand({
         TableName: tableName,
         Key: landingSnapshotContentKey(snapshot.provenance.snapshotId),
         ConsistentRead: true,
       }),
+      { abortSignal: signal },
     );
     if (!existing.Item || !contentMatches(existing.Item, content, authority)) {
       storageError("immutable snapshot id already contains different content");
@@ -224,6 +232,8 @@ export async function publishFameLandingSnapshot({
 
   const pointer = pointerFromContent(content);
   try {
+    await beforePointerWrite?.();
+    signal?.throwIfAborted();
     await db.send(
       new PutCommand({
         TableName: tableName,
@@ -236,6 +246,7 @@ export async function publishFameLandingSnapshot({
           ":snapshotId": pointer.snapshotId,
         },
       }),
+      { abortSignal: signal },
     );
     return "advanced";
   } catch (error) {
@@ -278,26 +289,32 @@ export async function getCurrentFameLandingSnapshot({
   db = defaultDb,
   tableName,
   authority = fameLandingAuthority,
+  signal,
 }: {
   db?: PoolStateDocumentClient;
   tableName: string;
   authority?: FameLandingAuthority;
+  signal?: AbortSignal;
 }): Promise<FameLandingSnapshot | null> {
+  signal?.throwIfAborted();
   const pointerResponse = await db.send(
     new GetCommand({
       TableName: tableName,
       Key: currentFameLandingSnapshotKey(),
       ConsistentRead: true,
     }),
+    { abortSignal: signal },
   );
   if (!pointerResponse.Item) return null;
   const pointer = parsePointer(pointerResponse.Item);
+  signal?.throwIfAborted();
   const contentResponse = await db.send(
     new GetCommand({
       TableName: tableName,
       Key: landingSnapshotContentKey(pointer.snapshotId),
       ConsistentRead: true,
     }),
+    { abortSignal: signal },
   );
   if (!contentResponse.Item) {
     storageError("pointer-selected immutable content is missing");

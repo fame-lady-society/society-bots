@@ -1,4 +1,4 @@
-import { describe, expect, test } from "@jest/globals";
+import { describe, expect, jest, test } from "@jest/globals";
 import { BatchGetCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
 import type { Address, Hex } from "viem";
 import {
@@ -9,6 +9,7 @@ import {
   CL_REPLAY_CHUNK_TTL_SECONDS,
   batchGetLatestClHeadStates,
   batchGetLatestPoolStates,
+  batchGetLatestPoolStatesForLanding,
   clReplayCandidateStateRowsFromSnapshot,
   clReplayStateRowsFromSnapshot,
   v4ClReplayStateRowsFromSnapshot,
@@ -25,6 +26,7 @@ import {
   putLatestClReplayCandidateState,
   putLatestClReplayMaintenanceState,
   latestStateFromReserves,
+  markPoolObservedThroughBlock,
   putLatestClHeadState,
   putLatestPoolState,
   sourceRegistryIdFor,
@@ -466,6 +468,133 @@ describe("FAME pool-state DynamoDB mapping", () => {
       k: "25000",
       observedThroughBlock: 123,
       source: "sync-event",
+    });
+  });
+
+  test("reads landing reserves consistently and requires their block hash", async () => {
+    const pool = quoteModelPool("uniswap-v2-fame-direct");
+    const blockHash =
+      "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as Hex;
+    const state = latestStateFromReserves({
+      pool,
+      reserve0: 100n,
+      reserve1: 250n,
+      observedThroughBlock: 123,
+      version: {
+        blockNumber: 120,
+        transactionIndex: 2,
+        logIndex: 7,
+      },
+      transactionHash: null,
+      source: "getReserves",
+      sourceRegistryId: "unit",
+      updatedAt: "2026-05-17T00:00:00.000Z",
+    });
+    const db = new ReplayStateDb([
+      { ...state, observedThroughBlockHash: blockHash },
+    ]);
+
+    await expect(
+      batchGetLatestPoolStatesForLanding({
+        db,
+        tableName: "PoolState",
+        pools: [pool],
+        signal: new AbortController().signal,
+      }),
+    ).resolves.toEqual([{ ...state, observedThroughBlockHash: blockHash }]);
+    const command = db.commands[0];
+    expect(command).toBeInstanceOf(BatchGetCommand);
+    expect(
+      (command as BatchGetCommand).input.RequestItems?.PoolState
+        ?.ConsistentRead,
+    ).toBe(true);
+
+    await expect(
+      batchGetLatestPoolStatesForLanding({
+        db: new ReplayStateDb([{ ...state }]),
+        tableName: "PoolState",
+        pools: [pool],
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow(/observedThroughBlockHash/u);
+  });
+
+  test("stamps the observed block hash and can replace same-height provenance", async () => {
+    const pool = quoteModelPool("uniswap-v2-fame-direct");
+    const blockHash =
+      "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" as Hex;
+    const send = jest.fn(async (_command: SentCommand) => ({}));
+
+    await markPoolObservedThroughBlock({
+      db: { send },
+      tableName: "PoolState",
+      chainId: pool.chainId,
+      poolAddress: pool.poolAddress,
+      observedThroughBlock: 123,
+      observedThroughBlockHash: blockHash,
+      reserve0: 100n,
+      reserve1: 250n,
+      k: 25_000n,
+      sourceRegistryId: "unit",
+      updatedAt: "2026-05-17T00:00:00.000Z",
+    });
+
+    const command = send.mock.calls[0]?.[0];
+    expect(command?.input).toMatchObject({
+      UpdateExpression: expect.stringContaining("observedThroughBlockHash"),
+      ConditionExpression: expect.stringContaining(
+        "reserve0 = :reserve0 AND reserve1 = :reserve1 AND k = :k",
+      ),
+      ExpressionAttributeValues: expect.objectContaining({
+        ":observedThroughBlockHash": blockHash,
+        ":reserve0": "100",
+        ":reserve1": "250",
+        ":k": "25000",
+      }),
+    });
+  });
+
+  test("writes reconciled reserves and same-height provenance atomically", async () => {
+    const pool = quoteModelPool("uniswap-v2-fame-direct");
+    const blockHash =
+      "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" as Hex;
+    const send = jest.fn(async (_command: SentCommand) => ({}));
+
+    await putLatestPoolState({
+      db: { send },
+      tableName: "PoolState",
+      state: latestStateFromReserves({
+        pool,
+        reserve0: 100n,
+        reserve1: 250n,
+        observedThroughBlock: 123,
+        observedThroughBlockHash: blockHash,
+        version: {
+          blockNumber: 123,
+          transactionIndex: Number.MAX_SAFE_INTEGER,
+          logIndex: Number.MAX_SAFE_INTEGER,
+        },
+        transactionHash: null,
+        source: "getReserves",
+        sourceRegistryId: "unit",
+        updatedAt: "2026-05-17T00:00:00.000Z",
+      }),
+    });
+
+    expect(send.mock.calls[0]?.[0].input).toMatchObject({
+      Item: expect.objectContaining({
+        reserve0: "100",
+        reserve1: "250",
+        k: "25000",
+        observedThroughBlock: 123,
+        observedThroughBlockHash: blockHash,
+      }),
+      ConditionExpression: expect.stringContaining(
+        "observedThroughBlockHash <> :observedThroughBlockHash",
+      ),
+      ExpressionAttributeValues: expect.objectContaining({
+        ":observedThroughBlockHash": blockHash,
+      }),
     });
   });
 

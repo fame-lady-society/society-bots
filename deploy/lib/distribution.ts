@@ -20,7 +20,7 @@ export const FAME_LANDING_SNAPSHOT_VIEWER_REQUEST_CODE = `function handler(event
   var request = event.request;
   var hasQuery = Object.keys(request.querystring || {}).length > 0;
   var hasCookies = Object.keys(request.cookies || {}).length > 0;
-  if (hasQuery || hasCookies) {
+  if (request.method !== "GET" || hasQuery || hasCookies) {
     return {
       statusCode: 400,
       statusDescription: "Bad Request",
@@ -33,6 +33,8 @@ export const FAME_LANDING_SNAPSHOT_VIEWER_REQUEST_CODE = `function handler(event
   }
   return request;
 }`;
+
+export const FAME_LANDING_SNAPSHOT_CACHE_POLICY_MAX_TTL_SECONDS = 180;
 
 export const ZERO_TTL_ERROR_STATUSES = [
   400, 403, 404, 405, 414, 416, 500, 501, 502, 503, 504,
@@ -65,7 +67,9 @@ export class Distribution extends Construct {
       {
         minTtl: cdk.Duration.seconds(0),
         defaultTtl: cdk.Duration.seconds(0),
-        maxTtl: cdk.Duration.seconds(60),
+        maxTtl: cdk.Duration.seconds(
+          FAME_LANDING_SNAPSHOT_CACHE_POLICY_MAX_TTL_SECONDS,
+        ),
         queryStringBehavior: cloudfront.CacheQueryStringBehavior.none(),
         cookieBehavior: cloudfront.CacheCookieBehavior.none(),
         headerBehavior: cloudfront.CacheHeaderBehavior.none(),
