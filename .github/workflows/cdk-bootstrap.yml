@@ -1,0 +1,57 @@
+name: Bootstrap CDK Environments
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: society-bots-cdk-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+
+      - name: Install CDK dependencies
+        run: npm install --global yarn && yarn install --frozen-lockfile
+        working-directory: deploy/
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-west-1
+
+      - name: Bootstrap CDK environments
+        env:
+          EXPECTED_ACCOUNT_ID: ${{ vars.CDK_BOOTSTRAP_ACCOUNT_ID }}
+        run: |
+          if [ -z "${EXPECTED_ACCOUNT_ID}" ]; then
+            echo "::error::CDK_BOOTSTRAP_ACCOUNT_ID is not configured. Refusing to bootstrap an unverified AWS account."
+            exit 1
+          fi
+
+          ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+          if [ "${ACCOUNT_ID}" != "${EXPECTED_ACCOUNT_ID}" ]; then
+            echo "::error::Refusing to bootstrap AWS account ${ACCOUNT_ID}; CDK_BOOTSTRAP_ACCOUNT_ID expects ${EXPECTED_ACCOUNT_ID}."
+            exit 1
+          fi
+
+          yarn cdk bootstrap \
+            "aws://${ACCOUNT_ID}/us-west-1" \
+            "aws://${ACCOUNT_ID}/us-east-1"
+        working-directory: deploy/
