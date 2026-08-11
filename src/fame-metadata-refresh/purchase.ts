@@ -80,15 +80,31 @@ export function isMissingFameNft(error: unknown) {
   return reverted instanceof ContractFunctionRevertedError && reverted.data?.errorName === "TokenDoesNotExist";
 }
 
-export async function authoritativeMetadata({ client, tokenId, fetcher = fetch }: { client: { readContract(args: { abi: typeof fameNftMetadataAbi; address: Address; functionName: "tokenURI"; args: [bigint] }): Promise<string> }; tokenId: bigint; fetcher?: typeof fetch }) {
+type AuthoritativeMetadataInput = {
+  client: { readContract(args: { abi: typeof fameNftMetadataAbi; address: Address; functionName: "tokenURI"; args: [bigint] }): Promise<string> };
+  tokenId: bigint;
+  fetcher?: typeof fetch;
+};
+
+async function readAuthoritativeMetadata({ client, tokenId, fetcher = fetch }: AuthoritativeMetadataInput) {
   const tokenUri = await client.readContract({ abi: fameNftMetadataAbi, address: BASE_FAME_NFT_ADDRESS as Address, functionName: "tokenURI", args: [tokenId] });
   const response = await fetcher(tokenUri, { signal: AbortSignal.timeout(METADATA_REQUEST_TIMEOUT_MS) });
   if (!response.ok) throw new Error("Authoritative metadata read failed");
   const value: unknown = await response.json();
   if (!value || typeof value !== "object") throw new Error("Authoritative metadata is malformed");
-  const metadata = value as Record<string, unknown>;
+  return value as Record<string, unknown>;
+}
+
+export async function authoritativeMetadata(input: AuthoritativeMetadataInput) {
+  const metadata = await readAuthoritativeMetadata(input);
   if (typeof metadata.name !== "string" || typeof metadata.description !== "string" || typeof metadata.image !== "string") throw new Error("Authoritative metadata is incomparable");
   return { name: metadata.name, description: metadata.description, image: metadata.image };
+}
+
+export async function authoritativeImage(input: AuthoritativeMetadataInput) {
+  const metadata = await readAuthoritativeMetadata(input);
+  if (typeof metadata.image !== "string" || metadata.image.trim().length === 0) throw new Error("Authoritative metadata image is malformed");
+  return metadata.image;
 }
 
 export function purchaseEmbed(purchase: PurchaseNotification, recipientDisplayName: string, imageUrl: string) {

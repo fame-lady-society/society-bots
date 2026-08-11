@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, jest } from "@jest/globals";
 import { ContractFunctionExecutionError, ContractFunctionRevertedError, encodeAbiParameters, encodeEventTopics, parseAbiParameters, zeroAddress, type Abi } from "viem";
 import { BASE_FAME_CHECKOUT_ADDRESS, BASE_FAME_NFT_ADDRESS, BASE_UNIVERSAL_MARKETPLACE_ADDRESS } from "@/constants.ts";
-import { artworkPurchasedEvent, checkoutSettledEvent, ERC721TransferEventAbi } from "@/events.ts";
+import { artworkPurchasedEvent, checkoutSettledEvent, ERC721TransferEventAbi, inventoryBatchDepositedEvent, inventoryDepositedEvent } from "@/events.ts";
 import type { MetadataRefreshCheckpointId, MetadataRefreshStore } from "./dynamodb.ts";
 import { runMetadataRefreshIndexer } from "./indexer.ts";
 import { BASE_CHAIN_ID, type MetadataRefreshJob } from "./types.ts";
@@ -14,6 +14,7 @@ const finalOwner = "0x0000000000000000000000000000000000000003" as const;
 const transactionHash = `0x${"11".repeat(32)}` as const;
 const METADATA_CHECKPOINT: MetadataRefreshCheckpointId = "base-metadata-update";
 const PURCHASE_CHECKPOINT: MetadataRefreshCheckpointId = "base-marketplace-purchase";
+const STAKE_CHECKPOINT: MetadataRefreshCheckpointId = "base-marketplace-stake";
 
 type Command = { constructor: { name: string }; input: Record<string, unknown> };
 type Publish = jest.Mock<(input: { Message: string; TopicArn: string }) => Promise<{ MessageId: string }>>;
@@ -80,6 +81,14 @@ class InMemoryMetadataRefreshStore {
     return this.items.get(`discord#${transactionHash}|log#7`)?.skipReason;
   }
 
+  stakeNotificationState(hash: `0x${string}` = transactionHash) {
+    return this.items.get(`discord#stake#${BASE_CHAIN_ID}#${BASE_UNIVERSAL_MARKETPLACE_ADDRESS.toLowerCase()}#${hash}|notification`)?.state;
+  }
+
+  stakeNotificationSkipReason(hash: `0x${string}` = transactionHash) {
+    return this.items.get(`discord#stake#${BASE_CHAIN_ID}#${BASE_UNIVERSAL_MARKETPLACE_ADDRESS.toLowerCase()}#${hash}|notification`)?.skipReason;
+  }
+
   acceptedJobCount() {
     return [...this.items.values()].filter((item) => item.state === "accepted").length;
   }
@@ -129,6 +138,38 @@ function purchaseLog({ blockNumber = START_BLOCK, logIndex = 7, hash = transacti
   return { transactionHash: hash, logIndex, blockNumber };
 }
 
+function stakeEventLog(tokenIds: readonly bigint[], logIndex: number, eventProvider = buyer, providerUnits = BigInt(tokenIds.length)) {
+  if (tokenIds.length === 1) {
+    return {
+      address: BASE_UNIVERSAL_MARKETPLACE_ADDRESS,
+      logIndex,
+      topics: encodeEventTopics({ abi: [inventoryDepositedEvent], eventName: "InventoryDeposited", args: { provider: eventProvider, tokenId: tokenIds[0] } }),
+      data: encodeAbiParameters(parseAbiParameters("uint256 providerUnits"), [providerUnits]),
+    };
+  }
+  return {
+    address: BASE_UNIVERSAL_MARKETPLACE_ADDRESS,
+    logIndex,
+    topics: encodeEventTopics({ abi: [inventoryBatchDepositedEvent], eventName: "InventoryBatchDeposited", args: { provider: eventProvider } }),
+    data: encodeAbiParameters(parseAbiParameters("uint256[] tokenIds, uint256 providerUnits"), [tokenIds, providerUnits]),
+  };
+}
+
+function stakeReceipt({ hash = transactionHash, groups = [[42n]] as readonly (readonly bigint[])[] } = {}) {
+  let providerUnits = 0n;
+  return {
+    transactionHash: hash,
+    logs: groups.map((tokenIds, index) => {
+      providerUnits += BigInt(tokenIds.length);
+      return stakeEventLog(tokenIds, index + 1, buyer, providerUnits);
+    }),
+  };
+}
+
+function stakeLog({ blockNumber = START_BLOCK, logIndex = 7, hash = transactionHash }: { blockNumber?: bigint; logIndex?: number; hash?: `0x${string}` } = {}) {
+  return { transactionHash: hash, logIndex, blockNumber };
+}
+
 function metadataLog(index: number) {
   return {
     transactionHash: `0x${(index + 1).toString(16).padStart(64, "0")}`,
@@ -152,7 +193,9 @@ function dependencies({
   store,
   metadataLogs = [],
   purchases = [],
+  stakes = [],
   receipt = purchaseReceipt(),
+  receipts = new Map<`0x${string}`, { transactionHash: `0x${string}`; logs: readonly unknown[] }>(),
   head = START_BLOCK + 8n,
   ensName = "holder.eth",
   publish = jest.fn<(input: { Message: string; TopicArn: string }) => Promise<{ MessageId: string }>>(async () => ({ MessageId: "message-id" })),
@@ -163,7 +206,9 @@ function dependencies({
   store: InMemoryMetadataRefreshStore;
   metadataLogs?: ReturnType<typeof metadataLog>[];
   purchases?: ReturnType<typeof purchaseLog>[];
-  receipt?: ReturnType<typeof purchaseReceipt>;
+  stakes?: ReturnType<typeof stakeLog>[];
+  receipt?: { transactionHash: `0x${string}`; logs: readonly unknown[] };
+  receipts?: Map<`0x${string}`, { transactionHash: `0x${string}`; logs: readonly unknown[] }>;
   head?: bigint;
   ensName?: string | Error | null;
   publish?: Publish;
@@ -171,8 +216,10 @@ function dependencies({
   remainingTimeInMillis?: () => number;
   readContract?: (input: { abi: Abi; address: string; functionName: string; args: [bigint] }) => Promise<unknown>;
 }) {
-  const getLogs = jest.fn(async ({ address, fromBlock, toBlock }: { address: string; fromBlock: bigint; toBlock: bigint }) => {
-    const logs = address.toLowerCase() === BASE_FAME_NFT_ADDRESS.toLowerCase() ? metadataLogs : purchases;
+  const getLogs = jest.fn(async ({ address, events, fromBlock, toBlock }: { address: string; events?: readonly unknown[]; fromBlock: bigint; toBlock: bigint }) => {
+    const logs = address.toLowerCase() === BASE_FAME_NFT_ADDRESS.toLowerCase()
+      ? metadataLogs
+      : events ? stakes : purchases;
     return logs.filter((log) => log.blockNumber >= fromBlock && log.blockNumber <= toBlock);
   });
   const getEnsName = jest.fn(async () => {
@@ -186,12 +233,13 @@ function dependencies({
     }
     return new Response(JSON.stringify({ nft: { name: "FAME", description: "Society", image_url: "https://gateway.irys.xyz/current-art" } }), { status: 200 });
   };
+  const getBlockNumber = jest.fn(async () => head);
   return {
     dependencies: {
       client: {
-        getBlockNumber: jest.fn(async () => head),
+        getBlockNumber,
         getLogs,
-        getTransactionReceipt: jest.fn(async ({ hash }: { hash: `0x${string}` }) => ({ ...receipt, transactionHash: hash })),
+        getTransactionReceipt: jest.fn(async ({ hash }: { hash: `0x${string}` }) => receipts.get(hash) ?? { ...receipt, transactionHash: hash }),
         readContract: jest.fn(readContract ?? (async ({ args }: { args: [bigint] }) => `https://metadata.example/${args[0].toString()}`)),
       },
       ensClient: { getEnsName },
@@ -201,6 +249,7 @@ function dependencies({
       remainingTimeInMillis,
     },
     getEnsName,
+    getBlockNumber,
     publish,
   };
 }
@@ -221,6 +270,273 @@ describe("metadata refresh indexer lifecycle", () => {
 
     expect(store.checkpoint()).toEqual({ nextBlock: Number(START_BLOCK + 1n), nextLogIndex: 0 });
     expect(store.checkpoint(PURCHASE_CHECKPOINT)).toEqual({ nextBlock: Number(START_BLOCK + 1n), nextLogIndex: 0 });
+    expect(store.checkpoint(STAKE_CHECKPOINT)).toEqual({ nextBlock: Number(START_BLOCK + 1n), nextLogIndex: 0 });
+  });
+
+  it("activates stake alerts without history while retaining deposits that are not yet finalized", async () => {
+    const store = new InMemoryMetadataRefreshStore();
+    const historicHash = `0x${"22".repeat(32)}` as const;
+    const newHash = `0x${"33".repeat(32)}` as const;
+    const setup = dependencies({
+      store,
+      stakes: [
+        stakeLog({ blockNumber: START_BLOCK, hash: historicHash }),
+        stakeLog({ blockNumber: START_BLOCK + 1n, hash: newHash }),
+      ],
+      receipts: new Map([[newHash, stakeReceipt({ hash: newHash, groups: [[43n]] })]]),
+    });
+    setup.getBlockNumber
+      .mockResolvedValueOnce(START_BLOCK + 8n)
+      .mockResolvedValueOnce(START_BLOCK + 9n);
+
+    await runMetadataRefreshIndexer(setup.dependencies as never);
+    expect(setup.publish).not.toHaveBeenCalled();
+    expect(store.checkpoint(STAKE_CHECKPOINT)).toEqual({ nextBlock: Number(START_BLOCK + 1n), nextLogIndex: 0 });
+
+    await runMetadataRefreshIndexer(setup.dependencies as never);
+    expect(setup.publish).toHaveBeenCalledTimes(1);
+    const message = JSON.parse(String(setup.publish.mock.calls[0][0].Message));
+    expect(message.message.embeds[0].fields).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "staked NFTs", value: "#43" }),
+    ]));
+    expect(store.stakeNotificationState(newHash)).toBe("published");
+  });
+
+  it("publishes one transaction summary for mixed stake events and skips replay", async () => {
+    const store = new InMemoryMetadataRefreshStore();
+    store.setCheckpoint(START_BLOCK, STAKE_CHECKPOINT);
+    const receipt = stakeReceipt({ groups: [[42n], [43n, 44n]] });
+    const setup = dependencies({
+      store,
+      stakes: [stakeLog({ logIndex: 1 }), stakeLog({ logIndex: 2 })],
+      receipt,
+      ensName: "staker.eth",
+    });
+
+    await runMetadataRefreshIndexer(setup.dependencies as never);
+    store.setCheckpoint(START_BLOCK, STAKE_CHECKPOINT);
+    await runMetadataRefreshIndexer(setup.dependencies as never);
+
+    expect(setup.publish).toHaveBeenCalledTimes(1);
+    expect(setup.getEnsName).toHaveBeenCalledWith({ address: buyer });
+    const message = JSON.parse(String(setup.publish.mock.calls[0][0].Message));
+    expect(message.message.embeds[0]).toMatchObject({
+      title: "$FAME Society Staked",
+      image: { url: "https://gateway.irys.xyz/current-art" },
+      fields: expect.arrayContaining([
+        expect.objectContaining({ name: "staked by", value: "staker.eth" }),
+        expect.objectContaining({ name: "featured artwork", value: "FAME Society #42" }),
+        expect.objectContaining({ name: "staked NFTs", value: "#42, #43, #44" }),
+      ]),
+    });
+    expect(store.stakeNotificationState()).toBe("published");
+  });
+
+  it("keeps a failed stake publication pending until retry succeeds", async () => {
+    const store = new InMemoryMetadataRefreshStore();
+    store.setCheckpoint(START_BLOCK, STAKE_CHECKPOINT);
+    const publish = jest.fn<(input: { Message: string; TopicArn: string }) => Promise<{ MessageId: string }>>()
+      .mockRejectedValueOnce(new Error("SNS unavailable"))
+      .mockResolvedValueOnce({ MessageId: "message-id" });
+    const setup = dependencies({ store, stakes: [stakeLog()], receipt: stakeReceipt(), publish });
+
+    await expect(runMetadataRefreshIndexer(setup.dependencies as never)).rejects.toThrow("SNS unavailable");
+    expect(store.stakeNotificationState()).toBe("pending");
+    expect(store.checkpoint(STAKE_CHECKPOINT)).toEqual({ nextBlock: Number(START_BLOCK), nextLogIndex: 0 });
+
+    await expect(runMetadataRefreshIndexer(setup.dependencies as never)).resolves.toBeUndefined();
+    expect(publish).toHaveBeenCalledTimes(2);
+    expect(store.stakeNotificationState()).toBe("published");
+    expect(store.checkpoint(STAKE_CHECKPOINT)).toEqual({ nextBlock: Number(START_BLOCK + 1n), nextLogIndex: 0 });
+  });
+
+  it("holds a stake pending for transient artwork failures", async () => {
+    const store = new InMemoryMetadataRefreshStore();
+    store.setCheckpoint(START_BLOCK, STAKE_CHECKPOINT);
+    const fetcher = jest.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ image: "https://gateway.irys.xyz/current-art" }), { status: 200 }));
+    const setup = dependencies({ store, stakes: [stakeLog()], receipt: stakeReceipt(), fetcher });
+
+    await expect(runMetadataRefreshIndexer(setup.dependencies as never)).rejects.toThrow("Authoritative metadata read failed");
+    expect(store.stakeNotificationState()).toBe("pending");
+    expect(store.checkpoint(STAKE_CHECKPOINT)).toEqual({ nextBlock: Number(START_BLOCK), nextLogIndex: 0 });
+
+    await expect(runMetadataRefreshIndexer(setup.dependencies as never)).resolves.toBeUndefined();
+    expect(store.stakeNotificationState()).toBe("published");
+  });
+
+  it("holds a stake pending when authoritative metadata has no image", async () => {
+    const store = new InMemoryMetadataRefreshStore();
+    store.setCheckpoint(START_BLOCK, STAKE_CHECKPOINT);
+    const fetcher: typeof fetch = async () => new Response(JSON.stringify({ name: "FAME", description: "Society" }), { status: 200 });
+    const setup = dependencies({ store, stakes: [stakeLog()], receipt: stakeReceipt(), fetcher });
+
+    await expect(runMetadataRefreshIndexer(setup.dependencies as never)).rejects.toThrow("Authoritative metadata image is malformed");
+
+    expect(setup.publish).not.toHaveBeenCalled();
+    expect(store.stakeNotificationState()).toBe("pending");
+    expect(store.checkpoint(STAKE_CHECKPOINT)).toEqual({ nextBlock: Number(START_BLOCK), nextLogIndex: 0 });
+  });
+
+  it("keeps a stake pending and permits at-least-once replay when the publish state write fails", async () => {
+    const store = new InMemoryMetadataRefreshStore();
+    store.setCheckpoint(START_BLOCK, STAKE_CHECKPOINT);
+    const send = store.send.bind(store);
+    let failPublishedWrite = true;
+    jest.spyOn(store, "send").mockImplementation(async (command) => {
+      const values = command.constructor.name === "UpdateCommand" ? recordOf(command.input.ExpressionAttributeValues) : {};
+      if (failPublishedWrite && values[":published"] === "published" && keyOf(command.input.Key).startsWith("discord#stake#")) {
+        failPublishedWrite = false;
+        throw new Error("DynamoDB unavailable");
+      }
+      return send(command);
+    });
+    const setup = dependencies({ store, stakes: [stakeLog()], receipt: stakeReceipt() });
+
+    await expect(runMetadataRefreshIndexer(setup.dependencies as never)).rejects.toThrow("DynamoDB unavailable");
+    expect(store.stakeNotificationState()).toBe("pending");
+    expect(store.checkpoint(STAKE_CHECKPOINT)).toEqual({ nextBlock: Number(START_BLOCK), nextLogIndex: 0 });
+
+    await expect(runMetadataRefreshIndexer(setup.dependencies as never)).resolves.toBeUndefined();
+    expect(setup.publish).toHaveBeenCalledTimes(2);
+    expect(store.stakeNotificationState()).toBe("published");
+  });
+
+  it("terminally skips a stake only when its featured token no longer exists", async () => {
+    const store = new InMemoryMetadataRefreshStore();
+    store.setCheckpoint(START_BLOCK, STAKE_CHECKPOINT);
+    const readContract = jest.fn(async ({ abi, args }: { abi: Abi; args: [bigint] }) => {
+      throw tokenDoesNotExistError(abi, args[0]);
+    });
+    const setup = dependencies({ store, stakes: [stakeLog()], receipt: stakeReceipt(), readContract });
+
+    await expect(runMetadataRefreshIndexer(setup.dependencies as never)).resolves.toBeUndefined();
+
+    expect(setup.publish).not.toHaveBeenCalled();
+    expect(store.stakeNotificationState()).toBe("skipped");
+    expect(store.stakeNotificationSkipReason()).toBe("token_not_found");
+    expect(store.checkpoint(STAKE_CHECKPOINT)).toEqual({ nextBlock: Number(START_BLOCK + 1n), nextLogIndex: 0 });
+  });
+
+  it("holds the stake checkpoint when the Lambda lacks notification headroom", async () => {
+    const store = new InMemoryMetadataRefreshStore();
+    store.setCheckpoint(START_BLOCK, STAKE_CHECKPOINT);
+    const setup = dependencies({ store, stakes: [stakeLog()], receipt: stakeReceipt(), remainingTimeInMillis: () => 9_000 });
+
+    await expect(runMetadataRefreshIndexer(setup.dependencies as never)).rejects.toThrow("Insufficient Lambda time remains for another stake notification");
+
+    expect(setup.publish).not.toHaveBeenCalled();
+    expect(store.checkpoint(STAKE_CHECKPOINT)).toEqual({ nextBlock: Number(START_BLOCK), nextLogIndex: 0 });
+  });
+
+  it("deduplicates one staking transaction across the source-event cursor boundary", async () => {
+    const store = new InMemoryMetadataRefreshStore();
+    store.setCheckpoint(START_BLOCK, STAKE_CHECKPOINT);
+    const stakes = Array.from({ length: 21 }, (_, logIndex) => stakeLog({ logIndex }));
+    const groups = Array.from({ length: 21 }, (_, index) => [BigInt(index + 1)]);
+    const setup = dependencies({ store, stakes, receipt: stakeReceipt({ groups }) });
+
+    await runMetadataRefreshIndexer(setup.dependencies as never);
+    expect(setup.publish).toHaveBeenCalledTimes(1);
+    expect(store.checkpoint(STAKE_CHECKPOINT)).toEqual({ nextBlock: Number(START_BLOCK), nextLogIndex: 20 });
+
+    await runMetadataRefreshIndexer(setup.dependencies as never);
+    expect(setup.publish).toHaveBeenCalledTimes(1);
+    expect(store.checkpoint(STAKE_CHECKPOINT)).toEqual({ nextBlock: Number(START_BLOCK + 1n), nextLogIndex: 0 });
+  });
+
+  it("falls back to the provider address when staking ENS resolution fails", async () => {
+    const store = new InMemoryMetadataRefreshStore();
+    store.setCheckpoint(START_BLOCK, STAKE_CHECKPOINT);
+    const setup = dependencies({ store, stakes: [stakeLog()], receipt: stakeReceipt(), ensName: new Error("mainnet unavailable") });
+
+    await runMetadataRefreshIndexer(setup.dependencies as never);
+
+    const message = JSON.parse(String(setup.publish.mock.calls[0][0].Message));
+    expect(message.message.embeds[0].fields).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "staked by", value: buyer }),
+    ]));
+  });
+
+  it("attempts staking and metadata after a purchase notification fails", async () => {
+    const store = new InMemoryMetadataRefreshStore();
+    store.setCheckpoint(START_BLOCK, PURCHASE_CHECKPOINT);
+    store.setCheckpoint(START_BLOCK, STAKE_CHECKPOINT);
+    store.setCheckpoint(START_BLOCK, METADATA_CHECKPOINT);
+    const purchaseHash = `0x${"44".repeat(32)}` as const;
+    const stakeHash = `0x${"55".repeat(32)}` as const;
+    const publish = jest.fn<(input: { Message: string; TopicArn: string }) => Promise<{ MessageId: string }>>()
+      .mockRejectedValueOnce(new Error("SNS unavailable"))
+      .mockResolvedValueOnce({ MessageId: "stake-message" });
+    const setup = dependencies({
+      store,
+      purchases: [purchaseLog({ hash: purchaseHash })],
+      stakes: [stakeLog({ hash: stakeHash })],
+      metadataLogs: [metadataLog(0)],
+      receipts: new Map([
+        [purchaseHash, { ...purchaseReceipt(), transactionHash: purchaseHash }],
+        [stakeHash, stakeReceipt({ hash: stakeHash })],
+      ]),
+      publish,
+    });
+
+    await expect(runMetadataRefreshIndexer(setup.dependencies as never)).rejects.toThrow("SNS unavailable");
+
+    expect(publish).toHaveBeenCalledTimes(2);
+    expect(store.checkpoint(PURCHASE_CHECKPOINT)).toEqual({ nextBlock: Number(START_BLOCK), nextLogIndex: 0 });
+    expect(store.checkpoint(STAKE_CHECKPOINT)).toEqual({ nextBlock: Number(START_BLOCK + 1n), nextLogIndex: 0 });
+    expect(store.stakeNotificationState(stakeHash)).toBe("published");
+    expect(store.acceptedJobCount()).toBe(1);
+  });
+
+  it("attempts metadata after staking artwork fails", async () => {
+    const store = new InMemoryMetadataRefreshStore();
+    store.setCheckpoint(START_BLOCK, STAKE_CHECKPOINT);
+    store.setCheckpoint(START_BLOCK, METADATA_CHECKPOINT);
+    const setup = dependencies({
+      store,
+      stakes: [stakeLog()],
+      receipt: stakeReceipt(),
+      metadataLogs: [metadataLog(0)],
+      readContract: async ({ args }) => {
+        if (args[0] === 42n) throw new Error("Stake RPC unavailable");
+        return `https://metadata.example/${args[0].toString()}`;
+      },
+    });
+
+    await expect(runMetadataRefreshIndexer(setup.dependencies as never)).rejects.toThrow("Stake RPC unavailable");
+
+    expect(store.stakeNotificationState()).toBe("pending");
+    expect(store.checkpoint(STAKE_CHECKPOINT)).toEqual({ nextBlock: Number(START_BLOCK), nextLogIndex: 0 });
+    expect(store.checkpoint(METADATA_CHECKPOINT)).toEqual({ nextBlock: Number(START_BLOCK + 1n), nextLogIndex: 0 });
+    expect(store.acceptedJobCount()).toBe(1);
+  });
+
+  it("keeps a metadata failure independent from a successful stake notification", async () => {
+    const store = new InMemoryMetadataRefreshStore();
+    store.setCheckpoint(START_BLOCK, STAKE_CHECKPOINT);
+    store.setCheckpoint(START_BLOCK, METADATA_CHECKPOINT);
+    const fetcher: typeof fetch = async (input) => {
+      if (String(input).startsWith("https://metadata.example/")) {
+        return new Response(JSON.stringify({ name: "FAME", description: "Society", image: "https://gateway.irys.xyz/current-art" }), { status: 200 });
+      }
+      return new Response(null, { status: 401 });
+    };
+    const setup = dependencies({
+      store,
+      stakes: [stakeLog()],
+      receipt: stakeReceipt(),
+      metadataLogs: [metadataLog(0)],
+      fetcher,
+    });
+
+    await expect(runMetadataRefreshIndexer(setup.dependencies as never)).rejects.toThrow("OpenSea metadata read failed");
+
+    expect(setup.publish).toHaveBeenCalledTimes(1);
+    expect(store.stakeNotificationState()).toBe("published");
+    expect(store.checkpoint(STAKE_CHECKPOINT)).toEqual({ nextBlock: Number(START_BLOCK + 1n), nextLogIndex: 0 });
+    expect(store.checkpoint(METADATA_CHECKPOINT)).toEqual({ nextBlock: Number(START_BLOCK), nextLogIndex: 0 });
   });
 
   it("publishes the final forwarded owner once and skips a delivered replay", async () => {

@@ -291,6 +291,28 @@ export const artworkPurchasedEvent = {
   ],
 } as const;
 
+export const inventoryDepositedEvent = {
+  type: "event",
+  anonymous: false,
+  name: "InventoryDeposited",
+  inputs: [
+    { name: "provider", type: "address", indexed: true },
+    { name: "tokenId", type: "uint256", indexed: true },
+    { name: "providerUnits", type: "uint256", indexed: false },
+  ],
+} as const;
+
+export const inventoryBatchDepositedEvent = {
+  type: "event",
+  anonymous: false,
+  name: "InventoryBatchDeposited",
+  inputs: [
+    { name: "provider", type: "address", indexed: true },
+    { name: "tokenIds", type: "uint256[]", indexed: false },
+    { name: "providerUnits", type: "uint256", indexed: false },
+  ],
+} as const;
+
 export const checkoutSettledEvent = {
   type: "event",
   anonymous: false,

@@ -1,6 +1,7 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
-import type { MetadataRefreshJob } from "./types.ts";
+import { BASE_UNIVERSAL_MARKETPLACE_ADDRESS } from "@/constants.ts";
+import { BASE_CHAIN_ID, type MetadataRefreshJob } from "./types.ts";
 
 export const defaultDb = DynamoDBDocumentClient.from(new DynamoDBClient({ region: process.env.DYNAMODB_REGION }));
 
@@ -12,7 +13,7 @@ function tableName() {
 
 export type MetadataRefreshStore = Pick<DynamoDBDocumentClient, "send">;
 export type MetadataRefreshCheckpoint = { nextBlock: bigint; nextLogIndex: number };
-export type MetadataRefreshCheckpointId = "base-metadata-update" | "base-marketplace-purchase";
+export type MetadataRefreshCheckpointId = "base-metadata-update" | "base-marketplace-purchase" | "base-marketplace-stake";
 
 export async function getCheckpoint(store: MetadataRefreshStore = defaultDb, checkpointId: MetadataRefreshCheckpointId = "base-metadata-update") {
   const result = await store.send(new GetCommand({ TableName: tableName(), Key: { pk: "checkpoint", sk: checkpointId } }));
@@ -45,8 +46,9 @@ function purchaseNotificationKey(transactionHash: `0x${string}`, logIndex: numbe
   return { pk: `discord#${transactionHash}`, sk: `log#${logIndex}` };
 }
 
-export async function shouldPublishPurchaseNotification(transactionHash: `0x${string}`, logIndex: number, store: MetadataRefreshStore = defaultDb) {
-  const key = purchaseNotificationKey(transactionHash, logIndex);
+type NotificationKey = { pk: string; sk: string };
+
+async function shouldPublishNotification(key: NotificationKey, malformedStateMessage: string, store: MetadataRefreshStore) {
   try {
     await store.send(new PutCommand({
       TableName: tableName(),
@@ -60,13 +62,13 @@ export async function shouldPublishPurchaseNotification(transactionHash: `0x${st
   const result = await store.send(new GetCommand({ TableName: tableName(), Key: key }));
   if (result.Item?.state === "published" || result.Item?.state === "skipped") return false;
   if (result.Item?.state === "pending") return true;
-  throw new Error("Purchase notification state is malformed");
+  throw new Error(malformedStateMessage);
 }
 
-export async function markPurchaseNotificationPublished(transactionHash: `0x${string}`, logIndex: number, store: MetadataRefreshStore = defaultDb) {
+async function markNotificationPublished(key: NotificationKey, store: MetadataRefreshStore) {
   await store.send(new UpdateCommand({
     TableName: tableName(),
-    Key: purchaseNotificationKey(transactionHash, logIndex),
+    Key: key,
     UpdateExpression: "SET #state = :published",
     ConditionExpression: "#state = :pending",
     ExpressionAttributeNames: { "#state": "state" },
@@ -74,15 +76,46 @@ export async function markPurchaseNotificationPublished(transactionHash: `0x${st
   }));
 }
 
-export async function markPurchaseNotificationSkipped(transactionHash: `0x${string}`, logIndex: number, store: MetadataRefreshStore = defaultDb) {
+async function markNotificationSkipped(key: NotificationKey, store: MetadataRefreshStore) {
   await store.send(new UpdateCommand({
     TableName: tableName(),
-    Key: purchaseNotificationKey(transactionHash, logIndex),
+    Key: key,
     UpdateExpression: "SET #state = :skipped, skipReason = :reason",
     ConditionExpression: "#state = :pending",
     ExpressionAttributeNames: { "#state": "state" },
     ExpressionAttributeValues: { ":pending": "pending", ":skipped": "skipped", ":reason": "token_not_found" },
   }));
+}
+
+export function shouldPublishPurchaseNotification(transactionHash: `0x${string}`, logIndex: number, store: MetadataRefreshStore = defaultDb) {
+  return shouldPublishNotification(purchaseNotificationKey(transactionHash, logIndex), "Purchase notification state is malformed", store);
+}
+
+export function markPurchaseNotificationPublished(transactionHash: `0x${string}`, logIndex: number, store: MetadataRefreshStore = defaultDb) {
+  return markNotificationPublished(purchaseNotificationKey(transactionHash, logIndex), store);
+}
+
+export function markPurchaseNotificationSkipped(transactionHash: `0x${string}`, logIndex: number, store: MetadataRefreshStore = defaultDb) {
+  return markNotificationSkipped(purchaseNotificationKey(transactionHash, logIndex), store);
+}
+
+function stakeNotificationKey(transactionHash: `0x${string}`) {
+  return {
+    pk: `discord#stake#${BASE_CHAIN_ID}#${BASE_UNIVERSAL_MARKETPLACE_ADDRESS.toLowerCase()}#${transactionHash}`,
+    sk: "notification",
+  };
+}
+
+export function shouldPublishStakeNotification(transactionHash: `0x${string}`, store: MetadataRefreshStore = defaultDb) {
+  return shouldPublishNotification(stakeNotificationKey(transactionHash), "Stake notification state is malformed", store);
+}
+
+export function markStakeNotificationPublished(transactionHash: `0x${string}`, store: MetadataRefreshStore = defaultDb) {
+  return markNotificationPublished(stakeNotificationKey(transactionHash), store);
+}
+
+export function markStakeNotificationSkipped(transactionHash: `0x${string}`, store: MetadataRefreshStore = defaultDb) {
+  return markNotificationSkipped(stakeNotificationKey(transactionHash), store);
 }
 
 export async function markAccepted(job: MetadataRefreshJob, store: MetadataRefreshStore = defaultDb) {

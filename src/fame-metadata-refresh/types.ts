@@ -20,6 +20,13 @@ export type PurchaseNotification = {
   payment: { asset: "ETH" | "FAME" | "USDC" | "WETH"; amount: bigint; decimals: number };
 };
 
+export type StakeNotification = {
+  transactionHash: Hash;
+  provider: Address;
+  tokenIds: readonly bigint[];
+  providerUnits: bigint;
+};
+
 export type MetadataDocument = {
   name: string;
   description: string;

@@ -5,9 +5,10 @@ import { BASE_FAME_NFT_ADDRESS, BASE_UNIVERSAL_MARKETPLACE_ADDRESS } from "@/con
 import { artworkPurchasedEvent, metadataEvent } from "@/events.ts";
 import { sendDiscordMessage } from "@/discord/pubsub/send.ts";
 import { createLogger } from "@/utils/logging.ts";
-import { advanceCheckpoint, getCheckpoint, initializeCheckpoint, markAccepted, markInFlight, markMissingTokenSkipped, markPurchaseNotificationPublished, markPurchaseNotificationSkipped, putJob, shouldPublishPurchaseNotification, type MetadataRefreshCheckpoint, type MetadataRefreshCheckpointId, type MetadataRefreshStore } from "./dynamodb.ts";
+import { advanceCheckpoint, getCheckpoint, initializeCheckpoint, markAccepted, markInFlight, markMissingTokenSkipped, markPurchaseNotificationPublished, markPurchaseNotificationSkipped, markStakeNotificationPublished, markStakeNotificationSkipped, putJob, shouldPublishPurchaseNotification, shouldPublishStakeNotification, type MetadataRefreshCheckpoint, type MetadataRefreshCheckpointId, type MetadataRefreshStore } from "./dynamodb.ts";
 import { isRetryableOpenSeaStatus, metadataMatches, OpenSeaResponseError, readOpenSeaMetadata, refreshOpenSeaMetadata } from "./opensea.ts";
-import { authoritativeMetadata, isMissingFameNft, projectPurchaseNotification, purchaseEmbed } from "./purchase.ts";
+import { authoritativeImage, authoritativeMetadata, isMissingFameNft, projectPurchaseNotification, purchaseEmbed } from "./purchase.ts";
+import { marketplaceStakeEvents, projectStakeNotification, stakeEmbed } from "./stake.ts";
 import { BASE_CHAIN_ID, type MetadataRefreshJob } from "./types.ts";
 
 const logger = createLogger({ name: "fame-metadata-refresh" });
@@ -15,11 +16,12 @@ const FINALITY_BLOCKS = 8n;
 const MAX_BLOCKS = 1_000n;
 const MAX_EVENTS = 20;
 const MAX_RETRY_DELAY_MS = 1_000;
-const MINIMUM_PURCHASE_TIME_MS = 10_000;
+const MINIMUM_NOTIFICATION_TIME_MS = 10_000;
 const MINIMUM_METADATA_JOB_TIME_MS = 45_000;
 const INITIAL_CHECKPOINT = 49_729_692n;
 const METADATA_CHECKPOINT: MetadataRefreshCheckpointId = "base-metadata-update";
 const PURCHASE_CHECKPOINT: MetadataRefreshCheckpointId = "base-marketplace-purchase";
+const STAKE_CHECKPOINT: MetadataRefreshCheckpointId = "base-marketplace-stake";
 
 function startBlock() {
   return INITIAL_CHECKPOINT;
@@ -65,18 +67,38 @@ export type IndexerDependencies = {
   remainingTimeInMillis?: () => number;
 };
 
+type EnsFailure = {
+  event: "marketplace_purchase_ens_lookup_failed" | "marketplace_stake_ens_lookup_failed";
+  addressField: "recipient" | "provider";
+  message: string;
+};
+
+async function resolveDisplayName(address: Address, dependencies: IndexerDependencies, failure: EnsFailure, cache?: Map<string, string>) {
+  const cacheKey = address.toLowerCase();
+  const cached = cache?.get(cacheKey);
+  if (cached !== undefined) return cached;
+  try {
+    const displayName = await dependencies.ensClient.getEnsName({ address }) ?? address;
+    cache?.set(cacheKey, displayName);
+    return displayName;
+  } catch (error: unknown) {
+    logger.warn({ event: failure.event, [failure.addressField]: address, error }, failure.message);
+    return address;
+  }
+}
+
 type IndexedLog = { blockNumber: bigint; logIndex: number };
 
-async function loadCheckpoint(checkpointId: MetadataRefreshCheckpointId, store: MetadataRefreshStore) {
+async function loadCheckpoint(checkpointId: MetadataRefreshCheckpointId, store: MetadataRefreshStore, initialBlock = startBlock()) {
   let checkpoint = await getCheckpoint(store, checkpointId);
   if (checkpoint === null) {
     try {
-      await initializeCheckpoint(startBlock(), store, checkpointId);
-      checkpoint = { nextBlock: startBlock(), nextLogIndex: 0 };
+      await initializeCheckpoint(initialBlock, store, checkpointId);
+      checkpoint = { nextBlock: initialBlock, nextLogIndex: 0 };
     } catch (error: unknown) {
       if ((error as { name?: string }).name !== "ConditionalCheckFailedException") throw error;
       checkpoint = await getCheckpoint(store, checkpointId);
-      if (checkpoint === null) throw new Error("Metadata refresh checkpoint initialization raced without a checkpoint");
+      if (checkpoint === null) throw new Error("Indexer checkpoint initialization raced without a checkpoint");
     }
   }
   return checkpoint;
@@ -129,7 +151,7 @@ async function processPurchaseWindow(dependencies: IndexerDependencies, checkpoi
     let hasFailure = false;
     for (const purchaseLog of window.logs) {
       const remainingTimeMs = dependencies.remainingTimeInMillis?.();
-      if (remainingTimeMs !== undefined && remainingTimeMs < MINIMUM_PURCHASE_TIME_MS) {
+      if (remainingTimeMs !== undefined && remainingTimeMs < MINIMUM_NOTIFICATION_TIME_MS) {
         firstFailure = new Error("Insufficient Lambda time remains for another purchase notification");
         hasFailure = true;
         break;
@@ -146,12 +168,11 @@ async function processPurchaseWindow(dependencies: IndexerDependencies, checkpoi
         try {
           const [metadata, recipientDisplayName] = await Promise.all([
             authoritativeMetadata({ client: dependencies.client, tokenId: notification.tokenId, fetcher: dependencies.fetcher }),
-            dependencies.ensClient.getEnsName({ address: notification.recipient })
-              .then((name) => name ?? notification.recipient)
-              .catch((error) => {
-                logger.warn({ event: "marketplace_purchase_ens_lookup_failed", recipient: notification.recipient, error }, "Failed to fetch ENS name");
-                return notification.recipient;
-              }),
+            resolveDisplayName(notification.recipient, dependencies, {
+              event: "marketplace_purchase_ens_lookup_failed",
+              addressField: "recipient",
+              message: "Failed to fetch ENS name",
+            }),
           ]);
           await sendDiscordMessage({ topicArn, channelId, message: { embeds: [purchaseEmbed(notification, recipientDisplayName, metadata.image)] }, sns: dependencies.sns });
           await markPurchaseNotificationPublished(receipt.transactionHash, logIndex, dependencies.store);
@@ -170,6 +191,84 @@ async function processPurchaseWindow(dependencies: IndexerDependencies, checkpoi
   }
   await advanceCheckpoint(checkpoint, window.nextCheckpoint, dependencies.store, PURCHASE_CHECKPOINT);
   logger.info({ event: "marketplace_purchase_checkpoint_advanced", nextBlock: window.nextCheckpoint.nextBlock.toString(), nextLogIndex: window.nextCheckpoint.nextLogIndex }, "marketplace purchase checkpoint advanced");
+}
+
+async function processStakeTransaction(
+  transactionHash: `0x${string}`,
+  topicArn: string,
+  channelId: string,
+  ensCache: Map<string, string>,
+  dependencies: IndexerDependencies,
+) {
+  if (!(await shouldPublishStakeNotification(transactionHash, dependencies.store))) return;
+  const receipt = await dependencies.client.getTransactionReceipt({ hash: transactionHash });
+  const notification = projectStakeNotification({ transactionHash: receipt.transactionHash, logs: receipt.logs });
+  if (!notification) throw new Error("Marketplace staking receipt did not contain a canonical staking event");
+  try {
+    const [imageUrl, providerDisplayName] = await Promise.all([
+      authoritativeImage({ client: dependencies.client, tokenId: notification.tokenIds[0], fetcher: dependencies.fetcher }),
+      resolveDisplayName(notification.provider, dependencies, {
+        event: "marketplace_stake_ens_lookup_failed",
+        addressField: "provider",
+        message: "Failed to fetch staking provider ENS name",
+      }, ensCache),
+    ]);
+    await sendDiscordMessage({ topicArn, channelId, message: { embeds: [stakeEmbed(notification, providerDisplayName, imageUrl)] }, sns: dependencies.sns });
+    await markStakeNotificationPublished(transactionHash, dependencies.store);
+  } catch (error: unknown) {
+    if (!isMissingFameNft(error)) throw error;
+    await markStakeNotificationSkipped(transactionHash, dependencies.store);
+    logger.warn({ event: "marketplace_stake_skipped", tokenId: notification.tokenIds[0].toString(), transactionHash, reason: "token_not_found" }, "Marketplace stake notification skipped because its featured token no longer exists");
+  }
+}
+
+async function processStakeWindow(dependencies: IndexerDependencies, checkpoint: MetadataRefreshCheckpoint, finalizedHead: bigint) {
+  const fromBlock = checkpoint.nextBlock;
+  if (fromBlock > finalizedHead) return;
+  const toBlock = toBlockFor(checkpoint, finalizedHead);
+  const logs = await dependencies.client.getLogs({
+    address: BASE_UNIVERSAL_MARKETPLACE_ADDRESS as Address,
+    events: marketplaceStakeEvents,
+    fromBlock,
+    toBlock,
+  });
+  for (const log of logs) {
+    if (typeof log.blockNumber !== "bigint" || typeof log.logIndex !== "number" || typeof log.transactionHash !== "string") {
+      throw new Error("Marketplace staking log is malformed");
+    }
+  }
+  const window = boundedLogs(logs, checkpoint, toBlock);
+  if (window.hasBacklog) {
+    logger.warn({ event: "marketplace_stake_backlog", checkpoint: fromBlock.toString(), processedCount: window.logs.length, nextBlock: window.nextCheckpoint.nextBlock.toString(), nextLogIndex: window.nextCheckpoint.nextLogIndex }, "Marketplace staking backlog was split at an event boundary");
+  }
+  if (window.logs.length > 0) {
+    const topicArn = requiredEnv("DISCORD_MESSAGE_TOPIC_ARN");
+    const channelId = requiredEnv("DISCORD_CHANNEL_ID");
+    const attemptedTransactions = new Set<string>();
+    const ensCache = new Map<string, string>();
+    let firstFailure: unknown;
+    let hasFailure = false;
+    for (const stakeLog of window.logs) {
+      if (attemptedTransactions.has(stakeLog.transactionHash)) continue;
+      attemptedTransactions.add(stakeLog.transactionHash);
+      const remainingTimeMs = dependencies.remainingTimeInMillis?.();
+      if (remainingTimeMs !== undefined && remainingTimeMs < MINIMUM_NOTIFICATION_TIME_MS) {
+        if (!hasFailure) firstFailure = new Error("Insufficient Lambda time remains for another stake notification");
+        hasFailure = true;
+        break;
+      }
+      try {
+        await processStakeTransaction(stakeLog.transactionHash, topicArn, channelId, ensCache, dependencies);
+      } catch (error: unknown) {
+        if (!hasFailure) firstFailure = error;
+        hasFailure = true;
+        logger.error({ event: "marketplace_stake_failed", transactionHash: stakeLog.transactionHash, logIndex: stakeLog.logIndex, error }, "Marketplace stake notification failed");
+      }
+    }
+    if (hasFailure) throw firstFailure;
+  }
+  await advanceCheckpoint(checkpoint, window.nextCheckpoint, dependencies.store, STAKE_CHECKPOINT);
+  logger.info({ event: "marketplace_stake_checkpoint_advanced", nextBlock: window.nextCheckpoint.nextBlock.toString(), nextLogIndex: window.nextCheckpoint.nextLogIndex }, "Marketplace stake checkpoint advanced");
 }
 
 async function processMetadataWindow(dependencies: IndexerDependencies, checkpoint: MetadataRefreshCheckpoint, finalizedHead: bigint) {
@@ -209,18 +308,26 @@ async function processMetadataWindow(dependencies: IndexerDependencies, checkpoi
 export async function runMetadataRefreshIndexer(dependencies: IndexerDependencies) {
   const head = await dependencies.client.getBlockNumber();
   const finalizedHead = head > FINALITY_BLOCKS ? head - FINALITY_BLOCKS : 0n;
-  const purchaseCheckpoint = await loadCheckpoint(PURCHASE_CHECKPOINT, dependencies.store);
-  let purchaseFailure: unknown;
-  let purchaseFailed = false;
+  const failures: unknown[] = [];
   try {
+    const purchaseCheckpoint = await loadCheckpoint(PURCHASE_CHECKPOINT, dependencies.store);
     await processPurchaseWindow(dependencies, purchaseCheckpoint, finalizedHead);
   } catch (error: unknown) {
-    purchaseFailure = error;
-    purchaseFailed = true;
+    failures.push(error);
   }
-  const metadataCheckpoint = await loadCheckpoint(METADATA_CHECKPOINT, dependencies.store);
-  await processMetadataWindow(dependencies, metadataCheckpoint, finalizedHead);
-  if (purchaseFailed) throw purchaseFailure;
+  try {
+    const stakeCheckpoint = await loadCheckpoint(STAKE_CHECKPOINT, dependencies.store, finalizedHead + 1n);
+    await processStakeWindow(dependencies, stakeCheckpoint, finalizedHead);
+  } catch (error: unknown) {
+    failures.push(error);
+  }
+  try {
+    const metadataCheckpoint = await loadCheckpoint(METADATA_CHECKPOINT, dependencies.store);
+    await processMetadataWindow(dependencies, metadataCheckpoint, finalizedHead);
+  } catch (error: unknown) {
+    failures.push(error);
+  }
+  if (failures.length > 0) throw failures[0];
 }
 
 function requiredEnv(name: string) {
