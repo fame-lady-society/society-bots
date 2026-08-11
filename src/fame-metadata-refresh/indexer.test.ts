@@ -15,6 +15,7 @@ const transactionHash = `0x${"11".repeat(32)}` as const;
 const METADATA_CHECKPOINT: MetadataRefreshCheckpointId = "base-metadata-update";
 const PURCHASE_CHECKPOINT: MetadataRefreshCheckpointId = "base-marketplace-purchase";
 const STAKE_CHECKPOINT: MetadataRefreshCheckpointId = "base-marketplace-stake";
+const RETIRED_MARKETPLACE_ADDRESS = "0x54e7E4F2d439Be599706f51068f7EB2ce2D2a27e";
 
 type Command = { constructor: { name: string }; input: Record<string, unknown> };
 type Publish = jest.Mock<(input: { Message: string; TopicArn: string }) => Promise<{ MessageId: string }>>;
@@ -250,6 +251,7 @@ function dependencies({
     },
     getEnsName,
     getBlockNumber,
+    getLogs,
     publish,
   };
 }
@@ -265,12 +267,32 @@ describe("metadata refresh indexer lifecycle", () => {
   it("initializes forward-only at the fixed source block and advances after an empty finalized block", async () => {
     const store = new InMemoryMetadataRefreshStore();
     const setup = dependencies({ store });
+    setup.getBlockNumber
+      .mockResolvedValueOnce(START_BLOCK + 8n)
+      .mockResolvedValueOnce(START_BLOCK + 9n);
 
     await runMetadataRefreshIndexer(setup.dependencies as never);
 
     expect(store.checkpoint()).toEqual({ nextBlock: Number(START_BLOCK + 1n), nextLogIndex: 0 });
     expect(store.checkpoint(PURCHASE_CHECKPOINT)).toEqual({ nextBlock: Number(START_BLOCK + 1n), nextLogIndex: 0 });
     expect(store.checkpoint(STAKE_CHECKPOINT)).toEqual({ nextBlock: Number(START_BLOCK + 1n), nextLogIndex: 0 });
+
+    await runMetadataRefreshIndexer(setup.dependencies as never);
+
+    const scans = setup.getLogs.mock.calls.map(([input]) => ({
+      source: input.events ? "stake" : input.address.toLowerCase() === BASE_FAME_NFT_ADDRESS.toLowerCase() ? "metadata" : "purchase",
+      address: input.address,
+      fromBlock: input.fromBlock,
+      toBlock: input.toBlock,
+    }));
+    expect(scans).toEqual([
+      { source: "purchase", address: BASE_UNIVERSAL_MARKETPLACE_ADDRESS, fromBlock: START_BLOCK, toBlock: START_BLOCK },
+      { source: "metadata", address: BASE_FAME_NFT_ADDRESS, fromBlock: START_BLOCK, toBlock: START_BLOCK },
+      { source: "purchase", address: BASE_UNIVERSAL_MARKETPLACE_ADDRESS, fromBlock: START_BLOCK + 1n, toBlock: START_BLOCK + 1n },
+      { source: "stake", address: BASE_UNIVERSAL_MARKETPLACE_ADDRESS, fromBlock: START_BLOCK + 1n, toBlock: START_BLOCK + 1n },
+      { source: "metadata", address: BASE_FAME_NFT_ADDRESS, fromBlock: START_BLOCK + 1n, toBlock: START_BLOCK + 1n },
+    ]);
+    expect(scans.map(({ address }) => address.toLowerCase())).not.toContain(RETIRED_MARKETPLACE_ADDRESS.toLowerCase());
   });
 
   it("activates stake alerts without history while retaining deposits that are not yet finalized", async () => {

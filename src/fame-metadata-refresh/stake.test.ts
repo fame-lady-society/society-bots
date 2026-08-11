@@ -8,6 +8,7 @@ import { projectStakeNotification, stakeEmbed } from "./stake.ts";
 const transactionHash = `0x${"11".repeat(32)}` as const;
 const provider = "0x0000000000000000000000000000000000000001" as const;
 const otherProvider = "0x0000000000000000000000000000000000000002" as const;
+const RETIRED_MARKETPLACE_ADDRESS = "0x54e7E4F2d439Be599706f51068f7EB2ce2D2a27e";
 
 function singleLog(tokenId: bigint, logIndex = 1, address: string = BASE_UNIVERSAL_MARKETPLACE_ADDRESS, eventProvider: Address = provider, providerUnits = 1n) {
   return {
@@ -50,8 +51,8 @@ describe("marketplace stake projection", () => {
     })).toMatchObject({ tokenIds: [4n, 5n, 8n, 9n], providerUnits: 4n });
   });
 
-  it("ignores lookalike events from another contract", () => {
-    expect(projectStakeNotification({ transactionHash, logs: [singleLog(42n, 1, otherProvider)] as never })).toBeNull();
+  it("ignores events from the retired marketplace", () => {
+    expect(projectStakeNotification({ transactionHash, logs: [singleLog(42n, 1, RETIRED_MARKETPLACE_ADDRESS)] as never })).toBeNull();
   });
 
   it("rejects inconsistent providers", () => {
