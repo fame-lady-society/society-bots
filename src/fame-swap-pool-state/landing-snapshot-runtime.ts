@@ -1,4 +1,9 @@
 import type { Address, ContractFunctionParameters, Hex } from "viem";
+import {
+  BASE_CREATOR_ARTIST_MAGIC_ADDRESS,
+  BASE_FAME_NFT_ADDRESS,
+  BASE_UNIVERSAL_MARKETPLACE_ADDRESS,
+} from "@/constants.ts";
 import { UniswapV2PairReserveAbi } from "@/events.ts";
 import {
   getCanonicalBlockIdentity,
@@ -32,9 +37,9 @@ import {
 } from "./registry/index.ts";
 import type { FamePoolStateIndexerResult } from "./indexer.ts";
 
-const MARKETPLACE = "0x54e7E4F2d439Be599706f51068f7EB2ce2D2a27e" as Address;
-const MIRROR = "0xBB5ED04dD7B207592429eb8d599d103CCad646c4" as Address;
-const CREATOR_MAGIC = "0xC8268c2aa571F3C88044C2959F73DdB8eB9e139F" as Address;
+const MARKETPLACE = BASE_UNIVERSAL_MARKETPLACE_ADDRESS as Address;
+const MIRROR = BASE_FAME_NFT_ADDRESS as Address;
+const CREATOR_MAGIC = BASE_CREATOR_ARTIST_MAGIC_ADDRESS as Address;
 
 const addressAbi = (name: string) =>
   [

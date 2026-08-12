@@ -1,6 +1,11 @@
 import { describe, expect, jest, test } from "@jest/globals";
 import type { Address, Hex } from "viem";
 import {
+  BASE_CREATOR_ARTIST_MAGIC_ADDRESS,
+  BASE_FAME_NFT_ADDRESS,
+  BASE_UNIVERSAL_MARKETPLACE_ADDRESS,
+} from "@/constants.ts";
+import {
   createFameLandingSnapshotDependencies,
   produceAndPublishFameLandingSnapshot,
   type FameLandingMulticallClient,
@@ -12,9 +17,28 @@ import type { FamePoolStateIndexerResult } from "./indexer.ts";
 
 const SAFE_HASH =
   "0x1111111111111111111111111111111111111111111111111111111111111111" as Hex;
+const CREATOR_MAGIC_V2 = "0xC8268c2aa571F3C88044C2959F73DdB8eB9e139F";
 
 function activeSignal(): AbortSignal {
   return new AbortController().signal;
+}
+
+function marketplaceReadResult(
+  creatorMagic = BASE_CREATOR_ARTIST_MAGIC_ADDRESS,
+) {
+  return [
+    fameLandingAuthority.fameToken,
+    BASE_FAME_NFT_ADDRESS,
+    creatorMagic,
+    false,
+    50n,
+    0n,
+    0n,
+    0n,
+    1_000_000n,
+    888_000_000n,
+    18,
+  ] as const;
 }
 
 function indexerResult(): FamePoolStateIndexerResult {
@@ -52,20 +76,11 @@ function indexerResult(): FamePoolStateIndexerResult {
 
 describe("FAME landing production reads", () => {
   test("uses one block-pinned marketplace multicall and validates authority identities", async () => {
+    expect(BASE_CREATOR_ARTIST_MAGIC_ADDRESS).toBe(
+      "0x6754e4871775A781702f2Ab6e494754a562586ee",
+    );
     const multicall = jest.fn<FameLandingMulticallClient["multicall"]>(
-      async () => [
-        fameLandingAuthority.fameToken,
-        "0xBB5ED04dD7B207592429eb8d599d103CCad646c4",
-        "0xC8268c2aa571F3C88044C2959F73DdB8eB9e139F",
-        false,
-        50n,
-        2n,
-        1n,
-        3n,
-        1_000_000n,
-        888_000_000n,
-        18,
-      ],
+      async () => marketplaceReadResult(),
     );
     const deps = createFameLandingSnapshotDependencies({
       tableName: "PoolState",
@@ -97,6 +112,33 @@ describe("FAME landing production reads", () => {
         expect.objectContaining({ functionName: "totalSupply" }),
       ]),
     });
+    expect(
+      multicall.mock.calls[0]?.[0].contracts
+        .slice(0, 8)
+        .map(({ address }) => address),
+    ).toEqual(
+      Array.from({ length: 8 }, () => BASE_UNIVERSAL_MARKETPLACE_ADDRESS),
+    );
+  });
+
+  test("rejects the retired V2 CreatorArtistMagic authority", async () => {
+    const multicall = jest.fn<FameLandingMulticallClient["multicall"]>(
+      async () => marketplaceReadResult(CREATOR_MAGIC_V2),
+    );
+    const deps = createFameLandingSnapshotDependencies({
+      tableName: "PoolState",
+      rpc: { multicall },
+    });
+
+    await expect(
+      deps.readMarketplace({
+        blockNumber: 123n,
+        blockHash: SAFE_HASH,
+        signal: activeSignal(),
+      }),
+    ).rejects.toThrow(
+      "Landing marketplace authority is incomplete or mismatched.",
+    );
   });
 
   test("reads concentrated balances in one block-pinned multicall", async () => {
