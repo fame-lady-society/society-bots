@@ -13,7 +13,25 @@ const props = {
   discordPublicKey: "discord-public-key",
 };
 
-describe("OpenSea metadata refresh infrastructure", () => {
+describe("Event Lambda infrastructure", () => {
+  it("serializes the wrapper and profile event worker", () => {
+    const app = new cdk.App();
+    const stack = new cdk.Stack(app, "TestStack");
+    new EventLambdas(stack, "EventLambdas", { ...props, enableSchedules: false });
+    const template = Template.fromStack(stack);
+
+    template.hasResourceProperties("AWS::Lambda::Function", {
+      ReservedConcurrentExecutions: 1,
+      Environment: {
+        Variables: Match.objectLike({
+          DYNAMODB_TABLE: Match.anyValue(),
+          IMAGE_HOST: "events.example.com",
+          MAINNET_RPCS_JSON: props.mainnetRpcsJson,
+        }),
+      },
+    });
+  });
+
   it("is absent unless explicitly enabled", () => {
     const app = new cdk.App();
     const stack = new cdk.Stack(app, "TestStack");
