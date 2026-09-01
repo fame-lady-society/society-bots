@@ -48,4 +48,21 @@ describe("Society profile Discord notification", () => {
     expect(JSON.stringify(event)).not.toContain("0x");
     expect(JSON.stringify(event)).not.toContain("etherscan");
   });
+
+  it("renders claimed names as text instead of Discord markdown", () => {
+    const embed = societyProfileEmbed(
+      {
+        name: "[Verify wallet](https://attacker.example)",
+        primaryTokenId: 2_264n,
+      },
+      "fame.support",
+    );
+
+    expect(embed.description).toBe(
+      "**\\[Verify wallet\\]\\(https://attacker\\.example\\)** created a Society profile.",
+    );
+    expect(embed.url).toBe(
+      "https://www.fameladysociety.com/mainnet/~/%5BVerify%20wallet%5D(https%3A%2F%2Fattacker.example)",
+    );
+  });
 });

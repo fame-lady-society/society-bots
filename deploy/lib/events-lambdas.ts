@@ -269,6 +269,7 @@ export class EventLambdas extends Construct {
       logGroup: createLambdaLogGroup(this, "WrapEventLogGroup", "ethereum"),
       timeout: cdk.Duration.seconds(60),
       memorySize: 512,
+      reservedConcurrentExecutions: 1,
       environment: {
         DISCORD_CHANNEL_ID: discordChannelId,
         DISCORD_MESSAGE_TOPIC_ARN: deferredMessageTopic.topicArn,

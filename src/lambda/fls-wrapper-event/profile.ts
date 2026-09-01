@@ -9,6 +9,13 @@ export type SocietyProfile = {
 };
 
 const PROFILE_BASE_URL = "https://www.fameladysociety.com/mainnet/~";
+const DISCORD_MARKDOWN_CHARACTERS = new Set("\\`*_{}[]()<>#+-.!|~>");
+
+function escapeDiscordMarkdown(value: string) {
+  return Array.from(value, (character) =>
+    DISCORD_MARKDOWN_CHARACTERS.has(character) ? `\\${character}` : character,
+  ).join("");
+}
 
 export function societyProfileUrl(name: string) {
   return `${PROFILE_BASE_URL}/${encodeURIComponent(name)}`;
@@ -20,7 +27,7 @@ export function societyProfileEmbed(
 ): APIEmbed {
   return {
     title: "New Society Profile",
-    description: `**${profile.name}** created a Society profile.`,
+    description: `**${escapeDiscordMarkdown(profile.name)}** created a Society profile.`,
     url: societyProfileUrl(profile.name),
     fields: [
       {
