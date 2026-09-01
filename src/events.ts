@@ -273,6 +273,18 @@ export const metadataEvent = {
   name: "MetadataUpdate",
 } as const;
 
+export const flsNameClaimedEvent = {
+  type: "event",
+  anonymous: false,
+  name: "NameClaimed",
+  inputs: [
+    { name: "tokenId", type: "uint256", indexed: true },
+    { name: "primary", type: "address", indexed: true },
+    { name: "name", type: "string", indexed: false },
+    { name: "primaryTokenId", type: "uint256", indexed: false },
+  ],
+} as const;
+
 export const artworkPurchasedEvent = {
   type: "event",
   anonymous: false,

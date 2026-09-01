@@ -27,6 +27,10 @@ import {
   notifyDiscordSingleToken,
   notifyDiscordSingleWrappedAndDonated,
 } from "./discord.ts";
+import { runIndependentLanes } from "./lanes.ts";
+import { runProfileNotificationIndexer } from "./profile-indexer.ts";
+import { notifyDiscordSocietyProfile } from "./profile.ts";
+import { createProfileNotificationStore } from "./profile-store.ts";
 
 const logger = createLogger({
   name: "fls-wrapper-event",
@@ -48,6 +52,10 @@ if (!process.env.DISCORD_CHANNEL_ID) {
   throw new Error("DISCORD_CHANNEL_ID not set");
 }
 
+if (!process.env.IMAGE_HOST) {
+  throw new Error("IMAGE_HOST not set");
+}
+
 const db = DynamoDBDocumentClient.from(
   new DynamoDBClient({
     region: process.env.DYNAMODB_REGION,
@@ -59,9 +67,7 @@ const db = DynamoDBDocumentClient.from(
   },
 );
 
-// Modify the handler to use the processor
-export const handler = async () => {
-  const sns = new SNS({});
+async function runWrapperEventLane(sns: SNS) {
   const mainnetProcessor = new DefaultEventProcessor(
     mainnetClient,
     fameLadySocietyAddress[1],
@@ -264,4 +270,35 @@ export const handler = async () => {
       },
     }),
   );
+}
+
+export const handler = async () => {
+  const sns = new SNS({});
+  const profileStore = createProfileNotificationStore({
+    db,
+    tableName: process.env.DYNAMODB_TABLE!,
+  });
+
+  await runIndependentLanes([
+    {
+      name: "wrapper-events",
+      run: () => runWrapperEventLane(sns),
+    },
+    {
+      name: "society-profile-notifications",
+      run: () =>
+        runProfileNotificationIndexer({
+          client: mainnetClient,
+          store: profileStore,
+          publish: (profile) =>
+            notifyDiscordSocietyProfile({
+              profile,
+              imageHost: process.env.IMAGE_HOST!,
+              channelId: process.env.DISCORD_CHANNEL_ID!,
+              topicArn: process.env.DISCORD_MESSAGE_TOPIC_ARN!,
+              sns,
+            }),
+        }),
+    },
+  ]);
 };
