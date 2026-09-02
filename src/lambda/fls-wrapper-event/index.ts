@@ -10,7 +10,6 @@ import { SNS } from "@aws-sdk/client-sns";
 import { createLogger } from "@/utils/logging.ts";
 import { Address } from "viem";
 import {
-  fameLadySocietyAbi,
   fameLadySocietyAddress,
   fameLadySquadAddress,
   saveLadyProxyAddress,
@@ -27,6 +26,7 @@ import {
   notifyDiscordSingleToken,
   notifyDiscordSingleWrappedAndDonated,
 } from "./discord.ts";
+import { readTotalDonatedCount } from "./donation-count.ts";
 import { runIndependentLanes } from "./lanes.ts";
 import { runProfileNotificationIndexer } from "./profile-indexer.ts";
 import { notifyDiscordSocietyProfile } from "./profile.ts";
@@ -206,15 +206,15 @@ async function runWrapperEventLane(sns: SNS) {
       );
     }
   }
-  const promiseTotalDonatedCount =
-    mainnetResult.wrappedAndDonatedEvents.length > 0
-      ? mainnetClient.readContract({
-          address: fameLadySocietyAddress[1],
-          abi: fameLadySocietyAbi,
-          functionName: "balanceOf",
-          args: ["0xCDF3e235A04624d7f23909EbBaD008Db2c54e1cF"],
-        })
-      : Promise.resolve(0n);
+  const donationVaultAddress =
+    mainnetResult.wrappedAndDonatedEvents[0]?.args.vaultAddress;
+  const promiseTotalDonatedCount = donationVaultAddress
+    ? readTotalDonatedCount({
+        client: mainnetClient,
+        wrappedNftAddress: fameLadySocietyAddress[1],
+        vaultAddress: donationVaultAddress,
+      })
+    : Promise.resolve(0n);
 
   for (const event of mainnetResult.wrappedAndDonatedEvents) {
     const {
