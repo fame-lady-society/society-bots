@@ -285,7 +285,12 @@ export async function notifyDiscordSingleWrappedAndDonated({
       embeds: [
         {
           title: "#donate",
-          description: `A new Fame Lady Society was doanted to the vault!`,
+          description: `A new Fame Lady Society was donated to the vault!`,
+          image: {
+            url: await redirectFromGet(
+              `https://${process.env.IMAGE_HOST}/fls/thumb/${tokenId}`,
+            ),
+          },
           fields,
           url: `${blockExplorerUrl}/tx/${txHash}`,
         },

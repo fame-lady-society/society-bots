@@ -92,7 +92,7 @@ export default defineConfig({
         {
           name: "VaultDonator",
           address: {
-            [mainnet.id]: "0x7a276f4b91a97267d652500aa4ab8b2fa388fb9b",
+            [mainnet.id]: "0x582097Da47E57FD6DBBc5261560CC087631f4FcD",
           },
         },
       ],

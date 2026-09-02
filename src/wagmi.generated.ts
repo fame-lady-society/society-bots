@@ -4865,7 +4865,7 @@ export const uniswapV3PoolConfig = {
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /**
- * [__View Contract on Ethereum Etherscan__](https://etherscan.io/address/0x7a276f4b91a97267d652500aa4ab8b2fa388fb9b)
+ * [__View Contract on Ethereum Etherscan__](https://etherscan.io/address/0x582097da47e57fd6dbbc5261560cc087631f4fcd)
  */
 export const vaultDonatorAbi = [
   {
@@ -4939,14 +4939,14 @@ export const vaultDonatorAbi = [
 ] as const
 
 /**
- * [__View Contract on Ethereum Etherscan__](https://etherscan.io/address/0x7a276f4b91a97267d652500aa4ab8b2fa388fb9b)
+ * [__View Contract on Ethereum Etherscan__](https://etherscan.io/address/0x582097da47e57fd6dbbc5261560cc087631f4fcd)
  */
 export const vaultDonatorAddress = {
-  1: '0x7a276F4B91A97267D652500aa4aB8b2Fa388fb9b',
+  1: '0x582097Da47E57FD6DBBc5261560CC087631f4FcD',
 } as const
 
 /**
- * [__View Contract on Ethereum Etherscan__](https://etherscan.io/address/0x7a276f4b91a97267d652500aa4ab8b2fa388fb9b)
+ * [__View Contract on Ethereum Etherscan__](https://etherscan.io/address/0x582097da47e57fd6dbbc5261560cc087631f4fcd)
  */
 export const vaultDonatorConfig = {
   address: vaultDonatorAddress,
