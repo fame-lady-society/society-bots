@@ -19,6 +19,7 @@ test("access CI cannot modify its own authority", () => {
     "arn:aws:iam::590183914614:role/FlsBotConsoleGitHubDeploy",
   ]);
   const policy = Object.entries(policies).find(([id]) => id.startsWith("Deploy"))![1];
+  expect(policy.Properties.PolicyDocument.Statement[0].Action).toContain("cloudformation:GetTemplateSummary");
   expect(policy.Properties.PolicyDocument.Statement[0].Resource).toBe("arn:aws:cloudformation:us-east-1:590183914614:stack/FlsBotConsoleAccess/*");
   expect(policy.Properties.PolicyDocument.Statement[2].Condition.StringEquals).toEqual({"iam:PassedToService": "cloudformation.amazonaws.com"});
   expect(JSON.stringify(policies)).not.toMatch(/secretsmanager|sts:AssumeRole|iam:\*/);

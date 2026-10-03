@@ -123,7 +123,8 @@ jobs:
         with:
           role-to-assume: ${{ vars.BOT_CONSOLE_DEPLOY_ROLE_ARN }}
           aws-region: us-east-1
-          allowed-account-ids: "590183914614"
+      - name: Verify AWS account
+        run: test "$(aws sts get-caller-identity --query Account --output text)" = "590183914614"
       - name: Validate auth secret configuration
         env:
           BOT_CONSOLE_AUTH_SECRET_ARN: ${{ vars.BOT_CONSOLE_AUTH_SECRET_ARN }}
