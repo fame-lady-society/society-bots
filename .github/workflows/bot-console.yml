@@ -1,0 +1,99 @@
+name: Bot console
+on:
+  pull_request:
+    paths:
+      [
+        "apps/bot-console/**",
+        "deploy/lib/bot-console-stack.ts",
+        "deploy/bin/bot-console.ts",
+        "deploy/test/bot-console.test.ts",
+        "deploy/test/bot-console-access.test.ts",
+        "deploy/lib/bot-console-access-stack.ts",
+        "deploy/bin/bot-console-access.ts",
+        ".github/workflows/bot-console.yml",
+      ]
+  push:
+    branches: [main]
+    paths:
+      [
+        "apps/bot-console/**",
+        "deploy/lib/bot-console-stack.ts",
+        "deploy/bin/bot-console.ts",
+        "deploy/test/bot-console.test.ts",
+        "deploy/test/bot-console-access.test.ts",
+        "deploy/lib/bot-console-access-stack.ts",
+        "deploy/bin/bot-console-access.ts",
+        ".github/workflows/bot-console.yml",
+      ]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: bot-console-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: corepack enable
+      - run: yarn install --frozen-lockfile --non-interactive
+        working-directory: apps/bot-console
+      - run: yarn test && yarn build
+        working-directory: apps/bot-console
+      - run: yarn install --frozen-lockfile --non-interactive
+        working-directory: deploy
+      - run: yarn test --runInBand test/bot-console.test.ts test/bot-console-access.test.ts
+        working-directory: deploy
+      - run: yarn esbuild bin/bot-console.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/bot-console.mjs
+        working-directory: deploy
+      - run: yarn cdk synth --app 'node dist/bot-console.mjs' --quiet
+        working-directory: deploy
+        env:
+          BOT_CONSOLE_AUTH_SECRET_ARN: arn:aws:secretsmanager:us-east-1:590183914614:secret:bot-console/auth-AbCdEf
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bot-console-build
+          path: |
+            apps/bot-console/dist
+            apps/bot-console/dist-api
+  deploy:
+    needs: validate
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment: bot-console-production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: corepack enable
+      - uses: actions/download-artifact@v4
+        with:
+          name: bot-console-build
+          path: apps/bot-console
+      - run: yarn install --frozen-lockfile --non-interactive
+        working-directory: deploy
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.BOT_CONSOLE_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+          allowed-account-ids: "590183914614"
+      - name: Validate auth secret configuration
+        env:
+          BOT_CONSOLE_AUTH_SECRET_ARN: ${{ vars.BOT_CONSOLE_AUTH_SECRET_ARN }}
+        run: |
+          test -n "$BOT_CONSOLE_AUTH_SECRET_ARN"
+          aws secretsmanager describe-secret --secret-id "$BOT_CONSOLE_AUTH_SECRET_ARN" --query ARN --output text > /dev/null
+      - run: yarn esbuild bin/bot-console.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/bot-console.mjs
+        working-directory: deploy
+      - run: yarn cdk deploy FlsBotConsole --app 'node dist/bot-console.mjs' --require-approval never
+        working-directory: deploy
+        env:
+          BOT_CONSOLE_AUTH_SECRET_ARN: ${{ vars.BOT_CONSOLE_AUTH_SECRET_ARN }}
