@@ -50,7 +50,8 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::590183914614:role/FlsBotConsoleAccessGitHubDeploy
           aws-region: us-east-1
-          allowed-account-ids: "590183914614"
+      - name: Verify AWS account
+        run: test "$(aws sts get-caller-identity --query Account --output text)" = "590183914614"
       - name: Deploy reviewed IAM template
         run: |
           aws cloudformation deploy \

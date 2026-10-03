@@ -45,7 +45,7 @@ export class BotConsoleAccessCiStack extends cdk.Stack {
     deploy.addToPolicy(new iam.PolicyStatement({
       actions: ["cloudformation:DescribeStacks", "cloudformation:DescribeStackEvents",
         "cloudformation:DescribeChangeSet",
-        "cloudformation:ExecuteChangeSet", "cloudformation:DeleteChangeSet", "cloudformation:GetTemplate"],
+        "cloudformation:ExecuteChangeSet", "cloudformation:DeleteChangeSet", "cloudformation:GetTemplate", "cloudformation:GetTemplateSummary"],
       resources: [`arn:aws:cloudformation:us-east-1:${account}:stack/FlsBotConsoleAccess/*`],
     }));
     deploy.addToPolicy(new iam.PolicyStatement({
