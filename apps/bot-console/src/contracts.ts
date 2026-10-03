@@ -1,7 +1,11 @@
+import { principalSchema } from "./access-contracts";
 import { z } from "zod";
 export const sessionSchema = z.object({
   user: z.object({ id: z.string(), name: z.string() }),
   rehearsal: z.boolean(),
+  principal: principalSchema,
+  expires: z.number(),
+  absoluteExpires: z.number(),
 });
 export const caseSchema = z.object({
   id: z.string(),

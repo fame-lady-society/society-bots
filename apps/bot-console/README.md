@@ -1,6 +1,6 @@
 # FAMEliza bot console
 
-Admin-only React/Vite application for `https://bot.fame.support`, deployed in the
+Role-protected React/Vite application for `https://bot.fame.support`, deployed in the
 FLS AWS account `590183914614`. Source and infrastructure are scoped to this app;
 existing FAME APIs and bot deployments are unchanged.
 
@@ -15,30 +15,29 @@ yarn dev
 ```
 
 Open `http://127.0.0.1:5173`. The separate loopback-only mock API runs on 5174.
-Click **Open local rehearsal** to inspect synthetic Telegram/Discord cases,
-including 204 captured messages. Review, confirm or reject simulated proposals.
+Click **Open local rehearsal** to manage synthetic identities and roles, inspect
+Telegram messages, and rehearse group connections.
 No platform messages, inference requests or moderation actions are sent. Mock
 state resets when the process restarts. Stop with Ctrl-C. The mock login uses a
 single shared local session and must never be hosted or exposed through a tunnel.
 
 The production build contains no local fixture server or authentication bypass.
 The Telegram inbox displays captured messages from explicitly configured groups.
-The moderation inbox remains empty until a reviewed case service is added.
 It intentionally exposes no live moderation execution endpoint in this release.
 The local development proxy is not part of the deployed application.
 
 ## Authentication
 
 Discord OAuth2 authorization-code flow, `identify` scope only, using oauth4webapi.
-The backend checks the immutable Discord ID against the current admin allowlist
+The backend checks the immutable Discord ID against the current access registry
 and requires `mfa_enabled === true`. Missing MFA is rejected. This confirms MFA
 is enabled, not that Discord performed a fresh second-factor challenge. It does
 not supply phishing-resistant application step-up authentication. Add explicit
 WebAuthn step-up before broad privileged administration if that assurance is needed.
 
 Random browser-bound OAuth state expires after five minutes and is atomically
-consumed. Opaque sessions expire after 15 minutes without renewal. A visible console tab
-renews its session every minute through a same-origin POST, up to a fixed 12-hour
+consumed. Opaque sessions expire after seven days without renewal. A visible console tab
+renews its session every minute through a same-origin POST, up to a fixed thirty-day
 maximum from login. Background tabs and ordinary data polling do not renew sessions;
 only hashes are persisted in DynamoDB. Expiry is checked independently of TTL
 cleanup. The `__Host-` session cookie is Secure, HttpOnly, host-only and SameSite=Lax.
@@ -46,10 +45,11 @@ API responses are never cached. Mutations require the exact production Origin.
 The callback URI is fixed; no caller-supplied return URL. OAuth provider tokens
 are used only to retrieve identity and are not persisted or sent to the browser.
 
-Auth config is loaded every request, so allowlist removal revokes access on the
-next request. Discord account/MFA changes are checked at the next login; existing
-sessions expire in at most 12 hours. Existing sessions from before renewal was
-deployed require a fresh login. OAuth failure details and credentials are
+The authoritative access registry is read on every request. Disabling a person or
+revoking their sessions rejects their next request; role/scope changes apply without
+a new login. Discord account/MFA changes are checked at the next login; existing
+sessions expire in at most thirty days. Existing sessions require a fresh login
+after the RBAC deployment. OAuth failure details and credentials are
 not logged. The static login shell is public; every data API checks the session.
 The mock API cannot prove actual OAuth login, Discord MFA behavior or live access.
 
@@ -75,7 +75,7 @@ OAuth source credentials are in Doppler: workspace **Flick**, project
 
 This config is a source for secure provisioning, not an automatic runtime sync.
 Provision the dedicated AWS secret below with these values mapped to `clientId`,
-`clientSecret`, and the `adminIds` array. GitHub receives only ARN configuration;
+`clientSecret`. The former `adminIds` field is no longer used for authorization. GitHub receives only ARN configuration;
 it does not need the Discord client secret or a Doppler token.
 Only these three keys may be copied; do not export or sync the controller config.
 The dedicated `bot-console/auth` secret was provisioned in FLS us-east-1 on
@@ -86,7 +86,7 @@ The dedicated `bot-console/auth` secret was provisioned in FLS us-east-1 on
    `https://bot.fame.support/api/auth/callback`. A bot token is not a client secret.
 2. Securely create a dedicated Secrets Manager secret named `bot-console/auth`
    in FLS **us-east-1** with JSON fields `clientId`, `clientSecret`, and
-   `adminIds: ["931691901592145930"]`. Never put the value into Git, CI variables,
+   the OAuth credentials. Access is bootstrapped separately by the CDK registry. Never put the value into Git, CI variables,
    command-line arguments, or chat. Use the AWS console/approved secret tooling.
 3. The separately provisioned `FlsBotConsoleAccess` stack defines the GitHub OIDC
    role, CloudFormation execution role, and mandatory runtime permissions boundary.
@@ -295,3 +295,68 @@ Registration verifies the bot and AWS account, refuses another service's webhook
 preserves pending updates and records registration time. It no longer accepts a
 group ID or edits associations. Manage those in the panel. Inspect before retrying
 failed setup; only sanitized errors are emitted.
+
+
+## Owner-managed access
+
+Access & roles is the production RBAC interface. Owners can register people by
+stable `discord:<user-id>`, assign roles/scopes, disable access, and revoke every
+session for a person. Identity names are labels only. All people still need Discord
+MFA enabled at login. Sign-in requires an enabled human principal with a role.
+
+Roles are a reviewed catalog, not user-editable policy expressions:
+
+| Role | Permissions | Scope |
+| --- | --- | --- |
+| Owner | Access administration, connection management, message reads | `*` |
+| Connection manager | Connection reads/changes, invite generation/revocation | `*` |
+| Inbox reader | Group metadata and captured messages/history | `telegram:*` or `telegram:<negative-chat-id>` |
+
+Readers cannot manage connections, access other groups, or read the access registry
+and audit. Managers cannot read messages. Only owners edit grants. The owner role
+is human-only. Disabling the final owner or removing their owner role is rejected.
+Concurrent changes use the global policy revision and cannot remove both remaining
+owners. A stale edit must be refreshed and deliberately resubmitted.
+
+Agents and services have distinct registered IDs (`agent:name`, `service:name`).
+These entries are inventory only until a workload authentication integration is
+implemented: no token is minted, no caller can authenticate by claiming an ID,
+and grants do not alter Overclaw or vault authority. This release contains no
+teams, role inheritance, join links, service delegation, or runtime controls.
+Telegram connection codes remain connection credentials; they cannot grant portal
+access. Future human invitations need an explicitly typed purpose and separate
+redemption flow, even if the UI eventually shares a common invitation experience.
+
+The registry is bounded at 100 principals and 20 grants per principal. A single
+policy document makes owner constraints and optimistic concurrency atomic. Each
+change and its before/after audit receipt are a DynamoDB transaction. The UI shows
+the latest 50 receipts; older receipts remain in the retained table. This is an
+application audit trail, not tamper-proof storage against an AWS administrator.
+
+Sessions use hashed random tokens in Secure/HttpOnly cookies. Revocation advances
+a per-person session generation; disabling also advances it, so re-enabling a
+person does not revive those sessions. Seven-day idle / thirty-day absolute expiry
+is a deliberate convenience tradeoff: the console checks grants every request but
+does not recheck Discord MFA/account status until login. Existing session cookies
+without a generation are rejected. Logout remains atomic and renewal cannot recreate
+a deleted session. Permission-dependent browser query caches are partitioned by the
+current principal/grants so a changed scope does not reuse another scope's data.
+
+### RBAC deployment
+
+The retained Access table is read/written only by the console API, plus a narrowly
+scoped create-only bootstrap resource. Bootstrap seeds existing operator
+`discord:931691901592145930` as the initial owner. It never rewrites later grants.
+No new OAuth credential or manual secret prerequisite is needed. The existing
+console DynamoDB boundary covers the table; review the synthesized permissions.
+
+Deploy through normal console CI, sign in again, and verify the owner panel before
+adding users. Test a second account with an exact-group reader grant, confirm direct
+API denials, change its scope, revoke sessions, and verify the account must log in
+again. Check the audit for each change. Local rehearsal uses synthetic in-memory
+access and cannot prove real Discord login or AWS transaction behavior.
+
+Do not roll back to the old allowlist-based application after admitting non-owners
+without an explicit access review: it does not enforce this RBAC model. If all owner
+access is lost due to external corruption, recovery is an operator-reviewed AWS
+policy repair with a recorded incident; there is no public recovery endpoint.

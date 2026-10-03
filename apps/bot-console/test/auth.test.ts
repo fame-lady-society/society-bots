@@ -1,3 +1,4 @@
+import { memoryAccess, localOwner } from "../local/access-store";
 import { memoryGroupStore } from "../local/group-store";
 import { groupService } from "../server/telegram-groups";
 import { test } from "node:test";
@@ -42,10 +43,11 @@ function fixture(
       return v;
     },
   };
-  const adminIds = [owner];
+  const policy = { version: 0, principals: [structuredClone(localOwner)] };
+  const access = memoryAccess(policy);
   const app = createApp({
     origin: "https://bot.fame.support",
-    adminIds,
+    access: { ...access.store, read: async () => structuredClone(policy) },
     groups,
     store,
     now: () => clock,
@@ -59,7 +61,7 @@ function fixture(
   });
   return {
     app,
-    adminIds,
+    policy,
     advance: (seconds = 1000) => (clock += seconds),
     store,
     exchanges: () => exchanges,
@@ -133,21 +135,21 @@ test("second account and administrator without MFA cannot log in", async () => {
     assert.equal((await login(fixture(identity))).status, 403);
   }
 });
-test("secure session, expiry and allowlist revocation enforced server-side", async () => {
+test("secure session, expiry and principal revocation enforced server-side", async () => {
   const f = fixture();
   const r = await login(f);
   assert.equal(r.status, 302);
   const cookie = r.headers
     .getSetCookie()
     .find((c) => c.startsWith("__Host-bot-session="))!;
-  for (const flag of ["HttpOnly", "Secure", "SameSite=Lax", "Max-Age=900"])
+  for (const flag of ["HttpOnly", "Secure", "SameSite=Lax", "Max-Age=604800"])
     assert.ok(cookie.includes(flag));
   const headers = { Cookie: cookie.split(";")[0] };
   assert.equal((await f.app.request("/api/cases", { headers })).status, 200);
-  f.adminIds.splice(0);
+  f.policy.principals[0].enabled = false;
   assert.equal((await f.app.request("/api/cases", { headers })).status, 401);
-  f.adminIds.push(owner);
-  f.advance();
+  f.policy.principals[0].enabled = true;
+  f.advance(604800);
   assert.equal((await f.app.request("/api/cases", { headers })).status, 401);
 });
 test("logout rejects cross-site mutation and revokes valid sessions", async () => {
@@ -183,7 +185,7 @@ test("logout rejects cross-site mutation and revokes valid sessions", async () =
 test("storage failures are fail-closed and do not expose internal errors", async () => {
   const app = createApp({
     origin: "https://bot.fame.support",
-    adminIds: [owner],
+    access: memoryAccess().store,
     store: {
       async renew() {
         throw new Error("secret-value");
@@ -302,16 +304,16 @@ test("same-origin renewal survives original deadline but GET polling does not re
     .find((c) => c.startsWith("__Host-bot-session="))!
     .split(";")[0];
   const headers = { Cookie, Origin: "https://bot.fame.support" };
-  f.advance(800);
+  f.advance(604700);
   const renewed = await f.app.request("/api/session", {
     method: "POST",
     headers,
   });
   assert.equal(renewed.status, 200);
-  assert.match(renewed.headers.get("set-cookie")!, /Max-Age=900/);
+  assert.match(renewed.headers.get("set-cookie")!, /Max-Age=604800/);
   f.advance(200);
   assert.equal((await f.app.request("/api/session", { headers })).status, 200);
-  f.advance(700);
+  f.advance(604600);
   assert.equal(
     (await f.app.request("/api/session", { method: "POST", headers })).status,
     401,
@@ -340,7 +342,7 @@ test("renewal requires the approved session and exact Origin", async () => {
       403,
     );
   }
-  f.adminIds.splice(0);
+  f.policy.principals[0].enabled = false;
   assert.equal(
     (
       await f.app.request("/api/session", {
@@ -352,7 +354,7 @@ test("renewal requires the approved session and exact Origin", async () => {
   );
 });
 
-test("renewal respects the twelve-hour absolute deadline", async () => {
+test("renewal respects the thirty-day absolute deadline", async () => {
   const f = fixture();
   const signed = await login(f);
   const Cookie = signed.headers
@@ -360,14 +362,14 @@ test("renewal respects the twelve-hour absolute deadline", async () => {
     .find((c) => c.startsWith("__Host-bot-session="))!
     .split(";")[0];
   const headers = { Cookie, Origin: "https://bot.fame.support" };
-  for (let i = 0; i < 53; i++) {
-    f.advance(800);
+  for (let i = 0; i < 4; i++) {
+    f.advance(604700);
     assert.equal(
       (await f.app.request("/api/session", { method: "POST", headers })).status,
       200,
     );
   }
-  f.advance(700);
+  f.advance(173100);
   const final = await f.app.request("/api/session", {
     method: "POST",
     headers,

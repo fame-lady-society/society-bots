@@ -1,3 +1,5 @@
+import { permits, type Principal } from "../src/access-contracts";
+import { AccessConflict, editAccess, type AccessStore } from "./access";
 import { createHash, randomBytes } from "node:crypto";
 import { Hono } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
@@ -9,6 +11,7 @@ import { GroupConflict, type GroupService } from "./telegram-groups";
 export interface RecordValue {
   expires: number;
   absoluteExpires?: number;
+  sessionVersion?: number;
   userId?: string;
   name?: string;
 }
@@ -26,7 +29,7 @@ export interface Identity {
 }
 export interface Dependencies {
   origin: string;
-  adminIds: string[];
+  access: AccessStore;
   store: Store;
   oauth: {
     url(state: string): string;
@@ -51,14 +54,12 @@ const token = () => randomBytes(32).toString("base64url");
 const validToken = (value: string | undefined): value is string =>
   !!value && /^[A-Za-z0-9_-]{43}$/.test(value);
 export function createApp(deps: Dependencies) {
-  if (
-    new URL(deps.origin).protocol !== "https:" ||
-    deps.adminIds.length === 0 ||
-    deps.adminIds.some((id) => !/^\d{17,20}$/.test(id))
-  )
-    throw new Error("Invalid admin configuration");
+  if (new URL(deps.origin).protocol !== "https:")
+    throw new Error("Invalid origin");
   const now = deps.now ?? (() => Math.floor(Date.now() / 1000));
-  const app = new Hono<{ Variables: { actor: string } }>();
+  const app = new Hono<{
+    Variables: { actor: string; principal: Principal };
+  }>();
   app.use("*", secureHeaders());
   app.use("*", async (c, next) => {
     c.header("Cache-Control", "no-store");
@@ -93,15 +94,19 @@ export function createApp(deps: Dependencies) {
     if (!code || code.length > 2048)
       return c.json({ error: "Login was not completed." }, 400);
     const identity = await deps.oauth.identity(code);
+    const principal = (await deps.access.read()).principals.find(
+      (p) => p.id === `discord:${identity.id}` && p.kind === "human",
+    );
     if (
-      !deps.adminIds.includes(identity.id) ||
+      !principal?.enabled ||
+      !principal.grants.length ||
       identity.bot ||
       identity.mfa_enabled !== true
     )
       return c.json(
         {
           error:
-            "Access requires an approved administrator with Discord MFA enabled.",
+            "Access requires an approved account with Discord MFA enabled.",
         },
         403,
       );
@@ -109,9 +114,10 @@ export function createApp(deps: Dependencies) {
     if (validToken(old)) await deps.store.take(`session#${digest(old)}`);
     const session = token();
     await deps.store.put(`session#${digest(session)}`, {
-      expires: now() + 900,
-      absoluteExpires: now() + 12 * 3600,
+      expires: now() + 7 * 86400,
+      absoluteExpires: now() + 30 * 86400,
       userId: identity.id,
+      sessionVersion: principal.sessionVersion,
       name: identity.username,
     });
     setCookie(c, sessionCookie, session, {
@@ -119,7 +125,7 @@ export function createApp(deps: Dependencies) {
       secure: true,
       sameSite: "Lax",
       path: "/",
-      maxAge: 900,
+      maxAge: 7 * 86400,
     });
     return c.redirect("/");
   });
@@ -127,12 +133,17 @@ export function createApp(deps: Dependencies) {
     const raw = getCookie(c, sessionCookie);
     if (!validToken(raw)) return c.json({ error: "Sign in required." }, 401);
     const session = await deps.store.get(`session#${digest(raw)}`);
+    const principal = (await deps.access.read()).principals.find(
+      (p) => p.id === `discord:${session?.userId}` && p.kind === "human",
+    );
     if (
       !session?.userId ||
       session.expires <= now() ||
       !session.absoluteExpires ||
       session.absoluteExpires <= now() ||
-      !deps.adminIds.includes(session.userId)
+      !principal?.enabled ||
+      !principal.grants.length ||
+      session.sessionVersion !== principal.sessionVersion
     )
       return c.json({ error: "Session expired or access revoked." }, 401);
     if (
@@ -141,6 +152,7 @@ export function createApp(deps: Dependencies) {
     )
       return c.json({ error: "Request origin rejected." }, 403);
     c.set("actor", session.userId);
+    c.set("principal", principal);
     await next();
   });
   app.on(["GET", "POST"], "/api/session", async (c) => {
@@ -156,7 +168,7 @@ export function createApp(deps: Dependencies) {
       return c.json({ error: "Session expired." }, 401);
     if (c.req.method === "POST") {
       const time = now();
-      const expires = Math.min(time + 900, session.absoluteExpires);
+      const expires = Math.min(time + 7 * 86400, session.absoluteExpires);
       // Conditional renewal cannot recreate a session deleted by concurrent logout.
       if (
         !(await deps.store.renew(
@@ -177,6 +189,12 @@ export function createApp(deps: Dependencies) {
     return c.json({
       user: { id: session.userId, name: session.name ?? "Administrator" },
       rehearsal: false,
+      principal: c.get("principal"),
+      expires:
+        c.req.method === "POST"
+          ? Math.min(now() + 7 * 86400, session.absoluteExpires)
+          : session.expires,
+      absoluteExpires: session.absoluteExpires,
     });
   });
   app.post("/api/auth/logout", async (c) => {
@@ -184,9 +202,73 @@ export function createApp(deps: Dependencies) {
     deleteCookie(c, sessionCookie, { secure: true, path: "/" });
     return c.body(null, 204);
   });
+  app.get("/api/access", async (c) => {
+    if (!permits(c.get("principal"), "access.manage"))
+      return c.json({ error: "Owner access required." }, 403);
+    return c.json({
+      policy: await deps.access.read(),
+      audit: await deps.access.audit(),
+    });
+  });
+  app.post("/api/access", async (c) => {
+    if (!permits(c.get("principal"), "access.manage"))
+      return c.json({ error: "Owner access required." }, 403);
+    const raw = await c.req.text();
+    if (Buffer.byteLength(raw) > 16384)
+      return c.json({ error: "Request too large." }, 413);
+    try {
+      return c.json(
+        await editAccess(
+          deps.access,
+          c.get("principal").id,
+          JSON.parse(raw),
+          now(),
+        ),
+      );
+    } catch (e) {
+      if (e instanceof AccessConflict) return c.json({ error: e.message }, 409);
+      if (e instanceof z.ZodError || e instanceof SyntaxError)
+        return c.json(
+          {
+            error:
+              "Invalid access change. Check identity, role scopes, and keep at least one active owner.",
+          },
+          400,
+        );
+      throw e;
+    }
+  });
+  app.use("/api/telegram/*", async (c, next) => {
+    const p = c.get("principal");
+    const management =
+      c.req.method !== "GET" || c.req.path.startsWith("/api/telegram/invites");
+    if (
+      management
+        ? !permits(p, "connections.manage")
+        : !p.grants.some((g) =>
+            (["owner", "reader", "manager"] as string[]).includes(g.role),
+          )
+    )
+      return c.json({ error: "Permission denied." }, 403);
+    await next();
+  });
   app.get("/api/telegram/status", async (c) => {
     if (!deps.telegram) return c.json({ error: "Telegram unavailable" }, 503);
-    return c.json(await deps.telegram.status());
+    const principal = c.get("principal");
+    const result = (await deps.telegram.status()) as {
+      chats: { id: string }[];
+      queued: number;
+      failed: number;
+    };
+    const chats = result.chats.filter((g) =>
+      permits(principal, "connections.read", `telegram:${g.id}`),
+    );
+    return c.json({
+      ...result,
+      chats,
+      queued: permits(principal, "connections.manage") ? result.queued : 0,
+      failed: permits(principal, "connections.manage") ? result.failed : 0,
+    });
   });
   app.get("/api/telegram/messages", async (c) => {
     if (!deps.telegram) return c.json({ error: "Telegram unavailable" }, 503);
@@ -200,6 +282,8 @@ export function createApp(deps: Dependencies) {
       (cursor && cursor.length > 2048)
     )
       return c.json({ error: "Invalid query" }, 400);
+    if (!permits(c.get("principal"), "messages.read", `telegram:${chatId}`))
+      return c.json({ error: "Permission denied." }, 403);
     try {
       return c.json(await deps.telegram.messages(chatId, cursor, messageId));
     } catch (e) {
@@ -213,7 +297,11 @@ export function createApp(deps: Dependencies) {
   });
   app.get("/api/telegram/groups", async (c) => {
     if (!deps.groups) return c.json({ error: "Telegram unavailable" }, 503);
-    return c.json(await deps.groups.list());
+    return c.json(
+      (await deps.groups.list()).filter((g) =>
+        permits(c.get("principal"), "connections.read", `telegram:${g.id}`),
+      ),
+    );
   });
   app.post("/api/telegram/invites", async (c) => {
     if (!deps.groups) return c.json({ error: "Telegram unavailable" }, 503);
@@ -271,7 +359,11 @@ export function createApp(deps: Dependencies) {
     }
   });
   // No production moderation executor. Local fixtures are a separate server.
-  app.get("/api/cases", (c) => c.json([]));
+  app.get("/api/cases", (c) =>
+    permits(c.get("principal"), "access.manage")
+      ? c.json([])
+      : c.json({ error: "Permission denied." }, 403),
+  );
   app.notFound((c) => c.json({ error: "Not found." }, 404));
   return app;
 }

@@ -1,4 +1,3 @@
-import { TelegramGroups } from "./TelegramGroups";
 import { useState } from "react";
 import { useQuery, useInfiniteQuery } from "@tanstack/react-query";
 import {
@@ -93,7 +92,7 @@ export function TelegramInbox() {
           </div>
         </section>
       )}
-      <TelegramGroups />
+
       {status.data?.failed ? (
         <p role="alert">
           Some updates could not be stored. They are held in the recovery queue
@@ -103,10 +102,7 @@ export function TelegramInbox() {
       {status.data && !status.data.chats.length ? (
         <div className="empty">
           <h2>Choose the first group.</h2>
-          <p>
-            Use Connect group above to generate a command, then approve the
-            request.
-          </p>
+          <p>No groups with captured history are available to your account.</p>
         </div>
       ) : chat ? (
         <>

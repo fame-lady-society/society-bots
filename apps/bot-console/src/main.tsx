@@ -1,121 +1,69 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { createRoot } from "react-dom/client";
 import {
   QueryClient,
   QueryClientProvider,
   useQuery,
-  useMutation,
-  useQueryClient,
 } from "@tanstack/react-query";
-import { casesSchema, sessionSchema, type Incident } from "./contracts";
-import "./style.css";
+import { sessionSchema } from "./contracts";
+import { permits } from "./access-contracts";
+import { AccessPanel } from "./AccessPanel";
 import { TelegramInbox } from "./TelegramInbox";
-async function request(path: string, options?: RequestInit) {
-  const r = await fetch(path, options);
-  if (r.status === 401) throw new Error("SIGN_IN");
-  if (!r.ok)
-    throw new Error(
-      "The request could not be completed. Refresh and try again.",
-    );
-  return r.status === 204 ? null : r.json();
-}
+import { TelegramGroups } from "./TelegramGroups";
+import "./style.css";
 function App() {
+  const [view, setView] = useState("access");
   const session = useQuery({
     queryKey: ["session"],
-    // Only a visible production tab renews the session. Other polling stays read-only.
-    queryFn: async () =>
-      sessionSchema.parse(
-        await request("/api/session", {
-          method:
-            !import.meta.env.DEV && document.visibilityState === "visible"
-              ? "POST"
-              : "GET",
-        }),
-      ),
     retry: false,
-    refetchInterval: 60_000,
+    refetchInterval: 60000,
+    queryFn: async () => {
+      const r = await fetch("/api/session", {
+        method:
+          !import.meta.env.DEV && document.visibilityState === "visible"
+            ? "POST"
+            : "GET",
+      });
+      if (!r.ok)
+        throw new Error(
+          r.status === 401 ? "Sign in required" : "Authentication unavailable",
+        );
+      return sessionSchema.parse(await r.json());
+    },
   });
+  const [logoutError, setLogoutError] = useState("");
   if (session.isPending)
     return <div className="center">Opening your console…</div>;
   if (session.isError)
     return (
       <div className="login-page">
-        <div className="login-masthead">
-          <a href="https://www.fameladysociety.com/fame">$FAME</a>
-          <span>SOCIETY OPERATIONS</span>
-        </div>
         <div className="login">
-          <p className="eyebrow">FAME LADY SOCIETY · OPERATOR ACCESS</p>
+          <p className="eyebrow">SOCIETY OPERATIONS</p>
           <h1>
             Behind
             <br />
             <em>the Society.</em>
           </h1>
-          <p>
-            FAMEliza’s private operator workspace.
-            <br />
-            Access is limited to approved operators.
-          </p>
-          {session.error.message === "SIGN_IN" ? (
-            <a className="primary" href="/api/auth/login">
-              {import.meta.env.DEV
-                ? "Open local rehearsal"
-                : "Continue with Discord"}{" "}
-              <span>↗</span>
-            </a>
-          ) : (
-            <>
-              <p role="alert">Authentication is unavailable.</p>
-              <button onClick={() => void session.refetch()}>Try again</button>
-            </>
-          )}
-          <small>Discord identity · Approved operators only</small>
+          <p>{session.error.message}</p>
+          <a className="primary" href="/api/auth/login">
+            {import.meta.env.DEV
+              ? "Open local rehearsal"
+              : "Continue with Discord"}{" "}
+            ↗
+          </a>
         </div>
       </div>
     );
-  return (
-    <Console name={session.data.user.name} rehearsal={session.data.rehearsal} />
+  const { principal, rehearsal } = session.data;
+  const owner = permits(principal, "access.manage");
+  const reader = principal.grants.some(
+    (g) => g.role === "owner" || g.role === "reader",
   );
-}
-function Console({ name, rehearsal }: { name: string; rehearsal: boolean }) {
-  const client = useQueryClient();
-  const [view, setView] = useState<"telegram" | "moderation">("telegram");
-  const [selected, setSelected] = useState<string>();
-  const [filter, setFilter] = useState("pending");
-  const [confirm, setConfirm] = useState(false);
-  const cases = useQuery({
-    queryKey: ["cases"],
-    queryFn: async () => casesSchema.parse(await request("/api/cases")),
-    refetchInterval: 30_000,
-  });
-  const decision = useMutation({
-    mutationFn: async ({ id, value }: { id: string; value: string }) =>
-      request(`/api/cases/${id}/decision`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ decision: value }),
-      }),
-    onSuccess: () => {
-      setConfirm(false);
-      void client.invalidateQueries({ queryKey: ["cases"] });
-    },
-  });
-  const logout = useMutation({
-    mutationFn: () => request("/api/auth/logout", { method: "POST" }),
-    onSuccess: () => {
-      client.clear();
-      location.assign("/");
-    },
-  });
-  const all = cases.data ?? [];
-  const visible = all.filter((i) => filter === "all" || i.status === filter);
-  const incident = all.find((i) => i.id === selected) ?? visible[0];
-  if (cases.error?.message === "SIGN_IN")
-    return (
-      <div className="center">
-        <a href="/api/auth/login">Your session expired. Sign in again.</a>
-      </div>
-    );
+  const manager = permits(principal, "connections.manage");
+  const current =
+    (view === "telegram" && !reader) || (view === "connections" && !manager)
+      ? "access"
+      : view;
   return (
     <div className="layout">
       <aside>
@@ -125,276 +73,83 @@ function Console({ name, rehearsal }: { name: string; rehearsal: boolean }) {
             FAMEliza<small>SOCIETY OPERATIONS</small>
           </span>
         </a>
-        <div className="workspace">
-          <span className="workspace-label">WORKSPACE</span>
-          Fame Lady Society
-        </div>
         <nav>
-          <button
-            className={view === "telegram" ? "active" : ""}
-            aria-pressed={view === "telegram"}
-            onClick={() => setView("telegram")}
-          >
-            Telegram inbox
-          </button>
-          <button
-            className={view === "moderation" ? "active" : ""}
-            aria-pressed={view === "moderation"}
-            onClick={() => setView("moderation")}
-          >
-            ◫ <span>Moderation inbox</span>
-            <b>{all.filter((i) => i.status === "pending").length}</b>
-          </button>
+          {[
+            ["access", owner ? "Access & roles" : "My access"],
+            ["telegram", "Telegram inbox"],
+            ["connections", "Connections"],
+          ]
+            .filter(
+              ([v]) => v === "access" || (v === "telegram" ? reader : manager),
+            )
+            .map(([v, label]) => (
+              <button
+                key={v}
+                className={current === v ? "active" : ""}
+                onClick={() => setView(v)}
+              >
+                {label}
+              </button>
+            ))}
         </nav>
         <div className="sidebar-bottom">
-          <p>
-            For the
-            <br />
-            <em>Society.</em>
-          </p>
-          <small>{name}</small>
-          <button className="text-button" onClick={() => logout.mutate()}>
+          <small>{session.data.user.name}</small>
+          <button
+            onClick={async () => {
+              const r = await fetch("/api/auth/logout", { method: "POST" });
+              if (r.ok) {
+                location.assign("/");
+              } else setLogoutError("Could not sign out. Try again.");
+            }}
+          >
             Sign out ↗
           </button>
-          {logout.isError && (
-            <small role="alert">Sign out failed. Try again.</small>
-          )}
+          {logoutError && <p role="alert">{logoutError}</p>}
         </div>
       </aside>
       <main>
-        {view === "telegram" ? (
-          <>
-            {rehearsal && (
-              <div className="notice">
-                Local rehearsal · Synthetic Telegram messages only.
-              </div>
-            )}
-            <TelegramInbox />
-          </>
-        ) : (
-          <>
-            <header>
-              <div>
-                <p className="eyebrow">COMMUNITY OPERATIONS</p>
-                <h1>
-                  Society <em>inbox.</em>
-                </h1>
-                <p>Review the context. Decide what happens next.</p>
-              </div>
-              <span className="pill">
-                {rehearsal ? "Local rehearsal" : "Private workspace"}
-              </span>
-            </header>
-            {rehearsal && (
-              <div className="notice">
-                <b>Rehearsal workspace</b>
-                <span>
-                  Synthetic messages only. Decisions here never reach Discord or
-                  Telegram.
-                </span>
-              </div>
-            )}
-            <section className="stats">
-              <div>
-                <small>AWAITING REVIEW</small>
-                <strong>
-                  {all
-                    .filter((i) => i.status === "pending")
-                    .length.toString()
-                    .padStart(2, "0")}
-                </strong>
-              </div>
-              <div>
-                <small>CAPTURED MESSAGES</small>
-                <strong>
-                  {all.reduce((n, i) => n + i.messages.length, 0)}
-                </strong>
-              </div>
-              <div>
-                <small>ENFORCEMENT</small>
-                <strong className="words">Human approval</strong>
-              </div>
-            </section>
-            <div className="toolbar">
-              <div role="group" aria-label="Case filter">
-                {["pending", "all"].map((f) => (
-                  <button
-                    className={filter === f ? "chosen" : ""}
-                    key={f}
-                    onClick={() => {
-                      setFilter(f);
-                      setSelected(undefined);
-                      setConfirm(false);
-                    }}
-                  >
-                    {f === "pending" ? "Needs review" : "All cases"}
-                  </button>
-                ))}
-              </div>
-              <button
-                className="text-button"
-                onClick={() => void cases.refetch()}
-              >
-                Refresh ↻
-              </button>
-            </div>
-            {cases.isError ? (
-              <p role="alert">Could not load cases. Try refreshing.</p>
-            ) : cases.isPending ? (
-              <p>Loading cases…</p>
-            ) : !all.length ? (
-              <div className="empty">
-                <div className="empty-icon" aria-hidden="true">
-                  ◫
-                </div>
-                <h2>A clear inbox.</h2>
-                <p>
-                  No messages received yet. Channels have not been connected.
-                </p>
-              </div>
-            ) : (
-              <div className="split">
-                <div className="case-list">
-                  {visible.length === 0 ? (
-                    <p>No cases need review.</p>
-                  ) : (
-                    visible.map((i) => (
-                      <button
-                        key={i.id}
-                        className={`case ${incident?.id === i.id ? "selected" : ""}`}
-                        onClick={() => {
-                          setSelected(i.id);
-                          setConfirm(false);
-                          decision.reset();
-                        }}
-                      >
-                        <div>
-                          <span className="platform">{i.platform}</span>
-                          <span className="case-id">{i.id}</span>
-                        </div>
-                        <h3>{i.title}</h3>
-                        <p>{i.subject}</p>
-                        <small>
-                          {i.messages.length} messages <span>· {i.status}</span>
-                        </small>
-                      </button>
-                    ))
-                  )}
-                </div>
-                {incident && (
-                  <article key={incident.id}>
-                    <div className="detail-top">
-                      <span className="eyebrow">{incident.channel}</span>
-                      <span className="pill">{incident.status}</span>
-                    </div>
-                    <h2>{incident.title}</h2>
-                    <p>{incident.reason}</p>
-                    <div className="proposal">
-                      <small>PROPOSED ACTION</small>
-                      <h3>{incident.action}</h3>
-                      <p>Target: {incident.subject}</p>
-                    </div>
-                    <div className="evidence-title">
-                      <h3>Captured evidence</h3>
-                      <span>{incident.messages.length} messages</span>
-                    </div>
-                    <div
-                      className="evidence"
-                      tabIndex={0}
-                      aria-label="Captured evidence"
-                    >
-                      {incident.messages.map((m) => (
-                        <div className="message" key={m.id}>
-                          <div>
-                            <b>{m.author}</b>
-                            <time>{m.time}</time>
-                          </div>
-                          <p>{m.text}</p>
-                        </div>
-                      ))}
-                    </div>
-                    {rehearsal && incident.status === "pending" && (
-                      <div className="actions">
-                        {confirm ? (
-                          <>
-                            <p>
-                              Record simulated approval for{" "}
-                              <b>{incident.action}</b>? No platform action will
-                              execute.
-                            </p>
-                            <button
-                              className="primary"
-                              disabled={decision.isPending}
-                              onClick={() =>
-                                decision.mutate({
-                                  id: incident.id,
-                                  value: "approved",
-                                })
-                              }
-                            >
-                              Confirm simulated approval
-                            </button>
-                            <button onClick={() => setConfirm(false)}>
-                              Cancel
-                            </button>
-                          </>
-                        ) : (
-                          <>
-                            <button
-                              className="primary"
-                              onClick={() => {
-                                setSelected(incident.id);
-                                setConfirm(true);
-                              }}
-                            >
-                              Review approval →
-                            </button>
-                            <button
-                              disabled={decision.isPending}
-                              onClick={() =>
-                                decision.mutate({
-                                  id: incident.id,
-                                  value: "rejected",
-                                })
-                              }
-                            >
-                              Reject proposal
-                            </button>
-                          </>
-                        )}
-                        {decision.isError && (
-                          <p role="alert">{decision.error.message}</p>
-                        )}
-                      </div>
-                    )}
-                    {incident.status !== "pending" && (
-                      <p className="receipt">
-                        {rehearsal
-                          ? "Simulation recorded"
-                          : "Decision recorded"}
-                        : {incident.status}.{" "}
-                        {rehearsal ? "No external action was taken." : ""}
-                      </p>
-                    )}
-                  </article>
-                )}
-              </div>
-            )}
-          </>
+        {rehearsal && (
+          <div className="notice">
+            Local rehearsal · Synthetic identities and data
+          </div>
         )}
-        <footer>
-          FAMEliza · Operator console{" "}
-          <span>
-            {rehearsal ? "No external connections" : "bot.fame.support"}
-          </span>
-        </footer>
+        <DataBoundary
+          key={JSON.stringify(principal)}
+          authority={JSON.stringify(principal)}
+        >
+          {current === "access" ? (
+            <AccessPanel
+              session={session.data}
+              onAccessChange={() => void session.refetch()}
+            />
+          ) : current === "telegram" ? (
+            <TelegramInbox />
+          ) : (
+            <>
+              <header>
+                <h1>
+                  Group <em>connections.</em>
+                </h1>
+              </header>
+              <TelegramGroups />
+            </>
+          )}
+        </DataBoundary>
       </main>
     </div>
   );
 }
-const client = new QueryClient({
-  defaultOptions: { queries: { retry: false, staleTime: 10_000 } },
-});
+function DataBoundary({
+  authority,
+  children,
+}: {
+  authority: string;
+  children: React.ReactNode;
+}) {
+  const cache = useMemo(() => new QueryClient(), [authority]);
+  return <QueryClientProvider client={cache}>{children}</QueryClientProvider>;
+}
+const client = new QueryClient();
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <QueryClientProvider client={client}>

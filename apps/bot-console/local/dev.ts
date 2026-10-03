@@ -1,3 +1,6 @@
+import { z } from "zod";
+import { memoryAccess, localOwner } from "./access-store";
+import { editAccess } from "../server/access";
 import { memoryGroupStore } from "./group-store";
 import { groupService } from "../server/telegram-groups";
 import { serve } from "@hono/node-server";
@@ -66,6 +69,7 @@ const incidents: Incident[] = [
 ];
 let signedIn = false;
 const app = new Hono();
+const access = memoryAccess();
 app.use("*", async (c, next) => {
   c.header("Cache-Control", "no-store");
   await next();
@@ -82,8 +86,41 @@ app.get("/api/session", (c) =>
   c.json({
     user: { id: "local-operator", name: "Local operator" },
     rehearsal: true,
+    principal: localOwner,
+    expires: Math.floor(Date.now() / 1000) + 604800,
+    absoluteExpires: Math.floor(Date.now() / 1000) + 2592000,
   }),
 );
+app.get("/api/access", async (c) =>
+  c.json({
+    policy: await access.store.read(),
+    audit: await access.store.audit(),
+  }),
+);
+app.post("/api/access", async (c) => {
+  try {
+    return c.json(
+      await editAccess(
+        access.store,
+        localOwner.id,
+        await c.req.json(),
+        Math.floor(Date.now() / 1000),
+      ),
+    );
+  } catch (e) {
+    return c.json(
+      {
+        error:
+          e instanceof z.ZodError
+            ? e.issues.map((issue) => issue.message).join(". ")
+            : e instanceof Error
+              ? e.message
+              : "Access update failed",
+      },
+      400,
+    );
+  }
+});
 const mockConfig: TelegramConfig = {
   webhookSecret: "x".repeat(48),
   botId: "7393738833",

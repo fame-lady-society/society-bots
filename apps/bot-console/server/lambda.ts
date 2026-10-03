@@ -1,3 +1,4 @@
+import { accessStore } from "./access-store";
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
 import { dynamoGroupStore } from "./telegram-groups-store";
 import { groupService, GroupConflict } from "./telegram-groups";
@@ -22,7 +23,6 @@ import { listMessages, lastCaptured } from "./telegram-store";
 const configSchema = z.object({
   clientId: z.string().regex(/^\d{17,20}$/),
   clientSecret: z.string().min(1),
-  adminIds: z.array(z.string().regex(/^\d{17,20}$/)).min(1),
 });
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const secrets = new SecretsManagerClient({});
@@ -49,6 +49,7 @@ const onboarding = groupService(groups, async (chatId) => {
 const recordSchema = z.object({
   expires: z.number(),
   absoluteExpires: z.number().optional(),
+  sessionVersion: z.number().optional(),
   userId: z.string().optional(),
   name: z.string().optional(),
 });
@@ -102,7 +103,7 @@ const store: Store = {
     return r.Attributes ? recordSchema.parse(r.Attributes) : undefined;
   },
 };
-// Read configuration on each invocation: removing an admin revokes existing sessions.
+// OAuth credentials are separate from the authoritative access registry.
 export const handler = async (
   event: Parameters<ReturnType<typeof handle>>[0],
   context: Parameters<ReturnType<typeof handle>>[1],
@@ -122,7 +123,7 @@ export const handler = async (
     const redirectUri = `${origin}/api/auth/callback`;
     const app = createApp({
       origin,
-      adminIds: config.adminIds,
+      access: accessStore(),
       store,
       groups: onboarding,
       telegram: {
