@@ -64,6 +64,18 @@ export class BotConsoleAccessStack extends cdk.Stack {
       assumedBy: new iam.ServicePrincipal("cloudformation.amazonaws.com"),
     });
     const executionStatements = [
+      // CDK's AwsCliLayer uses its logical ID as its name, without the stack prefix.
+      statement(
+        [
+          "lambda:PublishLayerVersion",
+          "lambda:GetLayerVersion",
+          "lambda:DeleteLayerVersion",
+        ],
+        [
+          `arn:aws:lambda:us-east-1:${account}:layer:PublishAwsCliLayer2CAAFE45`,
+          `arn:aws:lambda:us-east-1:${account}:layer:PublishAwsCliLayer2CAAFE45:*`,
+        ],
+      ),
       statement(
         ["s3:*"],
         ["arn:aws:s3:::flsbotconsole-*", "arn:aws:s3:::flsbotconsole-*/*"],
@@ -135,7 +147,7 @@ export class BotConsoleAccessStack extends cdk.Stack {
         ["*"],
       ),
       statement(
-        ["route53:GetHostedZone"],
+        ["route53:GetHostedZone", "route53:ListResourceRecordSets"],
         ["arn:aws:route53:::hostedzone/Z034031717ABI6HYEJD9J"],
       ),
       statement(["route53:GetChange"], ["arn:aws:route53:::change/*"]),

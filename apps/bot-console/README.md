@@ -95,7 +95,8 @@ The dedicated `bot-console/auth` secret was provisioned in FLS us-east-1 on
 4. The `bot-console-production` GitHub environment permits only the main branch.
    Its `BOT_CONSOLE_DEPLOY_ROLE_ARN` and `BOT_CONSOLE_AUTH_SECRET_ARN` variables
    contain role/secret ARNs, not credentials. The access stack and environment
-   were provisioned on 2026-10-02; the application itself is not deployed yet.
+   were provisioned on 2026-10-02. The first application deployment completed
+   through CI on 2026-10-02 after correcting publishing-layer and DNS read access.
 5. Review the CDK diff before the first deployment. The stack creates the bot DNS
    record, ACM certificate, private S3/CloudFront distribution, Lambda/API Gateway,
    DynamoDB sessions and scoped secret access. No bot credentials or live listeners.
