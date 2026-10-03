@@ -57,7 +57,13 @@ async function login(f: ReturnType<typeof fixture>) {
 }
 test("all data requires a session and there is no production mock login", async () => {
   const f = fixture();
-  for (const path of ["/api/session", "/api/cases", "/api/local/login"])
+  for (const path of [
+    "/api/session",
+    "/api/cases",
+    "/api/local/login",
+    "/api/telegram/status",
+    "/api/telegram/messages?chatId=-100",
+  ])
     assert.equal((await f.app.request(path)).status, 401);
 });
 test("rejects missing/mismatched state before provider exchange", async () => {

@@ -28,6 +28,14 @@ export interface Dependencies {
     url(state: string): string;
     identity(code: string): Promise<Identity>;
   };
+  telegram?: {
+    status(): Promise<unknown>;
+    messages(
+      chatId: string,
+      cursor?: string,
+      messageId?: string,
+    ): Promise<unknown>;
+  };
   now?: () => number;
 }
 const sessionCookie = "__Host-bot-session";
@@ -143,7 +151,34 @@ export function createApp(deps: Dependencies) {
     deleteCookie(c, sessionCookie, { secure: true, path: "/" });
     return c.body(null, 204);
   });
-  // Initial release has no live ingestion or executor. Local fixtures are a separate server.
+  app.get("/api/telegram/status", async (c) => {
+    if (!deps.telegram) return c.json({ error: "Telegram unavailable" }, 503);
+    return c.json(await deps.telegram.status());
+  });
+  app.get("/api/telegram/messages", async (c) => {
+    if (!deps.telegram) return c.json({ error: "Telegram unavailable" }, 503);
+    const chatId = c.req.query("chatId");
+    const messageId = c.req.query("messageId");
+    const cursor = c.req.query("cursor");
+    if (
+      !chatId ||
+      !/^-\d+$/.test(chatId) ||
+      (messageId && !/^\d+$/.test(messageId)) ||
+      (cursor && cursor.length > 2048)
+    )
+      return c.json({ error: "Invalid query" }, 400);
+    try {
+      return c.json(await deps.telegram.messages(chatId, cursor, messageId));
+    } catch (e) {
+      if (
+        e instanceof Error &&
+        ["Chat not configured", "Invalid cursor"].includes(e.message)
+      )
+        return c.json({ error: e.message }, 400);
+      throw e;
+    }
+  });
+  // No production moderation executor. Local fixtures are a separate server.
   app.get("/api/cases", (c) => c.json([]));
   app.notFound((c) => c.json({ error: "Not found." }, 404));
   return app;

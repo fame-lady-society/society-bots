@@ -19,6 +19,22 @@ export class BotConsoleAccessStack extends cdk.Stack {
       managedPolicyName: "FlsBotConsoleRuntimeBoundary",
       statements: [
         statement(
+          ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"],
+          [
+            `arn:aws:secretsmanager:us-east-1:${account}:secret:bot-console/telegram-receiver-*`,
+          ],
+        ),
+        statement(
+          [
+            "sqs:SendMessage",
+            "sqs:ReceiveMessage",
+            "sqs:DeleteMessage",
+            "sqs:ChangeMessageVisibility",
+            "sqs:GetQueueAttributes",
+          ],
+          [`arn:aws:sqs:us-east-1:${account}:FlsBotConsole-*`],
+        ),
+        statement(
           ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
           [`arn:aws:logs:us-east-1:${account}:log-group:*`],
         ),
@@ -64,6 +80,48 @@ export class BotConsoleAccessStack extends cdk.Stack {
       assumedBy: new iam.ServicePrincipal("cloudformation.amazonaws.com"),
     });
     const executionStatements = [
+      statement(
+        ["sqs:*"],
+        [`arn:aws:sqs:us-east-1:${account}:FlsBotConsole-*`],
+      ),
+      statement(
+        [
+          "lambda:GetEventSourceMapping",
+          "lambda:UpdateEventSourceMapping",
+          "lambda:DeleteEventSourceMapping",
+          "lambda:TagResource",
+          "lambda:UntagResource",
+          "lambda:ListTags",
+        ],
+        [`arn:aws:lambda:us-east-1:${account}:event-source-mapping:*`],
+      ),
+      new iam.PolicyStatement({
+        actions: ["lambda:CreateEventSourceMapping"],
+        resources: ["*"],
+        conditions: {
+          ArnLike: {
+            "lambda:FunctionArn": `arn:aws:lambda:us-east-1:${account}:function:FlsBotConsole-*`,
+          },
+        },
+      }),
+      statement(["lambda:ListEventSourceMappings"], ["*"]),
+      statement(
+        [
+          "secretsmanager:CreateSecret",
+          "secretsmanager:DeleteSecret",
+          "secretsmanager:RestoreSecret",
+          "secretsmanager:DescribeSecret",
+          "secretsmanager:GetSecretValue",
+          "secretsmanager:PutSecretValue",
+          "secretsmanager:UpdateSecret",
+          "secretsmanager:TagResource",
+          "secretsmanager:UntagResource",
+        ],
+        [
+          `arn:aws:secretsmanager:us-east-1:${account}:secret:bot-console/telegram-receiver-*`,
+        ],
+      ),
+      statement(["secretsmanager:GetRandomPassword"], ["*"]),
       // CDK's AwsCliLayer uses its logical ID as its name, without the stack prefix.
       statement(
         [

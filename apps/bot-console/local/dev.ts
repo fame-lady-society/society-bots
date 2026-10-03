@@ -1,6 +1,7 @@
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { createServer } from "vite";
+import { normalizeUpdate, type TelegramConfig } from "../server/telegram";
 import type { Incident } from "../src/contracts";
 const incidents: Incident[] = [
   {
@@ -79,6 +80,55 @@ app.get("/api/session", (c) =>
   c.json({
     user: { id: "local-operator", name: "Local operator" },
     rehearsal: true,
+  }),
+);
+const mockConfig: TelegramConfig = {
+  webhookSecret: "x".repeat(48),
+  botId: "7393738833",
+  username: "famesocietybot",
+  chats: [{ id: "-100", name: "Society test · synthetic" }],
+};
+const now = Math.floor(Date.now() / 1000);
+const raw = {
+  update_id: 1,
+  message: {
+    message_id: 10,
+    date: now - 300,
+    chat: { id: -100, type: "supergroup", title: "Society test · synthetic" },
+    from: { id: 42, first_name: "Flick · mock" },
+    text: "Hello from the local rehearsal. No Telegram messages are sent.",
+  },
+};
+const original = normalizeUpdate(raw, mockConfig, now - 300)!;
+const edited = normalizeUpdate(
+  {
+    update_id: 2,
+    edited_message: {
+      ...raw.message,
+      edit_date: now - 60,
+      text: "Edited synthetic message. Original text remains in captured history.",
+    },
+  },
+  mockConfig,
+  now - 60,
+)!;
+app.get("/api/telegram/status", (c) =>
+  c.json({
+    botId: mockConfig.botId,
+    username: mockConfig.username,
+    chats: mockConfig.chats.map((chat) => ({
+      ...chat,
+      lastCapturedAt: now - 60,
+    })),
+    registeredAt: null,
+    queued: 0,
+    failed: 0,
+  }),
+);
+app.get("/api/telegram/messages", (c) =>
+  c.json({
+    items: c.req.query("messageId") ? [edited, original] : [edited],
+    cursor: null,
   }),
 );
 app.get("/api/cases", (c) => c.json(incidents));
