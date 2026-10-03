@@ -147,7 +147,7 @@ export class BotConsoleAccessStack extends cdk.Stack {
         ["*"],
       ),
       statement(
-        ["route53:GetHostedZone"],
+        ["route53:GetHostedZone", "route53:ListResourceRecordSets"],
         ["arn:aws:route53:::hostedzone/Z034031717ABI6HYEJD9J"],
       ),
       statement(["route53:GetChange"], ["arn:aws:route53:::change/*"]),
