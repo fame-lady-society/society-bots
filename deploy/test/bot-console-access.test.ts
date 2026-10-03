@@ -31,3 +31,23 @@ test("CI cannot read credentials, manage IAM, or deploy its access stack", () =>
   expect(json).toContain("stack/FlsBotConsole/*");
   expect(json).not.toContain("stack/FlsBotConsoleAccess");
 });
+
+test("execution policy allows CDK's unprefixed publishing layer only", () => {
+  const t = Template.fromStack(
+    new BotConsoleAccessStack(new cdk.App(), "FlsBotConsoleAccess", {
+      env: { account: "590183914614", region: "us-east-1" },
+    }),
+  );
+  const policies = t.findResources("AWS::IAM::Policy");
+  const policy = Object.entries(policies).find(([id]) =>
+    id.startsWith("ExecutionPolicy"),
+  )![1];
+  const layer = policy.Properties.PolicyDocument.Statement.find(
+    (s: { Action: string[] }) =>
+      s.Action.includes("lambda:PublishLayerVersion"),
+  );
+  expect(layer.Resource).toEqual([
+    "arn:aws:lambda:us-east-1:590183914614:layer:PublishAwsCliLayer2CAAFE45",
+    "arn:aws:lambda:us-east-1:590183914614:layer:PublishAwsCliLayer2CAAFE45:*",
+  ]);
+});
