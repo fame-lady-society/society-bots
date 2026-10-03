@@ -9,6 +9,7 @@ import {
   PutCommand,
   GetCommand,
   DeleteCommand,
+  UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import {
   SecretsManagerClient,
@@ -47,11 +48,34 @@ const onboarding = groupService(groups, async (chatId) => {
 });
 const recordSchema = z.object({
   expires: z.number(),
+  absoluteExpires: z.number().optional(),
   userId: z.string().optional(),
   name: z.string().optional(),
 });
 const table = process.env.SESSION_TABLE!;
 const store: Store = {
+  async renew(key, now, expires) {
+    try {
+      await ddb.send(
+        new UpdateCommand({
+          TableName: table,
+          Key: { pk: key },
+          UpdateExpression: "SET expires = :expires",
+          ConditionExpression:
+            "attribute_exists(pk) AND expires > :now AND absoluteExpires >= :expires AND absoluteExpires > :now",
+          ExpressionAttributeValues: { ":now": now, ":expires": expires },
+        }),
+      );
+      return true;
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.name === "ConditionalCheckFailedException"
+      )
+        return false;
+      throw error;
+    }
+  },
   async put(key, value) {
     await ddb.send(
       new PutCommand({ TableName: table, Item: { pk: key, ...value } }),

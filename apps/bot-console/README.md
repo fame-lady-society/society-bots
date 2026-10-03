@@ -37,7 +37,9 @@ not supply phishing-resistant application step-up authentication. Add explicit
 WebAuthn step-up before broad privileged administration if that assurance is needed.
 
 Random browser-bound OAuth state expires after five minutes and is atomically
-consumed. Opaque sessions expire after 15 minutes without silent extension;
+consumed. Opaque sessions expire after 15 minutes without renewal. A visible console tab
+renews its session every minute through a same-origin POST, up to a fixed 12-hour
+maximum from login. Background tabs and ordinary data polling do not renew sessions;
 only hashes are persisted in DynamoDB. Expiry is checked independently of TTL
 cleanup. The `__Host-` session cookie is Secure, HttpOnly, host-only and SameSite=Lax.
 API responses are never cached. Mutations require the exact production Origin.
@@ -46,7 +48,8 @@ are used only to retrieve identity and are not persisted or sent to the browser.
 
 Auth config is loaded every request, so allowlist removal revokes access on the
 next request. Discord account/MFA changes are checked at the next login; existing
-sessions expire in at most 15 minutes. OAuth failure details and credentials are
+sessions expire in at most 12 hours. Existing sessions from before renewal was
+deployed require a fresh login. OAuth failure details and credentials are
 not logged. The static login shell is public; every data API checks the session.
 The mock API cannot prove actual OAuth login, Discord MFA behavior or live access.
 
@@ -163,7 +166,6 @@ Before enabling live moderation, add exact-action approvals and an executor as a
 separate reviewed increment. This release has no Discord listener, announcement
 publisher, inference calls or Rose commands.
 
-
 ## Telegram capture
 
 The receiver authenticates Telegram's webhook secret and accepts messages and
@@ -247,6 +249,7 @@ group upgrade that changes its numeric ID requires a new connection.
    `fls-society-agents / prd-controller` into memory, verifies the AWS account and
    bot identity, then writes the dedicated AWS secret. CI never handles its value.
    Repeat only on token rotation. Never paste credentials into arguments or logs.
+
 3. For this first queue-format cutover only, run
    `AWS_PROFILE=fls-admin node --import tsx scripts/telegram-setup.ts pause`.
    This removes the webhook without dropping pending updates. Wait for the old

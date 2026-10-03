@@ -17,6 +17,19 @@ function fixture(
   let clock = 1000;
   let exchanges = 0;
   const store: Store = {
+    async renew(k, now, expires) {
+      const value = records.get(k);
+      if (
+        !value ||
+        value.expires <= now ||
+        !value.absoluteExpires ||
+        value.absoluteExpires <= now ||
+        value.absoluteExpires < expires
+      )
+        return false;
+      records.set(k, { ...value, expires });
+      return true;
+    },
     async put(k, v) {
       records.set(k, v);
     },
@@ -47,7 +60,8 @@ function fixture(
   return {
     app,
     adminIds,
-    advance: () => (clock += 1000),
+    advance: (seconds = 1000) => (clock += seconds),
+    store,
     exchanges: () => exchanges,
   };
 }
@@ -171,6 +185,9 @@ test("storage failures are fail-closed and do not expose internal errors", async
     origin: "https://bot.fame.support",
     adminIds: [owner],
     store: {
+      async renew() {
+        throw new Error("secret-value");
+      },
       async put() {
         throw new Error("secret-value");
       },
@@ -275,4 +292,115 @@ test("authenticated group API attributes issuance and approval to the session ac
     }),
   });
   assert.equal(forged.status, 400);
+});
+
+test("same-origin renewal survives original deadline but GET polling does not renew", async () => {
+  const f = fixture();
+  const signed = await login(f);
+  const Cookie = signed.headers
+    .getSetCookie()
+    .find((c) => c.startsWith("__Host-bot-session="))!
+    .split(";")[0];
+  const headers = { Cookie, Origin: "https://bot.fame.support" };
+  f.advance(800);
+  const renewed = await f.app.request("/api/session", {
+    method: "POST",
+    headers,
+  });
+  assert.equal(renewed.status, 200);
+  assert.match(renewed.headers.get("set-cookie")!, /Max-Age=900/);
+  f.advance(200);
+  assert.equal((await f.app.request("/api/session", { headers })).status, 200);
+  f.advance(700);
+  assert.equal(
+    (await f.app.request("/api/session", { method: "POST", headers })).status,
+    401,
+  );
+});
+
+test("renewal requires the approved session and exact Origin", async () => {
+  const f = fixture();
+  assert.equal(
+    (await f.app.request("/api/session", { method: "POST" })).status,
+    401,
+  );
+  const signed = await login(f);
+  const Cookie = signed.headers
+    .getSetCookie()
+    .find((c) => c.startsWith("__Host-bot-session="))!
+    .split(";")[0];
+  for (const Origin of [undefined, "https://evil.invalid"]) {
+    assert.equal(
+      (
+        await f.app.request("/api/session", {
+          method: "POST",
+          headers: { Cookie, ...(Origin ? { Origin } : {}) },
+        })
+      ).status,
+      403,
+    );
+  }
+  f.adminIds.splice(0);
+  assert.equal(
+    (
+      await f.app.request("/api/session", {
+        method: "POST",
+        headers: { Cookie, Origin: "https://bot.fame.support" },
+      })
+    ).status,
+    401,
+  );
+});
+
+test("renewal respects the twelve-hour absolute deadline", async () => {
+  const f = fixture();
+  const signed = await login(f);
+  const Cookie = signed.headers
+    .getSetCookie()
+    .find((c) => c.startsWith("__Host-bot-session="))!
+    .split(";")[0];
+  const headers = { Cookie, Origin: "https://bot.fame.support" };
+  for (let i = 0; i < 53; i++) {
+    f.advance(800);
+    assert.equal(
+      (await f.app.request("/api/session", { method: "POST", headers })).status,
+      200,
+    );
+  }
+  f.advance(700);
+  const final = await f.app.request("/api/session", {
+    method: "POST",
+    headers,
+  });
+  assert.equal(final.status, 200);
+  assert.match(final.headers.get("set-cookie")!, /Max-Age=100(?:;|$)/);
+  f.advance(100);
+  assert.equal(
+    (await f.app.request("/api/session", { method: "POST", headers })).status,
+    401,
+  );
+});
+
+test("logout racing renewal cannot resurrect the session", async () => {
+  const f = fixture();
+  const signed = await login(f);
+  const Cookie = signed.headers
+    .getSetCookie()
+    .find((c) => c.startsWith("__Host-bot-session="))!
+    .split(";")[0];
+  const headers = { Cookie, Origin: "https://bot.fame.support" };
+  const renew = f.store.renew;
+  f.store.renew = async (key, now, expires) => {
+    assert.equal(
+      (await f.app.request("/api/auth/logout", { method: "POST", headers }))
+        .status,
+      204,
+    );
+    return renew(key, now, expires);
+  };
+  assert.equal(
+    (await f.app.request("/api/session", { method: "POST", headers })).status,
+    401,
+  );
+  assert.equal((await f.app.request("/api/session", { headers })).status, 401);
 });
