@@ -44,3 +44,9 @@ export const connectionSchema = z.object({
   queued: z.number(),
   failed: z.number(),
 });
+
+// Readers receive group-scoped data only; global operational fields are absent.
+export const inboxStatusSchema = z.union([
+  connectionSchema.strict(),
+  z.object({ chats: connectionSchema.shape.chats }).strict(),
+]);

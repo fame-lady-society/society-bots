@@ -1,3 +1,4 @@
+import { connectionSchema } from "../src/telegram-contracts";
 import { permits, type Principal } from "../src/access-contracts";
 import { AccessConflict, editAccess, type AccessStore } from "./access";
 import { createHash, randomBytes } from "node:crypto";
@@ -255,19 +256,23 @@ export function createApp(deps: Dependencies) {
   app.get("/api/telegram/status", async (c) => {
     if (!deps.telegram) return c.json({ error: "Telegram unavailable" }, 503);
     const principal = c.get("principal");
-    const result = (await deps.telegram.status()) as {
-      chats: { id: string }[];
-      queued: number;
-      failed: number;
-    };
-    const chats = result.chats.filter((g) =>
-      permits(principal, "connections.read", `telegram:${g.id}`),
-    );
+    const result = connectionSchema.parse(await deps.telegram.status());
+    const chats = result.chats
+      .filter((g) => permits(principal, "connections.read", `telegram:${g.id}`))
+      .map(({ id, name, state, lastCapturedAt }) => ({
+        id,
+        name,
+        state,
+        lastCapturedAt,
+      }));
+    if (!permits(principal, "connections.manage")) return c.json({ chats });
     return c.json({
-      ...result,
       chats,
-      queued: permits(principal, "connections.manage") ? result.queued : 0,
-      failed: permits(principal, "connections.manage") ? result.failed : 0,
+      botId: result.botId,
+      username: result.username,
+      registeredAt: result.registeredAt,
+      queued: result.queued,
+      failed: result.failed,
     });
   });
   app.get("/api/telegram/messages", async (c) => {

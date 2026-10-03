@@ -312,6 +312,11 @@ Roles are a reviewed catalog, not user-editable policy expressions:
 | Connection manager | Connection reads/changes, invite generation/revocation | `*` |
 | Inbox reader | Group metadata and captured messages/history | `telegram:*` or `telegram:<negative-chat-id>` |
 
+Reader status responses contain only explicitly selected permitted group fields;
+bot identity, webhook registration and queue metadata are restricted to owners and
+connection managers. New reader grants start with an empty scope; owners must select
+an exact group or explicitly enter `telegram:*`.
+
 Readers cannot manage connections, access other groups, or read the access registry
 and audit. Managers cannot read messages. Only owners edit grants. The owner role
 is human-only. Disabling the final owner or removing their owner role is rejected.
@@ -341,6 +346,8 @@ does not recheck Discord MFA/account status until login. Existing session cookie
 without a generation are rejected. Logout remains atomic and renewal cannot recreate
 a deleted session. Permission-dependent browser query caches are partitioned by the
 current principal/grants so a changed scope does not reuse another scope's data.
+A data query or mutation returning 401/403 immediately hides the affected view,
+refreshes session authority and reopens My access with a fresh data cache.
 
 ### RBAC deployment
 

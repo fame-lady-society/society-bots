@@ -181,9 +181,24 @@ async function apiFixture(principal: Principal = reader) {
     },
     telegram: {
       status: async () => ({
+        botId: "7393738833",
+        username: "famesocietybot",
+        registeredAt: "2026-10-03T12:00:00Z",
+        futureGlobalField: "must not escape",
         chats: [
-          { id: "-100", name: "Allowed" },
-          { id: "-200", name: "Private" },
+          {
+            id: "-100",
+            name: "Allowed",
+            state: "active",
+            lastCapturedAt: 100,
+            internalNote: "private",
+          },
+          {
+            id: "-200",
+            name: "Private",
+            state: "active",
+            lastCapturedAt: null,
+          },
         ],
         queued: 9,
         failed: 2,
@@ -212,9 +227,9 @@ test("reader HTTP routes filter discovery and reject other groups, management, a
   const { app, headers } = await apiFixture();
   const status = await app.request("/api/telegram/status", { headers });
   assert.deepEqual(await status.json(), {
-    chats: [{ id: "-100", name: "Allowed" }],
-    queued: 0,
-    failed: 0,
+    chats: [
+      { id: "-100", name: "Allowed", state: "active", lastCapturedAt: 100 },
+    ],
   });
   assert.equal(
     (await app.request("/api/telegram/messages?chatId=-100", { headers }))
@@ -355,4 +370,40 @@ test("DynamoDB adapter commits policy CAS and immutable audit together, and prop
   assert.equal(await rejected.write(previous, next, receipt), false);
   conflict.CancellationReasons[0].Code = "ProvisionedThroughputExceeded";
   await assert.rejects(rejected.write(previous, next, receipt), /conflict/);
+});
+
+test("only owners and managers receive explicitly selected global status fields", async () => {
+  for (const role of ["owner", "manager"] as const) {
+    const { app, headers } = await apiFixture({
+      ...reader,
+      grants: [{ role, scope: "*" }],
+    });
+    const response = await app.request("/api/telegram/status", { headers });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      botId: "7393738833",
+      username: "famesocietybot",
+      registeredAt: "2026-10-03T12:00:00Z",
+      chats: [
+        { id: "-100", name: "Allowed", state: "active", lastCapturedAt: 100 },
+        { id: "-200", name: "Private", state: "active", lastCapturedAt: null },
+      ],
+      queued: 9,
+      failed: 2,
+    });
+  }
+});
+
+test("all-groups reader still receives no global operational metadata", async () => {
+  const { app, headers } = await apiFixture({
+    ...reader,
+    grants: [{ role: "reader", scope: "telegram:*" }],
+  });
+  const response = await app.request("/api/telegram/status", { headers });
+  assert.deepEqual(await response.json(), {
+    chats: [
+      { id: "-100", name: "Allowed", state: "active", lastCapturedAt: 100 },
+      { id: "-200", name: "Private", state: "active", lastCapturedAt: null },
+    ],
+  });
 });

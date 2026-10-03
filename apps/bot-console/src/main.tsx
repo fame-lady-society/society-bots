@@ -1,4 +1,5 @@
-import React, { useState, useMemo } from "react";
+import { createDataClient } from "./data-client";
+import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   QueryClient,
@@ -13,6 +14,8 @@ import { TelegramGroups } from "./TelegramGroups";
 import "./style.css";
 function App() {
   const [view, setView] = useState("access");
+  const [authorityPending, setAuthorityPending] = useState(false);
+  const [dataGeneration, setDataGeneration] = useState(0);
   const session = useQuery({
     queryKey: ["session"],
     retry: false,
@@ -32,6 +35,15 @@ function App() {
     },
   });
   const [logoutError, setLogoutError] = useState("");
+  const refreshAuthority = async () => {
+    setAuthorityPending(true);
+    setView("access");
+    await session.refetch();
+    setDataGeneration((n) => n + 1);
+    setAuthorityPending(false);
+  };
+  if (authorityPending)
+    return <div className="center">Checking your access…</div>;
   if (session.isPending)
     return <div className="center">Opening your console…</div>;
   if (session.isError)
@@ -114,8 +126,8 @@ function App() {
           </div>
         )}
         <DataBoundary
-          key={JSON.stringify(principal)}
-          authority={JSON.stringify(principal)}
+          key={`${dataGeneration}:${JSON.stringify(principal)}`}
+          onAuthorityDenied={() => void refreshAuthority()}
         >
           {current === "access" ? (
             <AccessPanel
@@ -140,13 +152,13 @@ function App() {
   );
 }
 function DataBoundary({
-  authority,
+  onAuthorityDenied,
   children,
 }: {
-  authority: string;
+  onAuthorityDenied: () => void;
   children: React.ReactNode;
 }) {
-  const cache = useMemo(() => new QueryClient(), [authority]);
+  const [cache] = useState(() => createDataClient(onAuthorityDenied));
   return <QueryClientProvider client={cache}>{children}</QueryClientProvider>;
 }
 const client = new QueryClient();

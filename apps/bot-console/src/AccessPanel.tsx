@@ -1,3 +1,4 @@
+import { apiFetch } from "./api";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
@@ -32,7 +33,7 @@ export function AccessPanel({
     retry: false,
     refetchInterval: 30000,
     queryFn: async () => {
-      const r = await fetch("/api/access");
+      const r = await apiFetch("/api/access");
       if (!r.ok)
         throw new Error(
           "Could not load access. Your owner access may have changed.",
@@ -56,7 +57,7 @@ export function AccessPanel({
       revokeSessions: boolean;
     }) => {
       const { sessionVersion, ...principal } = p;
-      const r = await fetch("/api/access", {
+      const r = await apiFetch("/api/access", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ version, principal, revokeSessions }),
@@ -282,7 +283,7 @@ export function AccessPanel({
                             const role = e.target.value as typeof g.role;
                             grants[i] = {
                               role,
-                              scope: role === "reader" ? "telegram:*" : "*",
+                              scope: role === "reader" ? "" : "*",
                             };
                             change({ grants });
                           }}
@@ -303,6 +304,8 @@ export function AccessPanel({
                       <label>
                         Scope
                         <input
+                          required
+                          placeholder="telegram:-100… or telegram:*"
                           value={g.scope}
                           disabled={g.role !== "reader"}
                           onChange={(e) => {
@@ -333,7 +336,7 @@ export function AccessPanel({
                       change({
                         grants: [
                           ...edit.principal.grants,
-                          { role: "reader", scope: "telegram:*" },
+                          { role: "reader", scope: "" },
                         ],
                       })
                     }
