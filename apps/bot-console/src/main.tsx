@@ -22,7 +22,16 @@ async function request(path: string, options?: RequestInit) {
 function App() {
   const session = useQuery({
     queryKey: ["session"],
-    queryFn: async () => sessionSchema.parse(await request("/api/session")),
+    // Only a visible production tab renews the session. Other polling stays read-only.
+    queryFn: async () =>
+      sessionSchema.parse(
+        await request("/api/session", {
+          method:
+            !import.meta.env.DEV && document.visibilityState === "visible"
+              ? "POST"
+              : "GET",
+        }),
+      ),
     retry: false,
     refetchInterval: 60_000,
   });

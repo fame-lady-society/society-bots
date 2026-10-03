@@ -8,6 +8,7 @@ import { GroupConflict, type GroupService } from "./telegram-groups";
 
 export interface RecordValue {
   expires: number;
+  absoluteExpires?: number;
   userId?: string;
   name?: string;
 }
@@ -15,6 +16,7 @@ export interface Store {
   put(key: string, value: RecordValue): Promise<void>;
   get(key: string): Promise<RecordValue | undefined>;
   take(key: string): Promise<RecordValue | undefined>;
+  renew(key: string, now: number, expires: number): Promise<boolean>;
 }
 export interface Identity {
   id: string;
@@ -108,6 +110,7 @@ export function createApp(deps: Dependencies) {
     const session = token();
     await deps.store.put(`session#${digest(session)}`, {
       expires: now() + 900,
+      absoluteExpires: now() + 12 * 3600,
       userId: identity.id,
       name: identity.username,
     });
@@ -127,6 +130,8 @@ export function createApp(deps: Dependencies) {
     if (
       !session?.userId ||
       session.expires <= now() ||
+      !session.absoluteExpires ||
+      session.absoluteExpires <= now() ||
       !deps.adminIds.includes(session.userId)
     )
       return c.json({ error: "Session expired or access revoked." }, 401);
@@ -138,12 +143,37 @@ export function createApp(deps: Dependencies) {
     c.set("actor", session.userId);
     await next();
   });
-  app.get("/api/session", async (c) => {
+  app.on(["GET", "POST"], "/api/session", async (c) => {
     const session = await deps.store.get(
       `session#${digest(getCookie(c, sessionCookie)!)}`,
     );
-    if (!session?.userId || session.expires <= now())
+    if (
+      !session?.userId ||
+      session.expires <= now() ||
+      !session.absoluteExpires ||
+      session.absoluteExpires <= now()
+    )
       return c.json({ error: "Session expired." }, 401);
+    if (c.req.method === "POST") {
+      const time = now();
+      const expires = Math.min(time + 900, session.absoluteExpires);
+      // Conditional renewal cannot recreate a session deleted by concurrent logout.
+      if (
+        !(await deps.store.renew(
+          `session#${digest(getCookie(c, sessionCookie)!)}`,
+          time,
+          expires,
+        ))
+      )
+        return c.json({ error: "Session expired." }, 401);
+      setCookie(c, sessionCookie, getCookie(c, sessionCookie)!, {
+        httpOnly: true,
+        secure: true,
+        sameSite: "Lax",
+        path: "/",
+        maxAge: expires - time,
+      });
+    }
     return c.json({
       user: { id: session.userId, name: session.name ?? "Administrator" },
       rehearsal: false,
