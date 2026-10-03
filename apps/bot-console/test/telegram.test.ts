@@ -6,12 +6,36 @@ import {
   type TelegramConfig,
 } from "../server/telegram";
 import { saveMessage } from "../server/telegram-store";
-import type { PutCommand } from "@aws-sdk/lib-dynamodb";
+import type { TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
 const config: TelegramConfig = {
   webhookSecret: "s".repeat(48),
   botId: "7393738833",
   username: "famesocietybot",
-  chats: [{ id: "-100", name: "Test" }],
+};
+const groups = {
+  async get(id: string) {
+    return id === "-100"
+      ? {
+          id,
+          name: "Test",
+          state: "active" as const,
+          requestId: "test",
+          requestedBy: "42",
+          createdBy: "operator",
+          requestedAt: 0,
+          updatedAt: 0,
+          updatedBy: "operator",
+          hasHistory: true,
+          associationId: "association",
+          activatedAt: 0,
+        }
+      : undefined;
+  },
+  async redeem() {},
+  async ignore() {},
+  async ignored() {
+    return false;
+  },
 };
 const message = {
   message_id: 1,
@@ -40,6 +64,7 @@ test("webhook rejects spoofed requests and acknowledges only after durable enque
       writes++;
       throw new Error("private internals");
     },
+    groups,
     () => 2000,
   );
   assert.equal((await post(app, original, "wrong")).status, 403);
@@ -56,6 +81,7 @@ test("only explicitly allowed groups are captured; private and unsupported updat
     async () => {
       writes++;
     },
+    groups,
     () => 2000,
   );
   for (const body of [
@@ -81,6 +107,7 @@ test("malformed and oversized payloads fail without enqueue", async () => {
     async () => {
       writes++;
     },
+    groups,
     () => 2000,
   );
   assert.equal(
@@ -91,7 +118,7 @@ test("malformed and oversized payloads fail without enqueue", async () => {
   assert.equal(writes, 0);
 });
 test("capture preserves literal untrusted content, sender-chat attribution and fixed retention", () => {
-  const item = normalizeUpdate(original, config, 2000)!;
+  const item = normalizeUpdate(original, 2000)!;
   assert.equal(item.text, message.text);
   assert.equal(item.expires, 1000 + 3 * 365 * 86400);
   const edited = normalizeUpdate(
@@ -103,18 +130,18 @@ test("capture preserves literal untrusted content, sender-chat attribution and f
         sender_chat: { id: -100, title: "Anonymous admin" },
       },
     },
-    config,
     4000,
   )!;
   assert.equal(edited.senderId, "chat:-100");
   assert.equal(edited.author, "Anonymous admin");
   assert.equal(edited.expires, item.expires);
-  assert.equal(normalizeUpdate(original, config, item.expires), null);
+  assert.equal(normalizeUpdate(original, item.expires), null);
 });
 test("replay after partial failure repairs latest projection; old edits cannot replace new content", async () => {
   const rows = new Map<string, Record<string, any>>();
   let failProjection = true;
-  const send = async (c: PutCommand) => {
+  const send = async (command: TransactWriteCommand) => {
+    const c = { input: command.input.TransactItems![2].Put! };
     const i = c.input.Item!;
     const key = `${i.pk}|${i.sk}`;
     const prev = rows.get(key);
@@ -130,26 +157,32 @@ test("replay after partial failure repairs latest projection; old edits cannot r
         (i.lastCapturedAt && prev.lastCapturedAt >= i.lastCapturedAt))
     ) {
       const e = new Error("Conditional");
-      e.name = "ConditionalCheckFailedException";
+      e.name = "TransactionCanceledException";
+      Object.assign(e, {
+        CancellationReasons: [
+          { Code: "None" },
+          { Code: "None" },
+          { Code: "ConditionalCheckFailed" },
+        ],
+      });
       throw e;
     }
     rows.set(key, i);
     return {};
   };
-  const old = normalizeUpdate(original, config, 2000)!;
-  await assert.rejects(saveMessage(old, send));
-  await saveMessage(old, send);
+  const old = normalizeUpdate(original, 2000)!;
+  await assert.rejects(saveMessage(old, "association", send));
+  await saveMessage(old, "association", send);
   const newer = normalizeUpdate(
     {
       update_id: 3,
       edited_message: { ...message, edit_date: 3000, text: "New" },
     },
-    config,
     3001,
   )!;
-  await saveMessage(newer, send);
-  await saveMessage(old, send);
-  await saveMessage(newer, send);
+  await saveMessage(newer, "association", send);
+  await saveMessage(old, "association", send);
+  await saveMessage(newer, "association", send);
   const projection = [...rows.values()].find((r) => r.pk === "chat#-100")!;
   assert.equal(projection.text, "New");
   assert.equal(

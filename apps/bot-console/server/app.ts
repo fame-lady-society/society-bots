@@ -4,6 +4,8 @@ import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { secureHeaders } from "hono/secure-headers";
 import { z } from "zod";
 
+import { GroupConflict, type GroupService } from "./telegram-groups";
+
 export interface RecordValue {
   expires: number;
   userId?: string;
@@ -36,6 +38,7 @@ export interface Dependencies {
       messageId?: string,
     ): Promise<unknown>;
   };
+  groups?: GroupService;
   now?: () => number;
 }
 const sessionCookie = "__Host-bot-session";
@@ -53,7 +56,7 @@ export function createApp(deps: Dependencies) {
   )
     throw new Error("Invalid admin configuration");
   const now = deps.now ?? (() => Math.floor(Date.now() / 1000));
-  const app = new Hono();
+  const app = new Hono<{ Variables: { actor: string } }>();
   app.use("*", secureHeaders());
   app.use("*", async (c, next) => {
     c.header("Cache-Control", "no-store");
@@ -132,7 +135,7 @@ export function createApp(deps: Dependencies) {
       c.req.header("Origin") !== deps.origin
     )
       return c.json({ error: "Request origin rejected." }, 403);
-    // Values are read again only for session display; authorization has already run.
+    c.set("actor", session.userId);
     await next();
   });
   app.get("/api/session", async (c) => {
@@ -175,6 +178,65 @@ export function createApp(deps: Dependencies) {
         ["Chat not configured", "Invalid cursor"].includes(e.message)
       )
         return c.json({ error: e.message }, 400);
+      throw e;
+    }
+  });
+  app.get("/api/telegram/groups", async (c) => {
+    if (!deps.groups) return c.json({ error: "Telegram unavailable" }, 503);
+    return c.json(await deps.groups.list());
+  });
+  app.post("/api/telegram/invites", async (c) => {
+    if (!deps.groups) return c.json({ error: "Telegram unavailable" }, 503);
+    try {
+      return c.json(await deps.groups.issue(c.get("actor")), 201);
+    } catch (e) {
+      if (e instanceof GroupConflict) return c.json({ error: e.message }, 409);
+      throw e;
+    }
+  });
+  app.get("/api/telegram/invites/:id", async (c) => {
+    if (!deps.groups) return c.json({ error: "Telegram unavailable" }, 503);
+    if (!/^[a-f0-9]{64}$/.test(c.req.param("id")))
+      return c.json({ error: "Invalid code reference" }, 400);
+    const invite = await deps.groups.invite(c.req.param("id"));
+    return invite
+      ? c.json(invite)
+      : c.json({ error: "Code expired or unavailable" }, 404);
+  });
+  app.post("/api/telegram/invites/:id/revoke", async (c) => {
+    if (!deps.groups) return c.json({ error: "Telegram unavailable" }, 503);
+    if (!/^[a-f0-9]{64}$/.test(c.req.param("id")))
+      return c.json({ error: "Invalid code reference" }, 400);
+    try {
+      await deps.groups.revoke(c.req.param("id"), c.get("actor"));
+      return c.body(null, 204);
+    } catch (e) {
+      if (e instanceof GroupConflict) return c.json({ error: e.message }, 409);
+      throw e;
+    }
+  });
+  app.post("/api/telegram/groups/:id/decision", async (c) => {
+    if (!deps.groups) return c.json({ error: "Telegram unavailable" }, 503);
+    const body = z
+      .object({
+        requestId: z.string().min(1).max(100),
+        action: z.enum(["approve", "reject", "disconnect"]),
+      })
+      .strict()
+      .safeParse(await c.req.json().catch(() => null));
+    if (!/^-\d+$/.test(c.req.param("id")) || !body.success)
+      return c.json({ error: "Invalid decision" }, 400);
+    try {
+      return c.json(
+        await deps.groups.decide(
+          c.req.param("id"),
+          body.data.requestId,
+          body.data.action,
+          c.get("actor"),
+        ),
+      );
+    } catch (e) {
+      if (e instanceof GroupConflict) return c.json({ error: e.message }, 409);
       throw e;
     }
   });

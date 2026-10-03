@@ -13,9 +13,15 @@ import {
   capturedMessageSchema,
   webhookApp,
 } from "./telegram";
+import { dynamoGroupStore } from "./telegram-groups-store";
+import { groupService } from "./telegram-groups";
 import { saveMessage } from "./telegram-store";
 const secrets = new SecretsManagerClient({});
 const sqs = new SQSClient({});
+const groups = dynamoGroupStore();
+const onboarding = groupService(groups, async () => {
+  throw new Error("Approval unavailable in receiver");
+});
 export async function readTelegramConfig() {
   const s = await secrets.send(
     new GetSecretValueCommand({ SecretId: process.env.TELEGRAM_CONFIG_ARN! }),
@@ -44,14 +50,23 @@ export const webhook = async (
   try {
     const config = await readTelegramConfig();
     return await handle(
-      webhookApp(config, async (item) => {
-        await sqs.send(
-          new SendMessageCommand({
-            QueueUrl: process.env.INGEST_QUEUE_URL!,
-            MessageBody: JSON.stringify(item),
-          }),
-        );
-      }),
+      webhookApp(
+        config,
+        async (item) => {
+          await sqs.send(
+            new SendMessageCommand({
+              QueueUrl: process.env.INGEST_QUEUE_URL!,
+              MessageBody: JSON.stringify(item),
+            }),
+          );
+        },
+        {
+          get: groups.get,
+          redeem: onboarding.redeem,
+          ignore: groups.ignore,
+          ignored: groups.ignored,
+        },
+      ),
     )(event, context);
   } catch {
     return { statusCode: 503, body: "Temporarily unavailable" };
@@ -60,16 +75,22 @@ export const webhook = async (
 export const worker = async (event: {
   Records: { messageId: string; body: string }[];
 }) => {
-  const config = await readTelegramConfig();
   const batchItemFailures: { itemIdentifier: string }[] = [];
   for (const record of event.Records) {
     try {
-      const item = capturedMessageSchema.parse(JSON.parse(record.body));
+      const raw: unknown = JSON.parse(record.body);
+      const item = capturedMessageSchema.parse(raw);
+      const associationId = (raw as { associationId?: string }).associationId;
+      const group = await groups.get(item.chatId);
       if (
-        config.chats.some((c) => c.id === item.chatId) &&
+        group?.state === "active" &&
+        !!associationId &&
+        group.associationId === associationId &&
+        item.sentAt >= group.activatedAt! &&
+        !(await groups.ignored(item.chatId, item.messageId)) &&
         item.expires > Math.floor(Date.now() / 1000)
       )
-        await saveMessage(item);
+        await saveMessage(item, associationId);
     } catch {
       batchItemFailures.push({ itemIdentifier: record.messageId });
     }

@@ -14,14 +14,6 @@ export const telegramConfigSchema = z.object({
   webhookSecret: z.string().min(32),
   botId: z.literal("7393738833"),
   username: z.literal("famesocietybot"),
-  chats: z
-    .array(
-      z.object({
-        id: z.string().regex(/^-\d+$/),
-        name: z.string().min(1).max(200),
-      }),
-    )
-    .max(20),
   registeredAt: z.string().datetime().optional(),
 });
 export type TelegramConfig = z.infer<typeof telegramConfigSchema>;
@@ -49,6 +41,7 @@ const message = z.object({
     })
     .optional(),
   text: z.string().max(32768).optional(),
+  forward_origin: z.unknown().optional(),
   caption: z.string().max(32768).optional(),
   photo: z
     .array(
@@ -66,24 +59,18 @@ const message = z.object({
     })
     .optional(),
 });
-const update = z.object({
+export const updateSchema = z.object({
   update_id: z.number().int().nonnegative().safe(),
   message: message.optional(),
   edited_message: message.optional(),
 });
 export function normalizeUpdate(
   raw: unknown,
-  config: TelegramConfig,
   now: number,
 ): CapturedMessage | null {
-  const data = update.parse(raw);
+  const data = updateSchema.parse(raw);
   const m = data.edited_message ?? data.message;
-  if (
-    !m ||
-    !["group", "supergroup"].includes(m.chat.type) ||
-    !config.chats.some((c) => c.id === String(m.chat.id))
-  )
-    return null;
+  if (!m || !["group", "supergroup"].includes(m.chat.type)) return null;
   const photo = m.photo?.at(-1);
   const expires = m.date + 3 * 365 * 86400;
   if (expires <= now) return null;
@@ -127,9 +114,28 @@ export function normalizeUpdate(
     version: `${String(m.edit_date ?? m.date).padStart(12, "0")}:${String(data.update_id).padStart(16, "0")}`,
   });
 }
+export interface WebhookGroups {
+  ignore(chatId: string, messageId: string, expires: number): Promise<void>;
+  ignored(chatId: string, messageId: string): Promise<boolean>;
+  get(
+    id: string,
+  ): Promise<
+    import("../src/telegram-groups-contracts").TelegramGroup | undefined
+  >;
+  redeem(
+    code: string,
+    chatId: string,
+    name: string,
+    sender: string,
+  ): Promise<void>;
+}
+// Suppress onboarding commands in original messages, forwards, captions and edits.
+export const isStartCommand = (text: string | undefined) =>
+  /^\/start(?:@famesocietybot)?(?:\s|$)/i.test(text ?? "");
 export function webhookApp(
   config: TelegramConfig,
-  enqueue: (m: CapturedMessage) => Promise<void>,
+  enqueue: (m: CapturedMessage & { associationId: string }) => Promise<void>,
+  groups: WebhookGroups,
   now = () => Math.floor(Date.now() / 1000),
 ) {
   const app = new Hono();
@@ -147,17 +153,55 @@ export function webhookApp(
     // Check actual bytes, not just a caller-controlled Content-Length header.
     const body = await c.req.arrayBuffer();
     if (body.byteLength > 128 * 1024) return c.body(null, 413);
-    let item: CapturedMessage | null;
+    let data: z.infer<typeof updateSchema>;
     try {
-      item = normalizeUpdate(
-        JSON.parse(Buffer.from(body).toString("utf8")),
-        config,
-        now(),
-      );
+      data = updateSchema.parse(JSON.parse(Buffer.from(body).toString("utf8")));
     } catch {
       return c.body(null, 400);
     }
-    if (item) await enqueue(item);
+    const m = data.edited_message ?? data.message;
+    if (!m || !["group", "supergroup"].includes(m.chat.type))
+      return c.body(null, 204);
+    const group = await groups.get(String(m.chat.id));
+    if (isStartCommand(m.text) || isStartCommand(m.caption)) {
+      if (group?.hasHistory)
+        await groups.ignore(
+          String(m.chat.id),
+          String(m.message_id),
+          m.date + 3 * 365 * 86400,
+        );
+      const match = m.text?.match(
+        /^\/start@famesocietybot\s+([A-Za-z0-9-]+)\s*$/i,
+      );
+      if (
+        match &&
+        !data.edited_message &&
+        !m.edit_date &&
+        !m.forward_origin &&
+        !m.sender_chat &&
+        m.from &&
+        !m.from.is_bot
+      )
+        await groups.redeem(
+          match[1],
+          String(m.chat.id),
+          m.chat.title ?? "Telegram group",
+          String(m.from.id),
+        );
+      return c.body(null, 204);
+    }
+    if (await groups.ignored(String(m.chat.id), String(m.message_id)))
+      return c.body(null, 204);
+    const time = now();
+    // Original message date prevents pre-approval backlog and its later edits from entering capture.
+    if (
+      group?.state !== "active" ||
+      !group.associationId ||
+      m.date < group.activatedAt!
+    )
+      return c.body(null, 204);
+    const item = normalizeUpdate(data, time);
+    if (item) await enqueue({ ...item, associationId: group.associationId });
     return c.body(null, 204);
   });
   return app;

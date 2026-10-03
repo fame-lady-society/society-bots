@@ -1,3 +1,6 @@
+import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
+import { dynamoGroupStore } from "./telegram-groups-store";
+import { groupService, GroupConflict } from "./telegram-groups";
 import { handle } from "hono/aws-lambda";
 import * as oauth from "oauth4webapi";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
@@ -22,6 +25,26 @@ const configSchema = z.object({
 });
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const secrets = new SecretsManagerClient({});
+const groups = dynamoGroupStore();
+const lambda = new LambdaClient({});
+const onboarding = groupService(groups, async (chatId) => {
+  const response = await lambda.send(
+    new InvokeCommand({
+      FunctionName: process.env.TELEGRAM_VERIFIER_ARN!,
+      Payload: Buffer.from(JSON.stringify({ chatId })),
+    }),
+  );
+  const result = z
+    .object({ ok: z.literal(true), name: z.string() })
+    .safeParse(
+      JSON.parse(Buffer.from(response.Payload ?? []).toString() || "{}"),
+    );
+  if (response.FunctionError || !result.success)
+    throw new GroupConflict(
+      "Could not verify the bot is a group administrator. Check its permissions and try again.",
+    );
+  return { name: result.data.name };
+});
 const recordSchema = z.object({
   expires: z.number(),
   userId: z.string().optional(),
@@ -77,6 +100,7 @@ export const handler = async (
       origin,
       adminIds: config.adminIds,
       store,
+      groups: onboarding,
       telegram: {
         async status() {
           const c = await readTelegramConfig();
@@ -88,10 +112,12 @@ export const handler = async (
             botId: c.botId,
             username: c.username,
             chats: await Promise.all(
-              c.chats.map(async (chat) => ({
-                ...chat,
-                lastCapturedAt: await lastCaptured(chat.id),
-              })),
+              (await groups.list())
+                .filter((g) => g.hasHistory)
+                .map(async (chat) => ({
+                  ...chat,
+                  lastCapturedAt: await lastCaptured(chat.id),
+                })),
             ),
             registeredAt: c.registeredAt ?? null,
             queued,
@@ -99,9 +125,8 @@ export const handler = async (
           };
         },
         async messages(chatId, cursor, messageId) {
-          const c = await readTelegramConfig();
-          if (!c.chats.some((chat) => chat.id === chatId))
-            throw new Error("Chat not configured");
+          const group = await groups.get(chatId);
+          if (!group?.hasHistory) throw new Error("Chat not configured");
           return listMessages(chatId, cursor, messageId);
         },
       },

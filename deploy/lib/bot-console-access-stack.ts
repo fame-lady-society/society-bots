@@ -19,6 +19,18 @@ export class BotConsoleAccessStack extends cdk.Stack {
       managedPolicyName: "FlsBotConsoleRuntimeBoundary",
       statements: [
         statement(
+          ["lambda:InvokeFunction"],
+          [
+            `arn:aws:lambda:us-east-1:${account}:function:FlsBotConsole-TelegramVerifier*`,
+          ],
+        ),
+        statement(
+          ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"],
+          [
+            `arn:aws:secretsmanager:us-east-1:${account}:secret:bot-console/telegram-verifier-*`,
+          ],
+        ),
+        statement(
           ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"],
           [
             `arn:aws:secretsmanager:us-east-1:${account}:secret:bot-console/telegram-receiver-*`,
@@ -41,6 +53,7 @@ export class BotConsoleAccessStack extends cdk.Stack {
         statement(
           [
             "dynamodb:GetItem",
+            "dynamodb:ConditionCheckItem",
             "dynamodb:PutItem",
             "dynamodb:DeleteItem",
             "dynamodb:UpdateItem",

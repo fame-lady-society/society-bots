@@ -185,35 +185,110 @@ Both evidence and untrusted instructions are rendered as plain text.
 Only the authenticated operator can read messages, paginate history or inspect
 connection configuration and approximate queue counts. A recorded webhook setup
 time is not a live Telegram health check; an idle group is not proof of failure.
-Runtime functions do not receive the Telegram bot token and cannot call Telegram
-moderation or send-message methods with it.
+The receiver and writer have no Telegram bot token. A separate verifier Lambda
+can read `bot-console/telegram-verifier`; its only handler checks the exact group
+ID and bot administrator membership. Only the console API can invoke it. There is
+no generic Telegram proxy or message sender.
 
-### Initial setup after deployment
+### Connect and manage groups
 
-1. Bootstrap access-CI roles and the protected GitHub environment before merging
-   this increment; application CI cannot update its own IAM permissions.
-2. Let main CI deploy the receiver, queues, table and initially empty group list.
-3. Create a test group, add `@famesocietybot` as administrator and send a test
-   message. Identify its numeric chat ID from that bot's pending updates before
-   registering the webhook. Do not guess a group ID or enable the Society group
-   as a substitute. A private bot DM does not qualify as the group capture test.
-4. From `apps/bot-console`, use the operator-only setup script:
+1. Sign in as an approved operator and open the Telegram inbox.
+2. Select **Connect group** and copy the command, for example
+   `/start@famesocietybot 7KMP-X4RT`.
+3. Add the bot to the intended group as an administrator and send the command
+   there. No numeric ID lookup is needed. The bot does not reply.
+4. The panel shows a **pending** request with the group name, numeric ID,
+   Telegram sender and console code issuer. Check the group and select
+   **Approve capture** or **Reject**. Approval verifies current bot membership.
+5. Send a new message, then edit it. Verify both versions in captured history.
+   Capture starts with original messages dated after the approval second, avoiding
+   same-second/pre-approval backlog. Edits to older messages are not imported.
+6. **Disconnect** stops capture and preserves existing history. To reconnect,
+   generate a fresh code, send it in the group and approve the new request.
+
+Codes have eight random Crockford Base32 symbols (40 bits), displayed `XXXX-XXXX`.
+Lowercase and omission of the hyphen are accepted. They expire after ten minutes,
+are single-use, and only SHA-256 hashes are stored. TTL cleanup is not the expiry
+check. The Telegram sender need not match the console operator: possession of the
+code authorizes a pending request, while panel approval still gates capture.
+Invalid, expired, revoked and used codes are silently ignored. Private chats,
+channels, forwarded/edited commands and anonymous sender-chat commands cannot
+redeem them. Pending or already-active groups cannot consume another code.
+**Revoke code** invalidates an unused code; generating another from the same panel
+first revokes its previous unused code. Plaintext codes exist only in the issuing
+browser view; reloading loses them.
+
+Redemption allows five well-formed attempts per group per minute and 100 across
+all groups per minute. Issuance allows ten codes per operator per minute. Atomic
+transactions consume the code, establish the pending request and record attribution
+together. Conditional decisions prevent concurrent operators overwriting each other.
+All approved operators can manage associations. Group/decision audit records are
+retained; invite/rate records expire.
+
+Commands are intercepted before group authorization and excluded from message
+storage, including later edits to the same message. Every archive write checks the
+active association and command exclusion in its transaction. Disconnect prevents
+in-flight writes; reconnect assigns a fresh association ID so old queue records
+cannot resume capture. Groups with prior history remain in the inbox. A Telegram
+group upgrade that changes its numeric ID requires a new connection.
+
+### Deploy this increment
+
+1. Review the access-stack changes. Existing CI updates `FlsBotConsoleAccess`
+   before deploying the application. No change to `FlsBotConsoleAccessCi` is needed.
+2. **Before merging**, provision the verifier credential:
 
    ```sh
-   AWS_PROFILE=fls-admin node --import tsx scripts/telegram-setup.ts inspect
-   AWS_PROFILE=fls-admin node --import tsx scripts/telegram-setup.ts register <numeric-group-id>
+   cd apps/bot-console
+   AWS_PROFILE=fls-admin node --import tsx scripts/telegram-setup.ts provision-verifier
    ```
 
-The script reads only `TELEGRAM_BOT_TOKEN` from Doppler
-`fls-society-agents / prd-controller` into memory. It verifies the AWS account,
-bot identity, target group and bot administrator membership. It refuses a webhook
-owned by another service or a different already-configured group. It stores the
-group allowlist in `bot-console/telegram-receiver`, registers the secret-protected
-webhook without dropping pending updates, then records its registration time.
-It is never bundled into the app or run by CI. A failure can leave partial setup;
-inspect Telegram and receiver configuration before retrying. Do not paste tokens
-or secret values into chat, command arguments or logs.
+   This operator-only script reads just `TELEGRAM_BOT_TOKEN` from Doppler
+   `fls-society-agents / prd-controller` into memory, verifies the AWS account and
+   bot identity, then writes the dedicated AWS secret. CI never handles its value.
+   Repeat only on token rotation. Never paste credentials into arguments or logs.
+3. For this first queue-format cutover only, run
+   `AWS_PROFILE=fls-admin node --import tsx scripts/telegram-setup.ts pause`.
+   This removes the webhook without dropping pending updates. Wait for the old
+   incoming queue's visible and in-flight counts to reach zero and investigate any
+   dead letters before proceeding. Keep the pause short: Telegram retains pending
+   updates for at most 24 hours. Do not run a competing getUpdates poller.
+   Merge the reviewed change and approve the access workflow's IAM update. Main CI
+   deploys the registry, verifier and console. A create-only custom resource seeds
+   **FLS Bot `-1004423197212`**, already operator-approved and live-tested on
+   2026-10-03, before switching the API/receiver/writer to the registry. It imports
+   no other groups, preserves message history, and never overwrites the association
+   on subsequent deployments. Its activation cutoff is zero to preserve previously
+   approved capture. The receiver secret's creation template remains unchanged to
+   avoid rotating its live webhook secret; no runtime consults its obsolete `chats`
+   property.
+4. After successful deployment, run the `register` command below to resume
+   delivery with the existing secret, preserving Telegram's pending updates.
+   If deployment rolls back before registration, use the previous revision's
+   setup script and its group-ID registration instructions to restore delivery.
+   Do not use this revision's `register` against the old app: it removes the
+   obsolete secret-backed group list required by that app.
+   Resume delivery within Telegram's 24-hour retention window.
+   Confirm FLS Bot is active and its prior history remains visible. Test a fresh
+   connection, invalid code, rejection, approval, message/edit capture, disconnect
+   and reconnect in an operator-controlled test group. Local checks do not establish
+   live delivery proof for this new flow.
 
-After registration, send another message and an edit in the test group and verify
-both in the authenticated inbox. Local mocks and unit tests do not prove live
-Telegram delivery or AWS storage. Group capture remains pending until this test.
+The original webhook test succeeded on 2026-10-03 for FLS Bot: a new message and
+its edit appeared in the authenticated inbox. Onboarding needs its own live test.
+
+### Webhook maintenance
+
+Connecting groups does not re-register the webhook. The initial rollout pause
+above is a one-time cutover step; normal application releases keep registration.
+For a fresh environment or explicit maintenance only:
+
+```sh
+AWS_PROFILE=fls-admin node --import tsx scripts/telegram-setup.ts inspect
+AWS_PROFILE=fls-admin node --import tsx scripts/telegram-setup.ts register
+```
+
+Registration verifies the bot and AWS account, refuses another service's webhook,
+preserves pending updates and records registration time. It no longer accepts a
+group ID or edits associations. Manage those in the panel. Inspect before retrying
+failed setup; only sanitized errors are emitted.

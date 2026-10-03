@@ -1,3 +1,4 @@
+import { TelegramGroups } from "./TelegramGroups";
 import { useState } from "react";
 import { useQuery, useInfiniteQuery } from "@tanstack/react-query";
 import {
@@ -81,8 +82,8 @@ export function TelegramInbox() {
           </div>
           <div>
             <p>
-              {status.data.chats.length} configured group
-              {status.data.chats.length === 1 ? "" : "s"}
+              {status.data.chats.length} group
+              {status.data.chats.length === 1 ? "" : "s"} in inbox
             </p>
             <p>
               {status.data.queued} updates processing · {status.data.failed}{" "}
@@ -92,6 +93,7 @@ export function TelegramInbox() {
           </div>
         </section>
       )}
+      <TelegramGroups />
       {status.data?.failed ? (
         <p role="alert">
           Some updates could not be stored. They are held in the recovery queue
@@ -102,8 +104,8 @@ export function TelegramInbox() {
         <div className="empty">
           <h2>Choose the first group.</h2>
           <p>
-            No groups are configured for capture. Setup must identify and
-            approve the group’s Telegram ID first.
+            Use Connect group above to generate a command, then approve the
+            request.
           </p>
         </div>
       ) : chat ? (
@@ -118,6 +120,7 @@ export function TelegramInbox() {
                 {status.data?.chats.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
+                    {c.state !== "active" ? " · capture stopped" : ""}
                   </option>
                 ))}
               </select>

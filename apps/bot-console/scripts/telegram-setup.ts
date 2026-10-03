@@ -4,18 +4,21 @@ import {
   SecretsManagerClient,
   GetSecretValueCommand,
   PutSecretValueCommand,
+  CreateSecretCommand,
 } from "@aws-sdk/client-secrets-manager";
 import { telegramConfigSchema } from "../server/telegram";
 import { z } from "zod";
 const url = "https://bot.fame.support/api/telegram/webhook";
 const secretId = "bot-console/telegram-receiver";
 async function main() {
-  const [mode, chatId] = process.argv.slice(2);
+  const [mode, extra] = process.argv.slice(2);
   if (
-    !["inspect", "register"].includes(mode) ||
-    (mode === "register" && !/^-\d+$/.test(chatId ?? ""))
+    !["inspect", "register", "pause", "provision-verifier"].includes(mode) ||
+    extra
   )
-    throw new Error("Use inspect or register <numeric-group-id>");
+    throw new Error(
+      "Use inspect, register, pause, or provision-verifier (group connections are managed in the console)",
+    );
   const identity = JSON.parse(
     execFileSync("aws", ["sts", "get-caller-identity", "--output", "json"], {
       encoding: "utf8",
@@ -55,6 +58,29 @@ async function main() {
     .object({ id: z.number(), username: z.literal("famesocietybot") })
     .parse(await telegram("getMe"));
   if (me.id !== 7393738833) throw new Error("Wrong bot identity");
+  const secrets = new SecretsManagerClient({ region: "us-east-1" });
+  if (mode === "provision-verifier") {
+    const SecretString = JSON.stringify({ token });
+    try {
+      await secrets.send(
+        new CreateSecretCommand({
+          Name: "bot-console/telegram-verifier",
+          SecretString,
+        }),
+      );
+    } catch (e) {
+      if (!(e instanceof Error) || e.name !== "ResourceExistsException")
+        throw e;
+      await secrets.send(
+        new PutSecretValueCommand({
+          SecretId: "bot-console/telegram-verifier",
+          SecretString,
+        }),
+      );
+    }
+    console.log({ verifierCredentialProvisioned: true });
+    return;
+  }
   const webhook = z
     .object({ url: z.string(), pending_update_count: z.number() })
     .parse(await telegram("getWebhookInfo"));
@@ -67,44 +93,24 @@ async function main() {
   if (mode === "inspect") return;
   if (webhook.url && webhook.url !== url)
     throw new Error("Existing webhook belongs to another service; stopping");
-  const chat = z
-    .object({
-      id: z.number(),
-      title: z.string(),
-      type: z.enum(["group", "supergroup"]),
-    })
-    .parse(await telegram("getChat", { chat_id: chatId }));
-  if (String(chat.id) !== chatId) throw new Error("Chat ID mismatch");
-  const member = z
-    .object({ status: z.literal("administrator") })
-    .parse(
-      await telegram("getChatMember", { chat_id: chatId, user_id: me.id }),
-    );
-  if (!member) throw new Error("Bot must be a group administrator");
-  const secrets = new SecretsManagerClient({ region: "us-east-1" });
+  if (mode === "pause") {
+    await telegram("deleteWebhook", { drop_pending_updates: false });
+    const stopped = z
+      .object({ url: z.literal("") })
+      .parse(await telegram("getWebhookInfo"));
+    if (!stopped) throw new Error("Webhook pause failed");
+    console.log({ paused: true, pendingUpdatesPreserved: true });
+    return;
+  }
   const current = await secrets.send(
     new GetSecretValueCommand({ SecretId: secretId }),
   );
   const config = telegramConfigSchema.parse(
     JSON.parse(current.SecretString ?? "{}"),
   );
-  if (config.chats.some((c) => c.id !== chatId))
-    throw new Error(
-      "Different groups already configured; review config before changing scope",
-    );
-  const next = telegramConfigSchema.parse({
-    ...config,
-    chats: [{ id: chatId, name: chat.title }],
-  });
-  await secrets.send(
-    new PutSecretValueCommand({
-      SecretId: secretId,
-      SecretString: JSON.stringify(next),
-    }),
-  );
   await telegram("setWebhook", {
     url,
-    secret_token: next.webhookSecret,
+    secret_token: config.webhookSecret,
     allowed_updates: ["message", "edited_message"],
     drop_pending_updates: false,
     max_connections: 5,
@@ -117,12 +123,12 @@ async function main() {
     new PutSecretValueCommand({
       SecretId: secretId,
       SecretString: JSON.stringify({
-        ...next,
+        ...config,
         registeredAt: new Date().toISOString(),
       }),
     }),
   );
-  console.log({ registered: true, chatId, name: chat.title });
+  console.log({ registered: true });
 }
 main().catch(() => {
   console.error(

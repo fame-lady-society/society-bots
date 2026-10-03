@@ -1,3 +1,5 @@
+import { memoryGroupStore } from "./group-store";
+import { groupService } from "../server/telegram-groups";
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { createServer } from "vite";
@@ -86,8 +88,52 @@ const mockConfig: TelegramConfig = {
   webhookSecret: "x".repeat(48),
   botId: "7393738833",
   username: "famesocietybot",
-  chats: [{ id: "-100", name: "Society test · synthetic" }],
 };
+const memory = memoryGroupStore();
+const onboarding = groupService(memory.store, async () => ({
+  name: "New test group · synthetic",
+}));
+memory.groups.set("-100", {
+  id: "-100",
+  name: "Society test · synthetic",
+  state: "active",
+  requestId: "seed",
+  requestedBy: "42",
+  createdBy: "local-operator",
+  requestedAt: 0,
+  updatedAt: Math.floor(Date.now() / 1000),
+  updatedBy: "local-operator",
+  hasHistory: true,
+  associationId: "seed",
+  activatedAt: 0,
+});
+app.get("/api/telegram/groups", async (c) => c.json(await onboarding.list()));
+app.post("/api/telegram/invites", async (c) =>
+  c.json(await onboarding.issue("local-operator"), 201),
+);
+app.get("/api/telegram/invites/:id", async (c) =>
+  c.json(await onboarding.invite(c.req.param("id"))),
+);
+app.post("/api/telegram/invites/:id/revoke", async (c) => {
+  await onboarding.revoke(c.req.param("id"), "local-operator");
+  return c.body(null, 204);
+});
+app.post("/api/telegram/groups/:id/decision", async (c) => {
+  const body = await c.req.json();
+  return c.json(
+    await onboarding.decide(
+      c.req.param("id"),
+      body.requestId,
+      body.action,
+      "local-operator",
+    ),
+  );
+});
+app.post("/api/local/telegram-redeem", async (c) => {
+  const { code } = await c.req.json();
+  await onboarding.redeem(code, "-200", "New test group · synthetic", "777");
+  return c.body(null, 204);
+});
 const now = Math.floor(Date.now() / 1000);
 const raw = {
   update_id: 1,
@@ -99,7 +145,7 @@ const raw = {
     text: "Hello from the local rehearsal. No Telegram messages are sent.",
   },
 };
-const original = normalizeUpdate(raw, mockConfig, now - 300)!;
+const original = normalizeUpdate(raw, now - 300)!;
 const edited = normalizeUpdate(
   {
     update_id: 2,
@@ -109,17 +155,18 @@ const edited = normalizeUpdate(
       text: "Edited synthetic message. Original text remains in captured history.",
     },
   },
-  mockConfig,
   now - 60,
 )!;
-app.get("/api/telegram/status", (c) =>
+app.get("/api/telegram/status", async (c) =>
   c.json({
     botId: mockConfig.botId,
     username: mockConfig.username,
-    chats: mockConfig.chats.map((chat) => ({
-      ...chat,
-      lastCapturedAt: now - 60,
-    })),
+    chats: (await memory.store.list())
+      .filter((g) => g.hasHistory)
+      .map((chat) => ({
+        ...chat,
+        lastCapturedAt: now - 60,
+      })),
     registeredAt: null,
     queued: 0,
     failed: 0,

@@ -1,9 +1,17 @@
+import { memoryGroupStore } from "../local/group-store";
+import { groupService } from "../server/telegram-groups";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createApp, type Store, type RecordValue } from "../server/app";
+import {
+  createApp,
+  type Store,
+  type RecordValue,
+  type Dependencies,
+} from "../server/app";
 const owner = "931691901592145930";
 function fixture(
   identity = { id: owner, username: "Operator", mfa_enabled: true },
+  groups?: Dependencies["groups"],
 ) {
   const records = new Map<string, RecordValue>();
   let clock = 1000;
@@ -25,6 +33,7 @@ function fixture(
   const app = createApp({
     origin: "https://bot.fame.support",
     adminIds,
+    groups,
     store,
     now: () => clock,
     oauth: {
@@ -182,4 +191,88 @@ test("storage failures are fail-closed and do not expose internal errors", async
   const response = await app.request("/api/auth/login");
   assert.equal(response.status, 503);
   assert.ok(!(await response.text()).includes("secret-value"));
+});
+
+test("group management endpoints require approved sessions and same-origin mutations", async () => {
+  const f = fixture();
+  const paths = [
+    "/api/telegram/invites",
+    `/api/telegram/invites/${"a".repeat(64)}/revoke`,
+    "/api/telegram/groups/-100/decision",
+  ];
+  for (const path of paths)
+    assert.equal((await f.app.request(path, { method: "POST" })).status, 401);
+  assert.equal((await f.app.request("/api/telegram/groups")).status, 401);
+  const response = await login(f);
+  const Cookie = response.headers
+    .getSetCookie()
+    .find((c) => c.startsWith("__Host-bot-session="))!
+    .split(";")[0];
+  for (const path of paths)
+    assert.equal(
+      (
+        await f.app.request(path, {
+          method: "POST",
+          headers: { Cookie, Origin: "https://evil.invalid" },
+        })
+      ).status,
+      403,
+    );
+});
+
+test("authenticated group API attributes issuance and approval to the session actor", async () => {
+  const memory = memoryGroupStore();
+  const groups = groupService(
+    memory.store,
+    async () => ({ name: "Verified group" }),
+    () => 1000,
+  );
+  const f = fixture(undefined, groups);
+  const response = await login(f);
+  const Cookie = response.headers
+    .getSetCookie()
+    .find((c) => c.startsWith("__Host-bot-session="))!
+    .split(";")[0];
+  const headers = {
+    Cookie,
+    Origin: "https://bot.fame.support",
+    "Content-Type": "application/json",
+  };
+  const issued = await f.app.request("/api/telegram/invites", {
+    method: "POST",
+    headers,
+  });
+  assert.equal(issued.status, 201);
+  const invite = await issued.json();
+  assert.equal(invite.createdBy, owner);
+  const stored = await f.app.request(`/api/telegram/invites/${invite.id}`, {
+    headers,
+  });
+  assert.equal((await stored.json()).code, undefined);
+  await groups.redeem(invite.code, "-100", "Unverified", "42");
+  const listed = await f.app.request("/api/telegram/groups", { headers });
+  const group = (await listed.json())[0];
+  const approve = await f.app.request("/api/telegram/groups/-100/decision", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ requestId: group.requestId, action: "approve" }),
+  });
+  assert.equal(approve.status, 200);
+  assert.equal((await approve.json()).updatedBy, owner);
+  const stale = await f.app.request("/api/telegram/groups/-100/decision", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ requestId: group.requestId, action: "reject" }),
+  });
+  assert.equal(stale.status, 409);
+  const forged = await f.app.request("/api/telegram/groups/-100/decision", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      requestId: group.requestId,
+      action: "disconnect",
+      actor: "someone else",
+    }),
+  });
+  assert.equal(forged.status, 400);
 });

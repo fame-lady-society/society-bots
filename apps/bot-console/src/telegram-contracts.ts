@@ -37,6 +37,7 @@ export const connectionSchema = z.object({
     z.object({
       id: z.string(),
       name: z.string(),
+      state: z.enum(["pending", "active", "rejected", "disconnected"]),
       lastCapturedAt: z.number().nullable(),
     }),
   ),

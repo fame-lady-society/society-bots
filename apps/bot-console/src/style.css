@@ -7,8 +7,8 @@
   --muted: #bdb4a4;
   --line: rgba(201, 170, 103, 0.24);
   --display: "Iowan Old Style", "Baskerville", "Times New Roman", serif;
-  font-family: "Helvetica Neue", "Avenir Next", "Segoe UI", Helvetica, Arial,
-    sans-serif;
+  font-family:
+    "Helvetica Neue", "Avenir Next", "Segoe UI", Helvetica, Arial, sans-serif;
   color: var(--bone);
   background: var(--ink);
   color-scheme: dark;
@@ -772,5 +772,68 @@ select {
   }
   .telegram-toolbar {
     align-items: stretch;
+  }
+}
+
+.telegram-groups {
+  margin: 2rem 0;
+  padding: 1.5rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+}
+.invite-card {
+  padding: 1.25rem;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  margin: 1rem 0;
+}
+.invite-card > code {
+  display: block;
+  font-size: 1.05rem;
+  overflow-wrap: anywhere;
+  padding: 0.75rem 0;
+  user-select: all;
+}
+.group-connections {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.group-connections li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.25rem 0;
+  border-top: 1px solid var(--line);
+}
+.group-connections p {
+  margin: 0.5rem 0;
+}
+.group-state {
+  font-size: 0.8rem;
+  text-transform: capitalize;
+  padding: 0.2rem 0.6rem;
+  border-radius: 20px;
+  background: #302b20;
+  color: var(--bone);
+  margin-left: 0.75rem;
+}
+.group-state.active {
+  background: #1e392a;
+  color: #c6e9d2;
+}
+.group-state.pending {
+  background: #443619;
+  color: #f6db9b;
+}
+@media (max-width: 700px) {
+  .group-connections li {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .telegram-groups {
+    padding: 1rem;
   }
 }
