@@ -11,6 +11,13 @@ on:
         "deploy/lib/bot-console-access-stack.ts",
         "deploy/bin/bot-console-access.ts",
         ".github/workflows/bot-console.yml",
+        ".github/workflows/bot-console-access.yml",
+        "deploy/lib/bot-console-access-ci-stack.ts",
+        "deploy/bin/bot-console-access-ci.ts",
+        "deploy/test/bot-console-access-ci.test.ts",
+        "deploy/package.json",
+        "deploy/yarn.lock",
+        "deploy/cdk.json",
       ]
   push:
     branches: [main]
@@ -24,6 +31,13 @@ on:
         "deploy/lib/bot-console-access-stack.ts",
         "deploy/bin/bot-console-access.ts",
         ".github/workflows/bot-console.yml",
+        ".github/workflows/bot-console-access.yml",
+        "deploy/lib/bot-console-access-ci-stack.ts",
+        "deploy/bin/bot-console-access-ci.ts",
+        "deploy/test/bot-console-access-ci.test.ts",
+        "deploy/package.json",
+        "deploy/yarn.lock",
+        "deploy/cdk.json",
       ]
   workflow_dispatch:
 permissions:
@@ -33,9 +47,26 @@ concurrency:
   cancel-in-progress: false
 jobs:
   validate:
+    outputs:
+      access_changed: ${{ steps.access-changes.outputs.changed }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Detect access changes
+        id: access-changes
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "$EVENT_NAME" = workflow_dispatch ]; then
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
+          elif [ "$EVENT_NAME" = push ] && { [ "$BEFORE" = 0000000000000000000000000000000000000000 ] || ! git diff --quiet "$BEFORE" HEAD -- deploy/lib/bot-console-access-stack.ts deploy/bin/bot-console-access.ts deploy/lib/bot-console-access-ci-stack.ts deploy/bin/bot-console-access-ci.ts deploy/package.json deploy/yarn.lock deploy/cdk.json .github/workflows/bot-console-access.yml .github/workflows/bot-console.yml; }; then
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
@@ -60,8 +91,16 @@ jobs:
           path: |
             apps/bot-console/dist
             apps/bot-console/dist-api
-  deploy:
+  access:
     needs: validate
+    uses: ./.github/workflows/bot-console-access.yml
+    with:
+      deploy_access: ${{ needs.validate.outputs.access_changed == 'true' }}
+    permissions:
+      contents: read
+      id-token: write
+  deploy:
+    needs: [validate, access]
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment: bot-console-production

@@ -15,6 +15,8 @@ import { HttpLambdaIntegration } from "aws-cdk-lib/aws-apigatewayv2-integrations
 import * as deployment from "aws-cdk-lib/aws-s3-deployment";
 import * as path from "node:path";
 import * as iam from "aws-cdk-lib/aws-iam";
+import * as sqs from "aws-cdk-lib/aws-sqs";
+import { SqsEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
 export interface BotConsoleProps extends cdk.StackProps {
   authSecretArn: string;
   appDirectory: string;
@@ -84,6 +86,94 @@ export class BotConsoleStack extends cdk.Stack {
     auth.grantRead(apiFunction);
     const api = new apigw.HttpApi(this, "Api", {
       defaultIntegration: new HttpLambdaIntegration("ConsoleApi", apiFunction),
+    });
+    const messages = new dynamodb.Table(this, "Messages", {
+      partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
+      sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      timeToLiveAttribute: "expires",
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
+    });
+    const telegram = new secrets.Secret(this, "TelegramConfig", {
+      secretName: "bot-console/telegram-receiver",
+      generateSecretString: {
+        secretStringTemplate: JSON.stringify({
+          botId: "7393738833",
+          username: "famesocietybot",
+          chats: [],
+        }),
+        generateStringKey: "webhookSecret",
+        passwordLength: 48,
+        excludePunctuation: true,
+      },
+    });
+    const failed = new sqs.Queue(this, "TelegramFailed", {
+      retentionPeriod: cdk.Duration.days(14),
+      encryption: sqs.QueueEncryption.SQS_MANAGED,
+    });
+    const incoming = new sqs.Queue(this, "TelegramIncoming", {
+      visibilityTimeout: cdk.Duration.seconds(120),
+      retentionPeriod: cdk.Duration.days(4),
+      encryption: sqs.QueueEncryption.SQS_MANAGED,
+      deadLetterQueue: { queue: failed, maxReceiveCount: 5 },
+    });
+    const receiver = new lambda.Function(this, "TelegramReceiver", {
+      runtime: lambda.Runtime.NODEJS_24_X,
+      architecture: lambda.Architecture.ARM_64,
+      code: lambda.Code.fromAsset(path.join(props.appDirectory, "dist-api")),
+      handler: "telegram.webhook",
+      timeout: cdk.Duration.seconds(15),
+      memorySize: 256,
+      environment: {
+        TELEGRAM_CONFIG_ARN: telegram.secretArn,
+        INGEST_QUEUE_URL: incoming.queueUrl,
+      },
+      logGroup: new logs.LogGroup(this, "TelegramReceiverLogs", {
+        retention: logs.RetentionDays.ONE_MONTH,
+      }),
+    });
+    const worker = new lambda.Function(this, "TelegramWriter", {
+      runtime: lambda.Runtime.NODEJS_24_X,
+      architecture: lambda.Architecture.ARM_64,
+      code: lambda.Code.fromAsset(path.join(props.appDirectory, "dist-api")),
+      handler: "telegram.worker",
+      timeout: cdk.Duration.seconds(20),
+      memorySize: 256,
+      environment: {
+        TELEGRAM_CONFIG_ARN: telegram.secretArn,
+        MESSAGE_TABLE: messages.tableName,
+      },
+      logGroup: new logs.LogGroup(this, "TelegramWriterLogs", {
+        retention: logs.RetentionDays.ONE_MONTH,
+      }),
+    });
+    worker.addEventSource(
+      new SqsEventSource(incoming, {
+        batchSize: 5,
+        reportBatchItemFailures: true,
+      }),
+    );
+    telegram.grantRead(receiver);
+    telegram.grantRead(worker);
+    telegram.grantRead(apiFunction);
+    incoming.grantSendMessages(receiver);
+    messages.grantWriteData(worker);
+    messages.grantReadData(apiFunction);
+    apiFunction.addEnvironment("MESSAGE_TABLE", messages.tableName);
+    apiFunction.addEnvironment("TELEGRAM_CONFIG_ARN", telegram.secretArn);
+    apiFunction.addEnvironment("INGEST_QUEUE_URL", incoming.queueUrl);
+    apiFunction.addEnvironment("DEAD_LETTER_QUEUE_URL", failed.queueUrl);
+    apiFunction.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["sqs:GetQueueAttributes"],
+        resources: [incoming.queueArn, failed.queueArn],
+      }),
+    );
+    api.addRoutes({
+      path: "/api/telegram/webhook",
+      methods: [apigw.HttpMethod.POST],
+      integration: new HttpLambdaIntegration("TelegramWebhook", receiver),
     });
     const defaultStage = api.defaultStage?.node.defaultChild as apigw.CfnStage;
     defaultStage.defaultRouteSettings = {

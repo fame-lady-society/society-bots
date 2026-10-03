@@ -72,3 +72,39 @@ test("every generated application role has the console runtime boundary", () => 
     );
   }
 });
+
+test("Telegram receiver is separate from operator auth and persists through a recovery queue", () => {
+  const t = Template.fromStack(
+    new BotConsoleStack(new cdk.App(), "FlsBotConsole", config),
+  );
+  t.resourceCountIs("AWS::SQS::Queue", 2);
+  t.hasResourceProperties("AWS::SecretsManager::Secret", {
+    Name: "bot-console/telegram-receiver",
+    GenerateSecretString: Match.objectLike({
+      GenerateStringKey: "webhookSecret",
+    }),
+  });
+  t.hasResourceProperties("AWS::ApiGatewayV2::Route", {
+    RouteKey: "POST /api/telegram/webhook",
+  });
+  t.hasResourceProperties("AWS::Lambda::EventSourceMapping", {
+    FunctionResponseTypes: ["ReportBatchItemFailures"],
+  });
+  t.hasResourceProperties("AWS::DynamoDB::Table", {
+    KeySchema: [
+      { AttributeName: "pk", KeyType: "HASH" },
+      { AttributeName: "sk", KeyType: "RANGE" },
+    ],
+    PointInTimeRecoverySpecification: { PointInTimeRecoveryEnabled: true },
+  });
+  const functions = Object.values(t.findResources("AWS::Lambda::Function"));
+  for (const handler of ["telegram.webhook", "telegram.worker"]) {
+    const f = functions.find((f) => f.Properties.Handler === handler)!;
+    expect(f.Properties.Environment.Variables).not.toHaveProperty(
+      "AUTH_SECRET_ARN",
+    );
+    expect(f.Properties.Environment.Variables).not.toHaveProperty(
+      "TELEGRAM_BOT_TOKEN",
+    );
+  }
+});

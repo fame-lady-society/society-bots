@@ -9,6 +9,7 @@ import {
 } from "@tanstack/react-query";
 import { casesSchema, sessionSchema, type Incident } from "./contracts";
 import "./style.css";
+import { TelegramInbox } from "./TelegramInbox";
 async function request(path: string, options?: RequestInit) {
   const r = await fetch(path, options);
   if (r.status === 401) throw new Error("SIGN_IN");
@@ -69,6 +70,7 @@ function App() {
 }
 function Console({ name, rehearsal }: { name: string; rehearsal: boolean }) {
   const client = useQueryClient();
+  const [view, setView] = useState<"telegram" | "moderation">("telegram");
   const [selected, setSelected] = useState<string>();
   const [filter, setFilter] = useState("pending");
   const [confirm, setConfirm] = useState(false);
@@ -119,10 +121,21 @@ function Console({ name, rehearsal }: { name: string; rehearsal: boolean }) {
           Fame Lady Society
         </div>
         <nav>
-          <span className="active">
+          <button
+            className={view === "telegram" ? "active" : ""}
+            aria-pressed={view === "telegram"}
+            onClick={() => setView("telegram")}
+          >
+            Telegram inbox
+          </button>
+          <button
+            className={view === "moderation" ? "active" : ""}
+            aria-pressed={view === "moderation"}
+            onClick={() => setView("moderation")}
+          >
             ◫ <span>Moderation inbox</span>
             <b>{all.filter((i) => i.status === "pending").length}</b>
-          </span>
+          </button>
         </nav>
         <div className="sidebar-bottom">
           <p>
@@ -140,202 +153,225 @@ function Console({ name, rehearsal }: { name: string; rehearsal: boolean }) {
         </div>
       </aside>
       <main>
-        <header>
-          <div>
-            <p className="eyebrow">COMMUNITY OPERATIONS</p>
-            <h1>
-              Society <em>inbox.</em>
-            </h1>
-            <p>Review the context. Decide what happens next.</p>
-          </div>
-          <span className="pill">
-            {rehearsal ? "Local rehearsal" : "Private workspace"}
-          </span>
-        </header>
-        {rehearsal && (
-          <div className="notice">
-            <b>Rehearsal workspace</b>
-            <span>
-              Synthetic messages only. Decisions here never reach Discord or
-              Telegram.
-            </span>
-          </div>
-        )}
-        <section className="stats">
-          <div>
-            <small>AWAITING REVIEW</small>
-            <strong>
-              {all
-                .filter((i) => i.status === "pending")
-                .length.toString()
-                .padStart(2, "0")}
-            </strong>
-          </div>
-          <div>
-            <small>CAPTURED MESSAGES</small>
-            <strong>{all.reduce((n, i) => n + i.messages.length, 0)}</strong>
-          </div>
-          <div>
-            <small>ENFORCEMENT</small>
-            <strong className="words">Human approval</strong>
-          </div>
-        </section>
-        <div className="toolbar">
-          <div role="group" aria-label="Case filter">
-            {["pending", "all"].map((f) => (
-              <button
-                className={filter === f ? "chosen" : ""}
-                key={f}
-                onClick={() => {
-                  setFilter(f);
-                  setSelected(undefined);
-                  setConfirm(false);
-                }}
-              >
-                {f === "pending" ? "Needs review" : "All cases"}
-              </button>
-            ))}
-          </div>
-          <button className="text-button" onClick={() => void cases.refetch()}>
-            Refresh ↻
-          </button>
-        </div>
-        {cases.isError ? (
-          <p role="alert">Could not load cases. Try refreshing.</p>
-        ) : cases.isPending ? (
-          <p>Loading cases…</p>
-        ) : !all.length ? (
-          <div className="empty">
-            <div className="empty-icon" aria-hidden="true">
-              ◫
-            </div>
-            <h2>A clear inbox.</h2>
-            <p>No messages received yet. Channels have not been connected.</p>
-          </div>
+        {view === "telegram" ? (
+          <>
+            {rehearsal && (
+              <div className="notice">
+                Local rehearsal · Synthetic Telegram messages only.
+              </div>
+            )}
+            <TelegramInbox />
+          </>
         ) : (
-          <div className="split">
-            <div className="case-list">
-              {visible.length === 0 ? (
-                <p>No cases need review.</p>
-              ) : (
-                visible.map((i) => (
+          <>
+            <header>
+              <div>
+                <p className="eyebrow">COMMUNITY OPERATIONS</p>
+                <h1>
+                  Society <em>inbox.</em>
+                </h1>
+                <p>Review the context. Decide what happens next.</p>
+              </div>
+              <span className="pill">
+                {rehearsal ? "Local rehearsal" : "Private workspace"}
+              </span>
+            </header>
+            {rehearsal && (
+              <div className="notice">
+                <b>Rehearsal workspace</b>
+                <span>
+                  Synthetic messages only. Decisions here never reach Discord or
+                  Telegram.
+                </span>
+              </div>
+            )}
+            <section className="stats">
+              <div>
+                <small>AWAITING REVIEW</small>
+                <strong>
+                  {all
+                    .filter((i) => i.status === "pending")
+                    .length.toString()
+                    .padStart(2, "0")}
+                </strong>
+              </div>
+              <div>
+                <small>CAPTURED MESSAGES</small>
+                <strong>
+                  {all.reduce((n, i) => n + i.messages.length, 0)}
+                </strong>
+              </div>
+              <div>
+                <small>ENFORCEMENT</small>
+                <strong className="words">Human approval</strong>
+              </div>
+            </section>
+            <div className="toolbar">
+              <div role="group" aria-label="Case filter">
+                {["pending", "all"].map((f) => (
                   <button
-                    key={i.id}
-                    className={`case ${incident?.id === i.id ? "selected" : ""}`}
+                    className={filter === f ? "chosen" : ""}
+                    key={f}
                     onClick={() => {
-                      setSelected(i.id);
+                      setFilter(f);
+                      setSelected(undefined);
                       setConfirm(false);
-                      decision.reset();
                     }}
                   >
-                    <div>
-                      <span className="platform">{i.platform}</span>
-                      <span className="case-id">{i.id}</span>
-                    </div>
-                    <h3>{i.title}</h3>
-                    <p>{i.subject}</p>
-                    <small>
-                      {i.messages.length} messages <span>· {i.status}</span>
-                    </small>
+                    {f === "pending" ? "Needs review" : "All cases"}
                   </button>
-                ))
-              )}
+                ))}
+              </div>
+              <button
+                className="text-button"
+                onClick={() => void cases.refetch()}
+              >
+                Refresh ↻
+              </button>
             </div>
-            {incident && (
-              <article key={incident.id}>
-                <div className="detail-top">
-                  <span className="eyebrow">{incident.channel}</span>
-                  <span className="pill">{incident.status}</span>
+            {cases.isError ? (
+              <p role="alert">Could not load cases. Try refreshing.</p>
+            ) : cases.isPending ? (
+              <p>Loading cases…</p>
+            ) : !all.length ? (
+              <div className="empty">
+                <div className="empty-icon" aria-hidden="true">
+                  ◫
                 </div>
-                <h2>{incident.title}</h2>
-                <p>{incident.reason}</p>
-                <div className="proposal">
-                  <small>PROPOSED ACTION</small>
-                  <h3>{incident.action}</h3>
-                  <p>Target: {incident.subject}</p>
+                <h2>A clear inbox.</h2>
+                <p>
+                  No messages received yet. Channels have not been connected.
+                </p>
+              </div>
+            ) : (
+              <div className="split">
+                <div className="case-list">
+                  {visible.length === 0 ? (
+                    <p>No cases need review.</p>
+                  ) : (
+                    visible.map((i) => (
+                      <button
+                        key={i.id}
+                        className={`case ${incident?.id === i.id ? "selected" : ""}`}
+                        onClick={() => {
+                          setSelected(i.id);
+                          setConfirm(false);
+                          decision.reset();
+                        }}
+                      >
+                        <div>
+                          <span className="platform">{i.platform}</span>
+                          <span className="case-id">{i.id}</span>
+                        </div>
+                        <h3>{i.title}</h3>
+                        <p>{i.subject}</p>
+                        <small>
+                          {i.messages.length} messages <span>· {i.status}</span>
+                        </small>
+                      </button>
+                    ))
+                  )}
                 </div>
-                <div className="evidence-title">
-                  <h3>Captured evidence</h3>
-                  <span>{incident.messages.length} messages</span>
-                </div>
-                <div
-                  className="evidence"
-                  tabIndex={0}
-                  aria-label="Captured evidence"
-                >
-                  {incident.messages.map((m) => (
-                    <div className="message" key={m.id}>
-                      <div>
-                        <b>{m.author}</b>
-                        <time>{m.time}</time>
-                      </div>
-                      <p>{m.text}</p>
+                {incident && (
+                  <article key={incident.id}>
+                    <div className="detail-top">
+                      <span className="eyebrow">{incident.channel}</span>
+                      <span className="pill">{incident.status}</span>
                     </div>
-                  ))}
-                </div>
-                {rehearsal && incident.status === "pending" && (
-                  <div className="actions">
-                    {confirm ? (
-                      <>
-                        <p>
-                          Record simulated approval for <b>{incident.action}</b>
-                          ? No platform action will execute.
-                        </p>
-                        <button
-                          className="primary"
-                          disabled={decision.isPending}
-                          onClick={() =>
-                            decision.mutate({
-                              id: incident.id,
-                              value: "approved",
-                            })
-                          }
-                        >
-                          Confirm simulated approval
-                        </button>
-                        <button onClick={() => setConfirm(false)}>
-                          Cancel
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        <button
-                          className="primary"
-                          onClick={() => {
-                            setSelected(incident.id);
-                            setConfirm(true);
-                          }}
-                        >
-                          Review approval →
-                        </button>
-                        <button
-                          disabled={decision.isPending}
-                          onClick={() =>
-                            decision.mutate({
-                              id: incident.id,
-                              value: "rejected",
-                            })
-                          }
-                        >
-                          Reject proposal
-                        </button>
-                      </>
+                    <h2>{incident.title}</h2>
+                    <p>{incident.reason}</p>
+                    <div className="proposal">
+                      <small>PROPOSED ACTION</small>
+                      <h3>{incident.action}</h3>
+                      <p>Target: {incident.subject}</p>
+                    </div>
+                    <div className="evidence-title">
+                      <h3>Captured evidence</h3>
+                      <span>{incident.messages.length} messages</span>
+                    </div>
+                    <div
+                      className="evidence"
+                      tabIndex={0}
+                      aria-label="Captured evidence"
+                    >
+                      {incident.messages.map((m) => (
+                        <div className="message" key={m.id}>
+                          <div>
+                            <b>{m.author}</b>
+                            <time>{m.time}</time>
+                          </div>
+                          <p>{m.text}</p>
+                        </div>
+                      ))}
+                    </div>
+                    {rehearsal && incident.status === "pending" && (
+                      <div className="actions">
+                        {confirm ? (
+                          <>
+                            <p>
+                              Record simulated approval for{" "}
+                              <b>{incident.action}</b>? No platform action will
+                              execute.
+                            </p>
+                            <button
+                              className="primary"
+                              disabled={decision.isPending}
+                              onClick={() =>
+                                decision.mutate({
+                                  id: incident.id,
+                                  value: "approved",
+                                })
+                              }
+                            >
+                              Confirm simulated approval
+                            </button>
+                            <button onClick={() => setConfirm(false)}>
+                              Cancel
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              className="primary"
+                              onClick={() => {
+                                setSelected(incident.id);
+                                setConfirm(true);
+                              }}
+                            >
+                              Review approval →
+                            </button>
+                            <button
+                              disabled={decision.isPending}
+                              onClick={() =>
+                                decision.mutate({
+                                  id: incident.id,
+                                  value: "rejected",
+                                })
+                              }
+                            >
+                              Reject proposal
+                            </button>
+                          </>
+                        )}
+                        {decision.isError && (
+                          <p role="alert">{decision.error.message}</p>
+                        )}
+                      </div>
                     )}
-                    {decision.isError && (
-                      <p role="alert">{decision.error.message}</p>
+                    {incident.status !== "pending" && (
+                      <p className="receipt">
+                        {rehearsal
+                          ? "Simulation recorded"
+                          : "Decision recorded"}
+                        : {incident.status}.{" "}
+                        {rehearsal ? "No external action was taken." : ""}
+                      </p>
                     )}
-                  </div>
+                  </article>
                 )}
-                {incident.status !== "pending" && (
-                  <p className="receipt">
-                    {rehearsal ? "Simulation recorded" : "Decision recorded"}:{" "}
-                    {incident.status}.{" "}
-                    {rehearsal ? "No external action was taken." : ""}
-                  </p>
-                )}
-              </article>
+              </div>
             )}
-          </div>
+          </>
         )}
         <footer>
           FAMEliza · Operator console{" "}

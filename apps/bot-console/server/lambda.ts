@@ -13,6 +13,8 @@ import {
 } from "@aws-sdk/client-secrets-manager";
 import { z } from "zod";
 import { createApp, identitySchema, type Store } from "./app";
+import { readTelegramConfig, queueDepth } from "./telegram-runtime";
+import { listMessages, lastCaptured } from "./telegram-store";
 const configSchema = z.object({
   clientId: z.string().regex(/^\d{17,20}$/),
   clientSecret: z.string().min(1),
@@ -75,6 +77,34 @@ export const handler = async (
       origin,
       adminIds: config.adminIds,
       store,
+      telegram: {
+        async status() {
+          const c = await readTelegramConfig();
+          const [queued, failed] = await Promise.all([
+            queueDepth(process.env.INGEST_QUEUE_URL!),
+            queueDepth(process.env.DEAD_LETTER_QUEUE_URL!),
+          ]);
+          return {
+            botId: c.botId,
+            username: c.username,
+            chats: await Promise.all(
+              c.chats.map(async (chat) => ({
+                ...chat,
+                lastCapturedAt: await lastCaptured(chat.id),
+              })),
+            ),
+            registeredAt: c.registeredAt ?? null,
+            queued,
+            failed,
+          };
+        },
+        async messages(chatId, cursor, messageId) {
+          const c = await readTelegramConfig();
+          if (!c.chats.some((chat) => chat.id === chatId))
+            throw new Error("Chat not configured");
+          return listMessages(chatId, cursor, messageId);
+        },
+      },
       oauth: {
         url: (state) => {
           const url = new URL(server.authorization_endpoint!);
