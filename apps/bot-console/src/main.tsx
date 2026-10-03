@@ -29,17 +29,20 @@ function App() {
     return <div className="center">Opening your console…</div>;
   if (session.isError)
     return (
-      <div className="center">
+      <div className="login-page">
+        <div className="login-masthead">
+          <a href="https://www.fameladysociety.com/fame">$FAME</a>
+          <span>SOCIETY OPERATIONS</span>
+        </div>
         <div className="login">
-          <div className="mark">F</div>
-          <p className="eyebrow">FAME LADY SOCIETY</p>
+          <p className="eyebrow">FAME LADY SOCIETY · OPERATOR ACCESS</p>
           <h1>
-            A quieter place
+            Behind
             <br />
-            to keep watch.
+            <em>the Society.</em>
           </h1>
           <p>
-            FAMEliza’s private bot console.
+            FAMEliza’s private operator workspace.
             <br />
             Access is limited to approved operators.
           </p>
@@ -56,7 +59,7 @@ function App() {
               <button onClick={() => void session.refetch()}>Try again</button>
             </>
           )}
-          <small>Administrator access · MFA required in production</small>
+          <small>Discord identity · Approved operators only</small>
         </div>
       </div>
     );
@@ -108,11 +111,11 @@ function Console({ name, rehearsal }: { name: string; rehearsal: boolean }) {
         <a className="brand" href="/">
           <span className="mark">F</span>
           <span>
-            FAMEliza<small>BOT CONSOLE</small>
+            FAMEliza<small>SOCIETY OPERATIONS</small>
           </span>
         </a>
         <div className="workspace">
-          <span className="dot" />
+          <span className="workspace-label">WORKSPACE</span>
           Fame Lady Society
         </div>
         <nav>
@@ -123,8 +126,9 @@ function Console({ name, rehearsal }: { name: string; rehearsal: boolean }) {
         </nav>
         <div className="sidebar-bottom">
           <p>
-            Human decisions.
-            <br />A clear record.
+            For the
+            <br />
+            <em>Society.</em>
           </p>
           <small>{name}</small>
           <button className="text-button" onClick={() => logout.mutate()}>
@@ -139,7 +143,9 @@ function Console({ name, rehearsal }: { name: string; rehearsal: boolean }) {
         <header>
           <div>
             <p className="eyebrow">COMMUNITY OPERATIONS</p>
-            <h1>Moderation inbox</h1>
+            <h1>
+              Society <em>inbox.</em>
+            </h1>
             <p>Review the context. Decide what happens next.</p>
           </div>
           <span className="pill">
@@ -200,12 +206,11 @@ function Console({ name, rehearsal }: { name: string; rehearsal: boolean }) {
           <p>Loading cases…</p>
         ) : !all.length ? (
           <div className="empty">
-            <div className="empty-icon">✓</div>
-            <h2>Your inbox is clear</h2>
-            <p>
-              No cases have been received. This release does not connect live
-              channels.
-            </p>
+            <div className="empty-icon" aria-hidden="true">
+              ◫
+            </div>
+            <h2>A clear inbox.</h2>
+            <p>No messages received yet. Channels have not been connected.</p>
           </div>
         ) : (
           <div className="split">
