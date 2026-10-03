@@ -108,3 +108,59 @@ test("Telegram receiver is separate from operator auth and persists through a re
     );
   }
 });
+
+test("onboarding isolates credentials and seeds only the verified group before cutover", () => {
+  const t = Template.fromStack(
+    new BotConsoleStack(new cdk.App(), "FlsBotConsole", config),
+  );
+  const functions = t.findResources("AWS::Lambda::Function");
+  const verifier = Object.values(functions).find(
+    (f) => f.Properties.Handler === "verifier.verify",
+  )!;
+  expect(verifier.Properties.Environment.Variables).toHaveProperty(
+    "TELEGRAM_TOKEN_ARN",
+  );
+  for (const handler of [
+    "index.handler",
+    "telegram.webhook",
+    "telegram.worker",
+  ]) {
+    const f = Object.values(functions).find(
+      (f) => f.Properties.Handler === handler,
+    )!;
+    expect(f.Properties.Environment.Variables).not.toHaveProperty(
+      "TELEGRAM_TOKEN_ARN",
+    );
+    expect(f.Properties.Environment.Variables).toHaveProperty("GROUP_TABLE");
+    expect(
+      f.DependsOn.some((id: string) => id.startsWith("VerifiedTestGroup")),
+    ).toBe(true);
+  }
+  const policies = Object.values(t.findResources("AWS::IAM::Policy"));
+  const tokenPolicies = policies.filter((p) =>
+    JSON.stringify(p.Properties.PolicyDocument).includes("telegram-verifier"),
+  );
+  expect(tokenPolicies).toHaveLength(1);
+  expect(JSON.stringify(tokenPolicies[0].Properties.Roles)).toContain(
+    "TelegramVerifierServiceRole",
+  );
+  const invokePolicies = policies.filter((p) =>
+    JSON.stringify(p.Properties.PolicyDocument).includes(
+      "lambda:InvokeFunction",
+    ),
+  );
+  expect(invokePolicies).toHaveLength(1);
+  expect(JSON.stringify(invokePolicies[0].Properties.Roles)).toContain(
+    "ApiFunctionServiceRole",
+  );
+  const seed = Object.values(t.findResources("Custom::AWS")).find((r) =>
+    JSON.stringify(r.Properties).includes("verified-fls-cutover"),
+  )!;
+  expect(JSON.stringify(seed.Properties.Create)).toContain("-1004423197212");
+  expect(JSON.stringify(seed.Properties.Create)).toContain(
+    "attribute_not_exists(pk)",
+  );
+  expect(seed.Properties.Update).toBeUndefined();
+  expect(seed.Properties.Delete).toBeUndefined();
+  t.resourceCountIs("AWS::DynamoDB::Table", 3);
+});

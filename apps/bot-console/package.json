@@ -5,12 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "node --import tsx local/dev.ts",
-    "build": "tsc --noEmit && vite build && esbuild server/lambda.ts --bundle --platform=node --target=node24 --format=esm --outfile=dist-api/index.mjs --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\" && esbuild server/telegram-runtime.ts --bundle --platform=node --target=node24 --format=esm --outfile=dist-api/telegram.mjs --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\"",
+    "build": "tsc --noEmit && vite build && esbuild server/lambda.ts --bundle --platform=node --target=node24 --format=esm --outfile=dist-api/index.mjs --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\" && esbuild server/telegram-runtime.ts --bundle --platform=node --target=node24 --format=esm --outfile=dist-api/telegram.mjs --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\" && esbuild server/telegram-verifier.ts --bundle --platform=node --target=node24 --format=esm --outfile=dist-api/verifier.mjs --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\"",
     "test": "node --import tsx --test test/*.test.ts",
     "check": "tsc --noEmit"
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.0.0",
+    "@aws-sdk/client-lambda": "^3.1146.0",
     "@aws-sdk/client-secrets-manager": "^3.0.0",
     "@aws-sdk/client-sqs": "^3.0.0",
     "@aws-sdk/lib-dynamodb": "^3.0.0",

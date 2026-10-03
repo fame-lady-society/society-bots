@@ -67,3 +67,26 @@ test("execution policy allows CDK's unprefixed publishing layer only", () => {
     `arn:aws:lambda:us-east-1:590183914614:layer:${name}:*`,
   ]);
 });
+
+test("runtime boundary grants only the verifier invocation and dedicated credential", () => {
+  const t = Template.fromStack(
+    new BotConsoleAccessStack(new cdk.App(), "FlsBotConsoleAccess", {
+      env: { account: "590183914614", region: "us-east-1" },
+    }),
+  );
+  const boundary = Object.values(t.findResources("AWS::IAM::ManagedPolicy"))[0]
+    .Properties.PolicyDocument.Statement;
+  const invoke = boundary.find((s: { Action: string | string[] }) =>
+    [s.Action].flat().includes("lambda:InvokeFunction"),
+  );
+  expect(invoke.Resource).toBe(
+    "arn:aws:lambda:us-east-1:590183914614:function:FlsBotConsole-TelegramVerifier*",
+  );
+  expect(JSON.stringify(boundary)).toContain("dynamodb:ConditionCheckItem");
+  const policy = Object.entries(t.findResources("AWS::IAM::Policy")).find(
+    ([id]) => id.startsWith("ExecutionPolicy"),
+  )![1];
+  expect(JSON.stringify(policy.Properties.PolicyDocument)).not.toContain(
+    "telegram-verifier",
+  );
+});

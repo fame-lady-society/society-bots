@@ -15,6 +15,7 @@ import { HttpLambdaIntegration } from "aws-cdk-lib/aws-apigatewayv2-integrations
 import * as deployment from "aws-cdk-lib/aws-s3-deployment";
 import * as path from "node:path";
 import * as iam from "aws-cdk-lib/aws-iam";
+import * as custom from "aws-cdk-lib/custom-resources";
 import * as sqs from "aws-cdk-lib/aws-sqs";
 import { SqsEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
 export interface BotConsoleProps extends cdk.StackProps {
@@ -95,12 +96,85 @@ export class BotConsoleStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.RETAIN,
       pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
     });
+    const groups = new dynamodb.Table(this, "TelegramGroups", {
+      partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
+      sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      timeToLiveAttribute: "expires",
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
+    });
+    // Explicit cutover seed for the operator-verified test group. Create-only:
+    // future deploys and rollback never reactivate a disconnected group.
+    const seed = new custom.AwsCustomResource(this, "VerifiedTestGroup", {
+      installLatestAwsSdk: false,
+      onCreate: {
+        service: "DynamoDB",
+        action: "putItem",
+        parameters: {
+          TableName: groups.tableName,
+          Item: {
+            pk: { S: "groups" },
+            sk: { S: "-1004423197212" },
+            id: { S: "-1004423197212" },
+            name: { S: "FLS Bot" },
+            state: { S: "active" },
+            requestId: { S: "verified-fls-cutover" },
+            requestedBy: { S: "5835157950" },
+            createdBy: { S: "931691901592145930" },
+            updatedBy: { S: "931691901592145930" },
+            requestedAt: { N: "1791055329" },
+            updatedAt: { N: "1791055329" },
+            activatedAt: { N: "0" },
+            associationId: { S: "verified-fls-cutover" },
+            hasHistory: { BOOL: true },
+          },
+          ConditionExpression: "attribute_not_exists(pk)",
+        },
+        physicalResourceId: custom.PhysicalResourceId.of(
+          "verified-fls-cutover",
+        ),
+        ignoreErrorCodesMatching: "ConditionalCheckFailedException",
+      },
+      policy: custom.AwsCustomResourcePolicy.fromStatements([
+        new iam.PolicyStatement({
+          actions: ["dynamodb:PutItem"],
+          resources: [groups.tableArn],
+        }),
+      ]),
+    });
+    const token = secrets.Secret.fromSecretNameV2(
+      this,
+      "TelegramVerifierToken",
+      "bot-console/telegram-verifier",
+    );
+    const verifier = new lambda.Function(this, "TelegramVerifier", {
+      runtime: lambda.Runtime.NODEJS_24_X,
+      architecture: lambda.Architecture.ARM_64,
+      code: lambda.Code.fromAsset(path.join(props.appDirectory, "dist-api")),
+      handler: "verifier.verify",
+      timeout: cdk.Duration.seconds(12),
+      memorySize: 256,
+      reservedConcurrentExecutions: 2,
+      environment: { TELEGRAM_TOKEN_ARN: token.secretArn },
+      logGroup: new logs.LogGroup(this, "TelegramVerifierLogs", {
+        retention: logs.RetentionDays.ONE_MONTH,
+      }),
+    });
+    token.grantRead(verifier);
+    verifier.grantInvoke(apiFunction);
+    apiFunction.addEnvironment("TELEGRAM_VERIFIER_ARN", verifier.functionArn);
+    apiFunction.addEnvironment("GROUP_TABLE", groups.tableName);
+    groups.grantReadWriteData(apiFunction);
+    apiFunction.node.addDependency(seed);
     const telegram = new secrets.Secret(this, "TelegramConfig", {
       secretName: "bot-console/telegram-receiver",
       generateSecretString: {
         secretStringTemplate: JSON.stringify({
           botId: "7393738833",
           username: "famesocietybot",
+          // Keep this creation template stable: changing it rotates the live webhook secret.
+          // Group authorization now lives exclusively in TelegramGroups.
           chats: [],
         }),
         generateStringKey: "webhookSecret",
@@ -128,6 +202,7 @@ export class BotConsoleStack extends cdk.Stack {
       environment: {
         TELEGRAM_CONFIG_ARN: telegram.secretArn,
         INGEST_QUEUE_URL: incoming.queueUrl,
+        GROUP_TABLE: groups.tableName,
       },
       logGroup: new logs.LogGroup(this, "TelegramReceiverLogs", {
         retention: logs.RetentionDays.ONE_MONTH,
@@ -141,7 +216,7 @@ export class BotConsoleStack extends cdk.Stack {
       timeout: cdk.Duration.seconds(20),
       memorySize: 256,
       environment: {
-        TELEGRAM_CONFIG_ARN: telegram.secretArn,
+        GROUP_TABLE: groups.tableName,
         MESSAGE_TABLE: messages.tableName,
       },
       logGroup: new logs.LogGroup(this, "TelegramWriterLogs", {
@@ -155,7 +230,16 @@ export class BotConsoleStack extends cdk.Stack {
       }),
     );
     telegram.grantRead(receiver);
-    telegram.grantRead(worker);
+    groups.grantReadWriteData(receiver);
+    groups.grantReadData(worker);
+    worker.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["dynamodb:ConditionCheckItem"],
+        resources: [groups.tableArn],
+      }),
+    );
+    receiver.node.addDependency(seed);
+    worker.node.addDependency(seed);
     telegram.grantRead(apiFunction);
     incoming.grantSendMessages(receiver);
     messages.grantWriteData(worker);
@@ -261,6 +345,7 @@ export class BotConsoleStack extends cdk.Stack {
       distributionPaths: ["/*"],
       prune: true,
     });
+    new cdk.CfnOutput(this, "TelegramGroupTable", { value: groups.tableName });
     new cdk.CfnOutput(this, "Url", { value: "https://bot.fame.support" });
   }
 }

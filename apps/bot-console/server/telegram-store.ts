@@ -2,6 +2,7 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import {
   DynamoDBDocumentClient,
   PutCommand,
+  TransactWriteCommand,
   QueryCommand,
   GetCommand,
 } from "@aws-sdk/lib-dynamodb";
@@ -13,12 +14,66 @@ const conditional = (e: unknown) =>
   e instanceof Error && e.name === "ConditionalCheckFailedException";
 export async function saveMessage(
   m: CapturedMessage,
-  send: (command: PutCommand) => Promise<unknown> = (command) =>
+  associationId: string,
+  send: (command: TransactWriteCommand) => Promise<unknown> = (command) =>
     db.send(command),
 ) {
+  const put = async (command: PutCommand) => {
+    try {
+      await send(
+        new TransactWriteCommand({
+          TransactItems: [
+            {
+              ConditionCheck: {
+                TableName: process.env.GROUP_TABLE!,
+                Key: { pk: "groups", sk: m.chatId },
+                ConditionExpression:
+                  "#state = :active AND associationId = :association",
+                ExpressionAttributeNames: { "#state": "state" },
+                ExpressionAttributeValues: {
+                  ":active": "active",
+                  ":association": associationId,
+                },
+              },
+            },
+            {
+              ConditionCheck: {
+                TableName: process.env.GROUP_TABLE!,
+                Key: { pk: `ignored#${m.chatId}`, sk: m.messageId },
+                ConditionExpression: "attribute_not_exists(pk)",
+              },
+            },
+            {
+              Put: {
+                ...command.input,
+                TableName: table(),
+                Item: command.input.Item!,
+              },
+            },
+          ],
+        }),
+      );
+    } catch (e) {
+      const reasons = (e as { CancellationReasons?: { Code?: string }[] })
+        .CancellationReasons;
+      if (
+        e instanceof Error &&
+        e.name === "TransactionCanceledException" &&
+        reasons?.length === 3 &&
+        reasons[0].Code === "None" &&
+        reasons[1].Code === "None" &&
+        reasons[2].Code === "ConditionalCheckFailed"
+      ) {
+        const duplicate = new Error("Already stored");
+        duplicate.name = "ConditionalCheckFailedException";
+        throw duplicate;
+      }
+      throw e;
+    }
+  };
   // Each write is idempotent. A retry still repairs the projection even if its revision already exists.
   try {
-    await send(
+    await put(
       new PutCommand({
         TableName: table(),
         Item: {
@@ -33,7 +88,7 @@ export async function saveMessage(
     if (!conditional(e)) throw e;
   }
   try {
-    await send(
+    await put(
       new PutCommand({
         TableName: table(),
         Item: {
@@ -50,7 +105,7 @@ export async function saveMessage(
     if (!conditional(e)) throw e;
   }
   try {
-    await send(
+    await put(
       new PutCommand({
         TableName: table(),
         Item: {
