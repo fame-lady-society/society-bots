@@ -1,0 +1,61 @@
+name: Bot console access
+on:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      deploy_access:
+        type: boolean
+        default: true
+permissions:
+  contents: read
+concurrency:
+  group: bot-console-access-production
+  cancel-in-progress: false
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: corepack enable
+      - run: yarn install --frozen-lockfile --non-interactive
+        working-directory: deploy
+      - run: yarn test --runInBand test/bot-console-access-ci.test.ts
+        working-directory: deploy
+      - run: yarn esbuild bin/bot-console-access.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/bot-console-access.mjs
+        working-directory: deploy
+      - run: yarn cdk synth --app 'node dist/bot-console-access.mjs' --quiet
+        working-directory: deploy
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bot-console-access-template
+          path: deploy/cdk.out/FlsBotConsoleAccess.template.json
+  deploy:
+    needs: validate
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && (github.event_name == 'workflow_dispatch' || inputs.deploy_access)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: bot-console-access-production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: bot-console-access-template
+          path: template
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::590183914614:role/FlsBotConsoleAccessGitHubDeploy
+          aws-region: us-east-1
+          allowed-account-ids: "590183914614"
+      - name: Deploy reviewed IAM template
+        run: |
+          aws cloudformation deploy \
+            --stack-name FlsBotConsoleAccess \
+            --template-file template/FlsBotConsoleAccess.template.json \
+            --role-arn arn:aws:iam::590183914614:role/FlsBotConsoleAccessExecution \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset

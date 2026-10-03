@@ -132,16 +132,32 @@ No phone number is required by this app. Discord can impose its own account/serv
 verification requirements; its documentation says VoIP numbers are not accepted
 for phone verification. Use a registered bot for automation, never a user self-bot.
 
-## Operator-only access provisioning
+## Access-stack CI
 
-This stack is intentionally excluded from application CI deployment. Changes
-require review and an authorized FLS operator. From `deploy`:
+The Bot console access workflow tests and synthesizes on PRs. On main, it deploys
+through the separate `bot-console-access-production` environment. Application
+deployment waits for it. Manual dispatch from main is also supported. Access deployment runs when access sources, workflow, or CDK dependencies change;
+normal application-only releases skip that approval. Manual dispatch always checks
+the access stack, with unchanged permissions producing an empty changeset.
+
+The dedicated OIDC role can update only `FlsBotConsoleAccess`, using a dedicated
+execution role scoped to the two application deployment roles and runtime boundary.
+Neither workflow can change the access-CI roles. No long-lived AWS keys are used.
+Review the `bot-console-access-template` artifact before deployment approval.
+
+One-time operator bootstrap, also used for future CI-authority changes:
 
 ```sh
-yarn esbuild bin/bot-console-access.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/bot-console-access.mjs
-yarn cdk diff FlsBotConsoleAccess --app 'node dist/bot-console-access.mjs' --profile fls-admin
-yarn cdk deploy FlsBotConsoleAccess --app 'node dist/bot-console-access.mjs' --profile fls-admin
+cd deploy
+yarn esbuild bin/bot-console-access-ci.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/bot-console-access-ci.mjs
+yarn cdk diff FlsBotConsoleAccessCi --app 'node dist/bot-console-access-ci.mjs' --profile fls-admin
+yarn cdk deploy FlsBotConsoleAccessCi --app 'node dist/bot-console-access-ci.mjs' --profile fls-admin
 ```
+
+Before merging, create `bot-console-access-production` with a required operator
+reviewer, only `main` allowed, and administrator bypass disabled. The first CI
+update replaces the access stack's CDK bootstrap execution role with the scoped
+`FlsBotConsoleAccessExecution` role.
 
 Before enabling live moderation, add exact-action approvals and an executor as a
 separate reviewed increment. This release has no Discord listener, announcement
@@ -174,7 +190,7 @@ moderation or send-message methods with it.
 
 ### Initial setup after deployment
 
-1. Review and provision the updated `FlsBotConsoleAccess` stack before merging
+1. Bootstrap access-CI roles and the protected GitHub environment before merging
    this increment; application CI cannot update its own IAM permissions.
 2. Let main CI deploy the receiver, queues, table and initially empty group list.
 3. Create a test group, add `@famesocietybot` as administrator and send a test
