@@ -413,3 +413,12 @@ the grant does not remove role-bearing audit entries. Pre-role releases cannot
 parse that history and are not supported rollback targets. Preserve audit history;
 prefer a forward fix. Producer rollback leaves snapshots that become visibly
 stale; it must never fall back to raw runtime state.
+
+### Runtime Wake
+
+Owners and human **Runtime operator** identities can wake FAMEliza from Runtime.
+The role is scoped to `runtime:overclaw-leader`; Operator viewer remains read-only.
+Wake starts the runtime without creating a conversation or task. Uncertain
+responses retain the original request ID for safe retry, including after reload.
+See [the Wake release notes](../../docs/plans/2026-10-04-runtime-wake-release.md)
+for trust boundaries, receipts and the required Overclaw-first deployment order.

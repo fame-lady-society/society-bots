@@ -147,7 +147,10 @@ function App() {
               onAccessChange={() => void session.refetch()}
             />
           ) : current === "runtime" ? (
-            <RuntimePanel />
+            <RuntimePanel
+              actor={principal.id}
+              canWake={permits(principal, "runtime.wake", runtimeScope)}
+            />
           ) : current === "telegram" ? (
             <TelegramInbox />
           ) : (

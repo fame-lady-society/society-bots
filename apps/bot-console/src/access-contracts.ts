@@ -5,13 +5,21 @@ export const roles = {
     permissions: [
       "access.manage",
       "runtime.read",
+      "runtime.wake",
       "connections.read",
       "connections.manage",
       "messages.read",
     ],
     scope: "global",
     description:
-      "Manage portal access, runtime visibility and all Telegram connections and history.",
+      "Manage portal access, runtime wake and visibility and all Telegram connections and history.",
+  },
+  "runtime-operator": {
+    name: "Runtime operator",
+    permissions: ["runtime.read", "runtime.wake"],
+    scope: "runtime",
+    description:
+      "Read and wake FAMEliza. Does not grant tasks, shutdown, or message access.",
   },
   "operator-viewer": {
     name: "Operator viewer",
@@ -36,7 +44,13 @@ export const roles = {
 } as const;
 export const grantSchema = z
   .object({
-    role: z.enum(["owner", "reader", "manager", "operator-viewer"]),
+    role: z.enum([
+      "owner",
+      "reader",
+      "manager",
+      "operator-viewer",
+      "runtime-operator",
+    ]),
     scope: z.string().max(80),
   })
   .strict()
@@ -44,7 +58,7 @@ export const grantSchema = z
     (g) =>
       g.role === "reader"
         ? g.scope === "telegram:*" || /^telegram:-\d+$/.test(g.scope)
-        : g.role === "operator-viewer"
+        : g.role === "operator-viewer" || g.role === "runtime-operator"
           ? g.scope === "runtime:overclaw-leader"
           : g.scope === "*",
     "Invalid scope for role",
@@ -66,8 +80,12 @@ export const principalSchema = z
     "Identity kind mismatch",
   )
   .refine(
-    (p) => p.kind === "human" || !p.grants.some((g) => g.role === "owner"),
-    "Only people can be owners",
+    (p) =>
+      p.kind === "human" ||
+      !p.grants.some(
+        (g) => g.role === "owner" || g.role === "runtime-operator",
+      ),
+    "Only people can be owners or runtime operators",
   );
 export const policySchema = z
   .object({

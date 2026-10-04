@@ -68,7 +68,7 @@ test("execution policy allows CDK's unprefixed publishing layer only", () => {
   ]);
 });
 
-test("runtime boundary grants only the verifier invocation and dedicated credential", () => {
+test("runtime boundary grants only verifier and exact Wake invocation", () => {
   const t = Template.fromStack(
     new BotConsoleAccessStack(new cdk.App(), "FlsBotConsoleAccess", {
       env: { account: "590183914614", region: "us-east-1" },
@@ -79,9 +79,10 @@ test("runtime boundary grants only the verifier invocation and dedicated credent
   const invoke = boundary.find((s: { Action: string | string[] }) =>
     [s.Action].flat().includes("lambda:InvokeFunction"),
   );
-  expect(invoke.Resource).toBe(
+  expect(invoke.Resource).toEqual([
     "arn:aws:lambda:us-east-1:590183914614:function:FlsBotConsole-TelegramVerifier*",
-  );
+    "arn:aws:lambda:us-west-1:590183914614:function:OverclawLeader-console-wake",
+  ]);
   expect(JSON.stringify(boundary)).toContain("dynamodb:ConditionCheckItem");
   const policy = Object.entries(t.findResources("AWS::IAM::Policy")).find(
     ([id]) => id.startsWith("ExecutionPolicy"),
@@ -101,7 +102,7 @@ test("runtime boundary permits only the exact Overclaw status item in the produc
     t.findResources("AWS::IAM::ManagedPolicy"),
   )[0].Properties.PolicyDocument.Statement;
   const crossRegion = statements.filter((s: { Resource: unknown }) =>
-    JSON.stringify(s.Resource).includes("us-west-1"),
+    JSON.stringify(s.Resource).includes("OverclawLeader-OperatorStatus"),
   );
   expect(crossRegion).toEqual([
     {

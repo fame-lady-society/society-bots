@@ -1,3 +1,4 @@
+import { WakeControl } from "./WakeControl";
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { runtimeFetch } from "./api";
@@ -14,7 +15,13 @@ function age(at: number | null, now: number) {
     ? "Never observed"
     : `${Math.max(0, Math.floor(now - at))} seconds ago`;
 }
-export function RuntimePanel() {
+export function RuntimePanel({
+  canWake = false,
+  actor,
+}: {
+  canWake?: boolean;
+  actor: string;
+}) {
   const [visible, setVisible] = useState(
     document.visibilityState === "visible",
   );
@@ -51,7 +58,7 @@ export function RuntimePanel() {
   return (
     <>
       <header className="runtime-header">
-        <p className="eyebrow">OVERCLAW · READ ONLY</p>
+        <p className="eyebrow">OVERCLAW · RUNTIME</p>
         <h1>
           FAMEliza <em>runtime.</em>
         </h1>
@@ -60,6 +67,14 @@ export function RuntimePanel() {
           visible.
         </p>
       </header>
+      {canWake && (
+        <WakeControl
+          actor={actor}
+          status={status.data?.status ?? null}
+          readFailed={status.isError}
+          onSubmitted={() => void status.refetch()}
+        />
+      )}
       {status.isPending && <p role="status">Reading runtime status…</p>}
       {status.isError && (
         <div className="notice" role="alert">
@@ -165,14 +180,12 @@ export function RuntimeEvidence({
       </section>
       <section className="runtime-card">
         <p className="eyebrow">SAVED WORK</p>
-        <h2>Last saved checkpoint</h2>
+        <h2 title="Changes since this checkpoint may not be saved">
+          Last successful checkpoint
+        </h2>
         <p>
           {date(l.checkpointCreatedAt)}
           <small>{age(l.checkpointCreatedAt, now)}</small>
-        </p>
-        <p>
-          Creation time is runtime-reported for the last verified, committed
-          main checkpoint. It does not establish that current work is saved.
         </p>
       </section>
       <section className="runtime-card">

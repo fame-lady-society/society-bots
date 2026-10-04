@@ -1,4 +1,8 @@
 import {
+  wakeInputSchema,
+  type WakeRecord,
+} from "../src/runtime-wake-contracts";
+import {
   rehearsalSnapshot,
   rehearsalScenarios,
   type RehearsalScenario,
@@ -76,6 +80,7 @@ const incidents: Incident[] = [
   },
 ];
 let signedIn = false;
+let loseWakeResponse = false;
 let runtimeScenario: RehearsalScenario = "ready";
 let rehearsalPrincipal: Principal = structuredClone(localOwner);
 const app = new Hono();
@@ -105,11 +110,16 @@ app.post("/api/local/runtime", async (c) => {
   const body = z
     .object({
       scenario: z.enum(rehearsalScenarios).optional(),
-      role: z.enum(["owner", "operator-viewer", "reader"]).optional(),
+      loseWakeResponse: z.boolean().optional(),
+      role: z
+        .enum(["owner", "operator-viewer", "runtime-operator", "reader"])
+        .optional(),
     })
     .strict()
     .parse(await c.req.json());
   if (body.scenario) runtimeScenario = body.scenario;
+  if (body.loseWakeResponse !== undefined)
+    loseWakeResponse = body.loseWakeResponse;
   if (body.role)
     rehearsalPrincipal = {
       ...localOwner,
@@ -117,7 +127,7 @@ app.post("/api/local/runtime", async (c) => {
         {
           role: body.role,
           scope:
-            body.role === "operator-viewer"
+            body.role === "operator-viewer" || body.role === "runtime-operator"
               ? runtimeScope
               : body.role === "reader"
                 ? "telegram:-100"
@@ -152,6 +162,49 @@ app.get("/api/runtimes/:id/status", (c) => {
       now,
     ),
   });
+});
+// Synthetic local wake: never invokes AWS, creates tasks, or sends Discord messages.
+const wakeRecords = new Map<string, WakeRecord>();
+app.post("/api/runtimes/:id/wake", async (c) => {
+  if (c.req.header("Origin") !== "http://127.0.0.1:5173")
+    return c.json({ error: "Invalid origin" }, 403);
+  if (
+    c.req.param("id") !== runtime.id ||
+    !permits(rehearsalPrincipal, "runtime.wake", runtimeScope)
+  )
+    return c.json({ error: "Runtime not found" }, 404);
+  const { requestId } = wakeInputSchema.parse(await c.req.json());
+  const previous = wakeRecords.get(requestId);
+  if (previous) return c.json(previous);
+  const outcome =
+    runtimeScenario === "asleep"
+      ? "accepted"
+      : runtimeScenario === "ready" || runtimeScenario === "starting"
+        ? "already-running"
+        : "rejected";
+  const record: WakeRecord = {
+    request: {
+      requestId,
+      actor: rehearsalPrincipal.id,
+      runtimeId: "overclaw-leader",
+      action: "wake",
+      requestedAt: Math.floor(Date.now() / 1000),
+    },
+    outcome,
+    reason:
+      outcome === "accepted"
+        ? "wake-requested"
+        : outcome === "already-running"
+          ? "already-running"
+          : "runtime-busy",
+  };
+  wakeRecords.set(requestId, record);
+  if (outcome === "accepted") runtimeScenario = "starting";
+  if (loseWakeResponse) {
+    loseWakeResponse = false;
+    return c.json({ error: "Synthetic lost response" }, 503);
+  }
+  return c.json(record);
 });
 app.get("/api/access", async (c) =>
   c.json({
