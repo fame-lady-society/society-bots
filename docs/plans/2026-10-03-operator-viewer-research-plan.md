@@ -139,7 +139,7 @@ Review recommendation: proceed with this research direction and the discovery/co
 
 ## Implementation task backlog
 
-T1–T7 implementation and local review are complete except the explicitly pending release-artifact subchecks below. T8 deployment/live acceptance remains pending. Task IDs are local to this document; completion evidence is in the release record.
+T1–T7 implementation and local review are complete, with a retained role-aware console CI artifact recorded in the release evidence. T8 deployment/live acceptance remains pending. Task IDs are local to this document; completion evidence is in the release record.
 
 ### T1 Verify deployment ownership and prerequisites
 
@@ -201,7 +201,7 @@ Repository ownership: society-bots access contracts, server routes, status reade
 - [x] Validate and allowlist the browser response independently; do not serialize the producer record wholesale.
 - [x] Test anonymous, owner, viewer-only, Telegram reader, manager, disabled, revoked and wrong-runtime identities; assert denied calls never reach DynamoDB.
 - [x] Test privacy canaries, malformed/future timestamps, unknown schema, incomplete worker counts and timeout behavior.
-- [ ] Define a tested role-aware rollback artifact; prove a policy and audit containing operator-viewer remain readable by that artifact.
+- [x] Define a tested role-aware rollback artifact; prove a policy and audit containing operator-viewer remain readable by that artifact.
 
 Done when: application tests and targeted CDK checks prove authorization and data boundaries locally. No real AWS IAM or OAuth acceptance is claimed from test doubles.
 
@@ -225,7 +225,7 @@ Repository ownership: both PRs and the conditional access prerequisite. Depends 
 - [x] Review exact final diffs for controller capability exposure, raw-state access, metadata leakage and privilege inheritance.
 - [x] Re-run targeted adversarial cases against the final producer/consumer: failed source plus fresh publication, historical checkpoint/current generation, incomplete workers, timeout late completion and stale authorization.
 - [x] Verify consumer fixtures match producer serialization and that all repository-required checks pass on the reviewed revisions.
-- [ ] Verify publisher-before-consumer deployment order, access prerequisite ordering, supported rollback artifact and preservation of role-bearing audit history. Ordering and audit parsing verified; deployable role-aware CI artifact retention remains a release gate.
+- [x] Verify publisher-before-consumer deployment order, access prerequisite ordering, supported rollback artifact and preservation of role-bearing audit history. See retained CI artifact and retention expiry in the release record.
 - [x] Produce a concise release checklist identifying local proof, cloud checks still pending, exact artifacts and rollback steps.
 
 Done when: blocking review findings are resolved or explicitly accepted by the operator, and the cross-repository release is concrete and reviewable. No new architecture review agents need to run during this planning turn.

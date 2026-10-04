@@ -46,6 +46,14 @@ Screenshots were saved locally as `/private/tmp/operator-viewer-desktop.png` and
 
 ## Rollback
 
-After any operator-viewer grant is saved, do not roll back to a pre-role console binary: both current policy and historical audit contain the new enum. The tested role-aware implementation revision is the minimum source rollback baseline; retain its actual CI build artifact before release. No deployed rollback artifact exists yet. Prefer a forward fix; preserve audit history.
+After any operator-viewer grant is saved, do not roll back to a pre-role console binary: both current policy and historical audit contain the new enum. The tested role-aware implementation revision is the minimum source rollback baseline; retain its actual CI build artifact before release. The role-aware CI build is retained as described below; it has not been deployed. Prefer a forward fix; preserve audit history.
 
 Producer rollback leaves the retained snapshot, which ages into stale status. Retire consumer IAM separately if removing the integration. Deleting the producer stack retains the status table. No automatic rollback is performed here.
+
+## Review and retained build references
+
+- Producer: https://github.com/falsefloor/overclaw/pull/4 — implementation `4bd742c`, stacked on `c1f48dc`.
+- Access prerequisite: https://github.com/fame-lady-society/society-bots/pull/37 — `b1c4625`; CI passed.
+- Console: https://github.com/fame-lady-society/society-bots/pull/38 — implementation `3d30ebe8cb3dd32726288df064931ef5e3c0f85a`; CI run `37173949358` completed successfully (app tests/build, CDK synth/tests and access validation). Subsequent documentation-only commits do not alter that artifact's source.
+- Role-aware rollback artifact: `bot-console-build`, GitHub artifact ID `11292577214`, archive digest `sha256:a766b468b13de2497e783db35fb7eb640699d0c48f9483094d30903b7880f772`, expires 2027-01-02T03:23:38Z. Downloaded copy: `/private/tmp/operator-viewer-ci-37173949358`. API `dist-api/index.mjs` SHA256 `e90036589122bd0d4f1468f1c4453bb76075ea127c8c0d0c24822514cf096b81`. Move this release artifact to durable operator-controlled retention before its expiry or local temporary-file cleanup; the PR/source baseline is durable but does not preserve the binary indefinitely.
+- No producer CI checks are configured/reported for the stacked branch; its proof is the local Rust/Bun/CDK matrix, not remote CI.
