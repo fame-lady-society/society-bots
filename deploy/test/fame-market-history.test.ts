@@ -28,7 +28,6 @@ test("history deploy is retained, private, bounded, and independent of bot stack
   new FameMarketHistory(stack, "History", {
     rpcParameterName: "/society/history/rpc",
     startBlock: 100,
-    dailyRequests: 1000,
     poolStateTableName: "existing-pool-state",
   });
   const template = Template.fromStack(stack);
@@ -54,7 +53,6 @@ test("history deploy is retained, private, bounded, and independent of bot stack
     Environment: {
       Variables: Match.objectLike({
         FAME_HISTORY_START_BLOCK: "100",
-        FAME_HISTORY_DAILY_REQUESTS: "1000",
         FAME_HISTORY_RPC_PARAMETER: "/society/history/rpc",
       }),
     },
@@ -76,9 +74,19 @@ test("history deploy is retained, private, bounded, and independent of bot stack
     ScheduleExpression: "rate(1 minute)",
   });
   template.resourceCountIs("AWS::Lambda::Function", 2);
+  template.resourceCountIs("AWS::CloudWatch::Dashboard", 1);
+  template.hasResourceProperties("AWS::CloudWatch::Alarm", {
+    MetricName: "RpcRequests",
+    Period: 3600,
+    Threshold: 2000,
+    AlarmActions: Match.absent(),
+  });
+  expect(JSON.stringify(template.toJSON())).not.toContain(
+    "FAME_HISTORY_DAILY_REQUESTS",
+  );
 });
 
-test("deployment rejects an implicit starting point or budget", () => {
+test("deployment rejects an implicit starting point", () => {
   expect(
     () =>
       new FameMarketHistory(
@@ -87,7 +95,6 @@ test("deployment rejects an implicit starting point or budget", () => {
         {
           rpcParameterName: "/rpc",
           startBlock: 0,
-          dailyRequests: 100,
           poolStateTableName: "pool",
         },
       ),

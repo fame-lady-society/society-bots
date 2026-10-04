@@ -11,8 +11,7 @@ import {
   type Scope,
 } from "./model.ts";
 
-export class WorkLimit extends Error {}
-export class RangeLimit extends Error {}
+import { WorkLimit, RangeLimit } from "./limits.ts";
 export interface RpcMetrics {
   requests: number;
   responseBytes: number;
@@ -27,7 +26,6 @@ export function boundedTransport({
   maxResponseBytes,
   maxTotalResponseBytes = 8 * 1024 * 1024,
   deadline,
-  reserveRequest,
   fetcher = fetch,
   now = Date.now,
 }: {
@@ -36,7 +34,6 @@ export function boundedTransport({
   maxResponseBytes: number;
   maxTotalResponseBytes?: number;
   deadline: number;
-  reserveRequest: () => Promise<void>;
   fetcher?: typeof fetch;
   now?: () => number;
 }) {
@@ -49,15 +46,21 @@ export function boundedTransport({
   const metrics: RpcMetrics = { requests: 0, responseBytes: 0, methods: {} };
   return {
     metrics,
+    capacity: {
+      remainingRequests: () => maxRequests - metrics.requests,
+      // Leave room for range boundary headers and a final canonical recheck.
+      // Scan work yields before consuming the entire invocation's resources.
+      canScan: () =>
+        maxRequests - metrics.requests > 3 &&
+        now() < deadline - 45000 &&
+        maxTotalResponseBytes - metrics.responseBytes >=
+          maxResponseBytes + Math.min(1024 * 1024, maxTotalResponseBytes / 4),
+    },
     transport: custom(
       {
         request: async ({ method, params }) => {
           if (metrics.requests >= maxRequests || now() >= deadline - 1000)
             throw new WorkLimit("RPC work allowance exhausted");
-          // Charge every attempted call before sending. Lost reservations are conservative.
-          await reserveRequest();
-          if (now() >= deadline - 1000)
-            throw new WorkLimit("RPC deadline reached");
           metrics.requests++;
           metrics.methods[method] = (metrics.methods[method] ?? 0) + 1;
           const id = metrics.requests;
@@ -143,7 +146,7 @@ export function chainReader(
   scope: Scope,
   transport: ReturnType<typeof boundedTransport>["transport"],
   maxEvents: number,
-  headerAllowance?: () => number,
+  capacity?: { remainingRequests(): number; canScan(): boolean },
 ): ChainReader {
   const client = createPublicClient({ chain: base, transport });
   const toHeader = (
@@ -155,7 +158,9 @@ export function chainReader(
     timestamp: integer(Number(block.timestamp), "block timestamp"),
   });
   return {
-    headerAllowance,
+    headerAllowance: capacity
+      ? () => capacity.remainingRequests() - 1
+      : undefined,
     finalized: async () => {
       if ((await client.getChainId()) !== CHAIN_ID)
         throw new Error("History RPC chain mismatch");
@@ -179,25 +184,39 @@ export function chainReader(
     },
     logs: async (from, to) => {
       const result: RawLog[] = [];
-      const read = async (start: number, end: number): Promise<void> => {
+      let throughBlock = from - 1;
+      let yieldReason: "request-capacity" | "event-capacity" | undefined;
+      const read = async (start: number, end: number): Promise<boolean> => {
+        if (capacity && !capacity.canScan()) {
+          yieldReason = "request-capacity";
+          return false;
+        }
+        let logs;
         try {
-          const logs = await client.getLogs({
+          logs = await client.getLogs({
             address: scope.pools.map((p) => p.address),
             fromBlock: BigInt(start),
             toBlock: BigInt(end),
           });
-          if (logs.length + result.length > maxEvents)
-            throw new WorkLimit("Range exceeds event allowance");
-          for (const log of logs) {
+        } catch (error) {
+          if (!limitedRange(error) || start === end) throw error;
+          const middle = Math.floor((start + end) / 2);
+          return (await read(start, middle)) && (await read(middle + 1, end));
+        }
+        const parsed = logs
+          .map((log): RawLog => {
             if (
               log.blockNumber === null ||
               log.transactionIndex === null ||
               log.logIndex === null
             )
               throw new Error("Pending log in finalized range");
-            result.push({
+            const blockNumber = integer(Number(log.blockNumber), "log block");
+            if (blockNumber < start || blockNumber > end)
+              throw new Error("Provider returned logs outside requested range");
+            return {
               address: log.address,
-              blockNumber: integer(Number(log.blockNumber), "log block"),
+              blockNumber,
               blockHash: hash(log.blockHash),
               transactionHash: hash(log.transactionHash),
               transactionIndex: integer(
@@ -208,17 +227,32 @@ export function chainReader(
               topics: log.topics.map(hash),
               data: log.data as Hex,
               removed: log.removed,
-            });
-          }
-        } catch (error) {
-          if (!limitedRange(error) || start === end) throw error;
-          const middle = Math.floor((start + end) / 2);
-          await read(start, middle);
-          await read(middle + 1, end);
+            };
+          })
+          .sort((a, b) => a.blockNumber - b.blockNumber);
+        if (parsed.length + result.length > maxEvents) {
+          // The response covers the full queried interval. Retain only whole
+          // blocks before the first block that would exceed this job's capacity.
+          const cutoff = parsed[maxEvents - result.length].blockNumber;
+          if (cutoff === from)
+            throw new WorkLimit(
+              "Single block exceeds event capacity; operator intervention required",
+            );
+          result.push(...parsed.filter((log) => log.blockNumber < cutoff));
+          throughBlock = cutoff - 1;
+          yieldReason = "event-capacity";
+          return false;
         }
+        result.push(...parsed);
+        throughBlock = end;
+        return true;
       };
       await read(from, to);
-      return result;
+      if (throughBlock < from)
+        throw new WorkLimit(
+          "Insufficient invocation capacity to verify any range",
+        );
+      return { logs: result, throughBlock, yieldReason };
     },
   };
 }

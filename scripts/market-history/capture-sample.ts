@@ -29,13 +29,12 @@ try {
     maxRequests: config.maxRequests,
     maxResponseBytes: config.maxResponseBytes,
     deadline: Date.now() + 60000,
-    reserveRequest: async () => {},
   });
   const chain = chainReader(
     scope,
     rpc.transport,
     config.maxEvents,
-    () => config.maxRequests - rpc.metrics.requests - 2,
+    rpc.capacity,
   );
   await mkdir(output, { recursive: false });
   const result = await collect({
@@ -45,6 +44,11 @@ try {
     maxBlocks: config.maxBlocks,
     maxEvents: config.maxEvents,
     store: {
+      reduceRange: async (_, __, maxBlocks) => {
+        throw new Error(
+          `Local sample exceeds invocation capacity; retry with FAME_HISTORY_MAX_BLOCKS=${maxBlocks}`,
+        );
+      },
       cursor: async (_, startBlock) => ({
         startBlock,
         nextBlock: startBlock,

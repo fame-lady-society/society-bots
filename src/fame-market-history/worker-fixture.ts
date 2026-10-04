@@ -39,8 +39,13 @@ export async function fixtureRange(
   to: number,
   tradeBlock?: number,
   price = 2n,
+  timeShift = 0,
 ) {
   let bytes!: Uint8Array, manifest!: Manifest;
+  const shiftedHeader = (n: number) => ({
+    ...header(n),
+    timestamp: header(n).timestamp + timeShift,
+  });
   const base = 10n ** 18n,
     quote = price * base;
   await collect({
@@ -49,37 +54,43 @@ export async function fixtureRange(
     maxBlocks: to - from + 1,
     maxEvents: 10,
     chain: {
-      finalized: async () => header(to),
-      header: async (n) => header(n),
-      logs: async () =>
-        tradeBlock === undefined
-          ? []
-          : [
-              {
-                address: pool.address,
-                blockNumber: tradeBlock,
-                blockHash: h(tradeBlock),
-                transactionHash: h(1000 + tradeBlock),
-                transactionIndex: 0,
-                logIndex: 0,
-                removed: false,
-                topics: [
-                  toEventSelector(
-                    EVENT_ABIS.Solidly.find((e) => e.name === "Swap")!,
+      finalized: async () => shiftedHeader(to),
+      header: async (n) => shiftedHeader(n),
+      logs: async () => ({
+        throughBlock: to,
+        logs:
+          tradeBlock === undefined
+            ? []
+            : [
+                {
+                  address: pool.address,
+                  blockNumber: tradeBlock,
+                  blockHash: h(tradeBlock),
+                  transactionHash: h(1000 + tradeBlock),
+                  transactionIndex: 0,
+                  logIndex: 0,
+                  removed: false,
+                  topics: [
+                    toEventSelector(
+                      EVENT_ABIS.Solidly.find((e) => e.name === "Swap")!,
+                    ),
+                    padHex(pool.address, { size: 32 }),
+                    padHex(pool.address, { size: 32 }),
+                  ],
+                  data: encodeAbiParameters(
+                    parseAbiParameters("uint256,uint256,uint256,uint256"),
+                    pool.token0 === FAME_ADDRESS
+                      ? [base, 0n, 0n, quote]
+                      : [quote, 0n, 0n, base],
                   ),
-                  padHex(pool.address, { size: 32 }),
-                  padHex(pool.address, { size: 32 }),
-                ],
-                data: encodeAbiParameters(
-                  parseAbiParameters("uint256,uint256,uint256,uint256"),
-                  pool.token0 === FAME_ADDRESS
-                    ? [base, 0n, 0n, quote]
-                    : [quote, 0n, 0n, base],
-                ),
-              },
-            ],
+                },
+              ],
+      }),
     },
     store: {
+      reduceRange: async () => {
+        throw new Error("Unexpected capacity yield in fixture");
+      },
       cursor: async () => ({
         startBlock: from,
         nextBlock: from,

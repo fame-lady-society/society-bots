@@ -3,8 +3,8 @@ import {
   BatchGetCommand,
   DynamoDBDocumentClient,
   GetCommand,
+  PutCommand,
   TransactWriteCommand,
-  UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import {
   HeadObjectCommand,
@@ -127,13 +127,58 @@ export function awsArchive({
           ConsistentRead: true,
         }),
       );
-      if (!Item)
-        return { startBlock, nextBlock: startBlock, previousHash: null };
-      return {
-        startBlock: integer(Item.startBlock, "stored start", 1),
-        nextBlock: integer(Item.nextBlock, "stored cursor", 1),
-        previousHash: hash(Item.previousHash),
-      };
+      const cursor: Cursor = Item
+        ? {
+            startBlock: integer(Item.startBlock, "stored start", 1),
+            nextBlock: integer(Item.nextBlock, "stored cursor", 1),
+            previousHash: hash(Item.previousHash),
+          }
+        : { startBlock, nextBlock: startBlock, previousHash: null };
+      const hint = await db.send(
+        new GetCommand({
+          TableName: table,
+          Key: { pk: `scope:${scopeId}`, sk: "scan-window" },
+          ConsistentRead: true,
+        }),
+      );
+      // A hint changes scheduling only. It is obsolete once coverage advances.
+      if (hint.Item?.nextBlock === cursor.nextBlock)
+        cursor.maxBlocks = integer(
+          hint.Item.maxBlocks,
+          "stored scan window",
+          1,
+        );
+      return cursor;
+    },
+    reduceRange: async (scopeId, nextBlock, maxBlocks) => {
+      integer(nextBlock, "scan window block", 1);
+      integer(maxBlocks, "scan window size", 1);
+      try {
+        await db.send(
+          new PutCommand({
+            TableName: table,
+            Item: {
+              pk: `scope:${scopeId}`,
+              sk: "scan-window",
+              nextBlock,
+              maxBlocks,
+            },
+            ConditionExpression:
+              "attribute_not_exists(pk) OR nextBlock < :next OR (nextBlock = :next AND maxBlocks >= :blocks)",
+            ExpressionAttributeValues: {
+              ":next": nextBlock,
+              ":blocks": maxBlocks,
+            },
+          }),
+        );
+      } catch (error) {
+        // Another attempt already saved a later or smaller window; keep it.
+        if (
+          !(error instanceof Error) ||
+          error.name !== "ConditionalCheckFailedException"
+        )
+          throw error;
+      }
     },
     upload: async (key, bytes, sha256) => {
       const checksum = Buffer.from(sha256, "hex").toString("base64");
@@ -243,41 +288,5 @@ export function awsArchive({
         };
       });
     },
-  };
-}
-
-/** Shared across live invocations. Charged before RPC, including failed requests. */
-export function dailyAllowance(
-  table: string,
-  limit: number,
-  db = DynamoDBDocumentClient.from(new DynamoDBClient({ maxAttempts: 1 })),
-  now = () => new Date(),
-) {
-  integer(limit, "daily request allowance", 1);
-  return async () => {
-    const date = now();
-    try {
-      await db.send(
-        new UpdateCommand({
-          TableName: table,
-          Key: {
-            pk: "budget:base-history",
-            sk: date.toISOString().slice(0, 10),
-          },
-          UpdateExpression: "SET expiresAt = :expiry ADD usedRequests :one",
-          ConditionExpression:
-            "attribute_not_exists(usedRequests) OR usedRequests < :limit",
-          ExpressionAttributeValues: {
-            ":one": 1,
-            ":limit": limit,
-            ":expiry": Math.floor(date.getTime() / 1000) + 90 * 86400,
-          },
-        }),
-      );
-    } catch {
-      throw new Error(
-        "Daily RPC allowance unavailable or exhausted; no request sent",
-      );
-    }
   };
 }

@@ -30,7 +30,7 @@ export interface AggregationStore {
     metadataRevision: string,
     owner: string,
     now: number,
-  ): Promise<{ nextBlock: number } | null>;
+  ): Promise<{ nextBlock: number; collectedThrough: number } | null>;
   pending(scopeId: string, nextBlock: number): Promise<Manifest | null>;
   previous(scopeId: string, beforeBlock: number): Promise<Manifest | null>;
   read(manifest: Manifest): Promise<Uint8Array>;
@@ -71,7 +71,7 @@ export async function aggregateNext({
   const target = await store.pending(scope.id, lease.nextBlock);
   if (!target) {
     await store.release(scope.id, owner);
-    return { status: "caught-up" as const };
+    return { status: "caught-up" as const, aggregationLagBlocks: 0 };
   }
   if (target.fromBlock !== lease.nextBlock || target.scopeId !== scope.id)
     throw new Error("Pending range does not match aggregation checkpoint");
@@ -79,14 +79,11 @@ export async function aggregateNext({
   const batch = readArchive(target, inputs[0].bytes);
   const firstTime = batch.headers[0].timestamp;
   const lastTime = batch.headers.at(-1)!.timestamp;
-  const firstBucket = Math.floor(firstTime / 300) * 300;
+  let firstBucket = Math.floor(firstTime / 300) * 300;
   // Need a strictly earlier timestamp to claim the first bucket is complete.
   // Empty ranges matter too: they establish coverage without creating trades.
   let earliest = batch;
-  while (
-    earliest.fromBlock > startBlock &&
-    earliest.headers[0].timestamp >= firstBucket
-  ) {
+  const prependPrevious = async () => {
     if (inputs.length === 8)
       throw new Error(
         "Candle context exceeds eight archives; aggregation needs range reconciliation",
@@ -97,13 +94,23 @@ export async function aggregateNext({
     const bytes = await store.read(previous);
     earliest = readArchive(previous, bytes);
     inputs.unshift({ manifest: previous, bytes });
+  };
+  if (target.fromBlock > startBlock) {
+    await prependPrevious();
+    // This range closes the preceding range's trailing partial candle, even
+    // when its first block lands in a later bucket or follows a timestamp gap.
+    firstBucket = Math.floor(earliest.headers.at(-1)!.timestamp / 300) * 300;
   }
+  while (
+    earliest.fromBlock > startBlock &&
+    earliest.headers[0].timestamp >= firstBucket
+  )
+    await prependPrevious();
   const count =
-    (Math.floor(lastTime / 300) - Math.floor(firstTime / 300) + 1) *
-    scope.pools.length;
+    (Math.floor(lastTime / 300) - firstBucket / 300 + 1) * scope.pools.length;
   if (count > MAX_PUBLISHED_CANDLES)
     throw new Error(
-      "Range exceeds atomic candle publication allowance; reduce collector range",
+      "Range or timestamp gap exceeds atomic candle publication capacity; operator reconciliation required",
     );
   const directory = await mkdtemp(path.join(tmpdir(), "fame-aggregate-"));
   try {
@@ -151,6 +158,10 @@ export async function aggregateNext({
       candleCount: candles.length,
       inputRanges: inputs.length,
       sourceRevision: combined.dataset.sourceRevision,
+      aggregationLagBlocks: Math.max(
+        0,
+        lease.collectedThrough - target.toBlock,
+      ),
     };
   } finally {
     await rm(directory, { recursive: true, force: true });

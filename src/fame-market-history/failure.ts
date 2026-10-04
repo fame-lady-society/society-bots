@@ -4,8 +4,8 @@ export function failureCode(error: unknown): string {
   let current = error;
   while (current instanceof Error && !seen.has(current)) {
     seen.add(current);
-    if (current.message.includes("Daily RPC allowance"))
-      return "daily-allowance-unavailable";
+    if (current.message.includes("Single block"))
+      return "single-block-capacity";
     if (
       current.message.includes("allowance") ||
       current.message.includes("deadline")

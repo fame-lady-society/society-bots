@@ -6,10 +6,10 @@ test("failure labels cannot leak provider messages or credentials", () => {
   expect(
     failureCode(
       new Error("viem wrapped", {
-        cause: new Error("Daily RPC allowance unavailable or exhausted"),
+        cause: new Error("Single block exceeds event capacity"),
       }),
     ),
-  ).toBe("daily-allowance-unavailable");
+  ).toBe("single-block-capacity");
   expect(
     failureCode(
       new Error("Committed boundary hash changed; history repair required"),

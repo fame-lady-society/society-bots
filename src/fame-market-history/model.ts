@@ -126,6 +126,7 @@ export interface Cursor {
   nextBlock: number;
   previousHash: Hex | null;
   startBlock: number;
+  maxBlocks?: number;
 }
 export interface Manifest {
   schema: typeof SCHEMA;

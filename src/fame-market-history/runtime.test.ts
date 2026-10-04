@@ -12,15 +12,15 @@ test("read-only rehearsal works before history resources exist", () => {
     startBlock: 100,
   });
 });
-test("production requires real storage and an explicit daily allowance", () => {
+test("production requires storage without a daily cutoff", () => {
   expect(() => configuration(env)).toThrow("FAME_HISTORY_TABLE");
-  expect(() =>
+  expect(
     configuration({
       ...env,
       FAME_HISTORY_TABLE: "history",
       FAME_HISTORY_BUCKET: "archive",
     }),
-  ).toThrow("FAME_HISTORY_DAILY_REQUESTS");
+  ).toMatchObject({ table: "history", bucket: "archive" });
 });
 test("invalid bounds fail before any work", () => {
   expect(() =>

@@ -1,4 +1,5 @@
 import { gzipSync } from "node:zlib";
+import { isCapacityError, WorkLimit } from "./limits.ts";
 import {
   digest,
   SCHEMA,
@@ -16,17 +17,29 @@ import {
 export interface ChainReader {
   finalized(): Promise<Header>;
   header(number: number): Promise<Header>;
-  logs(from: number, to: number): Promise<RawLog[]>;
+  logs(
+    from: number,
+    to: number,
+  ): Promise<{
+    logs: RawLog[];
+    throughBlock: number;
+    yieldReason?: "request-capacity" | "event-capacity";
+  }>;
   headerAllowance?(): number;
 }
 export interface ArchiveStore {
   cursor(scopeId: string, startBlock: number): Promise<Cursor>;
   upload(key: string, bytes: Uint8Array, sha256: string): Promise<void>;
   commit(manifest: Manifest, expected: Cursor): Promise<void>;
+  reduceRange(
+    scopeId: string,
+    nextBlock: number,
+    maxBlocks: number,
+  ): Promise<void>;
   observations?(scope: Scope): Promise<LiquidityObservation[]>;
 }
 export interface CollectResult {
-  status: "archived" | "dry-run" | "caught-up";
+  status: "archived" | "dry-run" | "caught-up" | "yielded";
   scopeId: string;
   fromBlock: number;
   toBlock: number;
@@ -34,6 +47,12 @@ export interface CollectResult {
   bytes: number;
   finalizedBlock: number;
   coverageLagBlocks: number;
+  yieldReason?:
+    | "request-capacity"
+    | "event-capacity"
+    | "header-capacity"
+    | "range-capacity";
+  nextMaxBlocks?: number;
 }
 
 export async function collect({
@@ -74,7 +93,11 @@ export async function collect({
       );
   }
   const fromBlock = cursor.nextBlock;
-  let toBlock = Math.min(finalized.number, fromBlock + maxBlocks - 1);
+  let toBlock = Math.min(
+    finalized.number,
+    fromBlock + Math.min(maxBlocks, cursor.maxBlocks ?? maxBlocks) - 1,
+  );
+  const requestedBlocks = toBlock - fromBlock + 1;
   const result = {
     scopeId: scope.id,
     fromBlock,
@@ -85,102 +108,133 @@ export async function collect({
     coverageLagBlocks: Math.max(0, finalized.number - (cursor.nextBlock - 1)),
   };
   if (fromBlock > finalized.number) return { ...result, status: "caught-up" };
-  const previous = await chain.header(fromBlock - 1);
-  if (cursor.previousHash && cursor.previousHash !== previous.hash)
-    throw new Error("Committed boundary hash changed; history repair required");
-  let logs = await chain.logs(fromBlock, toBlock);
-  if (logs.length > maxEvents)
-    throw new Error("Event limit exceeded; reduce block range before retrying");
-  let blocks = [
-    ...new Set([
+  try {
+    const previous = await chain.header(fromBlock - 1);
+    if (cursor.previousHash && cursor.previousHash !== previous.hash)
+      throw new Error(
+        "Committed boundary hash changed; history repair required",
+      );
+    const scanned = await chain.logs(fromBlock, toBlock);
+    if (integer(scanned.throughBlock, "scanned boundary", fromBlock) > toBlock)
+      throw new Error("Scanned boundary exceeds requested range");
+    toBlock = scanned.throughBlock;
+    let logs = scanned.logs;
+    let yieldReason: CollectResult["yieldReason"] = scanned.yieldReason;
+    if (logs.length > maxEvents)
+      throw new Error(
+        "Event limit exceeded; reduce block range before retrying",
+      );
+    let blocks = [
+      ...new Set([
+        fromBlock,
+        toBlock,
+        ...logs.map((log) => integer(log.blockNumber, "log block")),
+      ]),
+    ].sort((a, b) => a - b);
+    if (blocks.some((block) => block < fromBlock || block > toBlock))
+      throw new Error("Provider returned logs outside requested range");
+    const headerAllowance = chain.headerAllowance?.() ?? blocks.length;
+    if (headerAllowance < Math.min(2, blocks.length))
+      throw new WorkLimit(
+        "Insufficient request allowance to verify range headers",
+      );
+    if (blocks.length > headerAllowance) {
+      // Commit the fully read prefix rather than repeatedly timing out on a busy range.
+      toBlock = blocks[headerAllowance - 1];
+      logs = logs.filter((log) => log.blockNumber <= toBlock);
+      blocks = blocks.slice(0, headerAllowance);
+      yieldReason = "header-capacity";
+    }
+    const headers = new Map<number, Header>();
+    for (const block of blocks)
+      headers.set(
+        block,
+        block === finalized.number ? finalized : await chain.header(block),
+      );
+    const first = headers.get(fromBlock)!;
+    const last = headers.get(toBlock)!;
+    if (first.parentHash !== previous.hash)
+      throw new Error("Range parent hash mismatch");
+    for (let index = 1; index < blocks.length; index++) {
+      const prior = headers.get(blocks[index - 1])!;
+      const current = headers.get(blocks[index])!;
+      if (
+        current.timestamp < prior.timestamp ||
+        (current.number === prior.number + 1 &&
+          current.parentHash !== prior.hash)
+      ) {
+        throw new Error("Inconsistent range headers");
+      }
+    }
+    const events = validateLogs(logs, scope, fromBlock, toBlock, headers);
+    // Re-read the boundary immediately before publication. Do not mix changing chains.
+    if ((await chain.header(toBlock)).hash !== last.hash)
+      throw new Error("Range changed during collection");
+    const observations = (await store.observations?.(scope)) ?? [];
+    const batch: ArchiveBatch = {
+      schema: SCHEMA,
+      scope,
       fromBlock,
       toBlock,
-      ...logs.map((log) => integer(log.blockNumber, "log block")),
-    ]),
-  ].sort((a, b) => a - b);
-  if (blocks.some((block) => block < fromBlock || block > toBlock))
-    throw new Error("Provider returned logs outside requested range");
-  const headerAllowance = chain.headerAllowance?.() ?? blocks.length;
-  if (headerAllowance < 2)
-    throw new Error("Insufficient request allowance to verify range headers");
-  if (blocks.length > headerAllowance) {
-    // Commit the fully read prefix rather than repeatedly timing out on a busy range.
-    toBlock = blocks[headerAllowance - 1];
-    logs = logs.filter((log) => log.blockNumber <= toBlock);
-    blocks = blocks.slice(0, headerAllowance);
-  }
-  const headers = new Map<number, Header>();
-  for (const block of blocks)
-    headers.set(
-      block,
-      block === finalized.number ? finalized : await chain.header(block),
-    );
-  const first = headers.get(fromBlock)!;
-  const last = headers.get(toBlock)!;
-  if (first.parentHash !== previous.hash)
-    throw new Error("Range parent hash mismatch");
-  for (let index = 1; index < blocks.length; index++) {
-    const prior = headers.get(blocks[index - 1])!;
-    const current = headers.get(blocks[index])!;
-    if (
-      current.timestamp < prior.timestamp ||
-      (current.number === prior.number + 1 && current.parentHash !== prior.hash)
-    ) {
-      throw new Error("Inconsistent range headers");
+      headers: [...headers.values()],
+      events,
+      observations,
+    };
+    const { events: _, ...metadata } = batch;
+    const content =
+      [
+        JSON.stringify({ kind: "range", ...metadata }),
+        ...events.map((event) => JSON.stringify({ kind: "event", ...event })),
+      ].join("\n") + "\n";
+    if (Buffer.byteLength(content) > 8 * 1024 * 1024)
+      throw new WorkLimit(
+        "Archive content allowance exceeded; reduce the range",
+      );
+    const bytes = gzipSync(content);
+    const sha256 = digest(bytes);
+    const key = `raw/${SCHEMA}/chain=8453/scope=${scope.id}/${fromBlock}-${toBlock}/${sha256}.jsonl.gz`;
+    const manifest: Manifest = {
+      schema: SCHEMA,
+      scopeId: scope.id,
+      fromBlock,
+      toBlock,
+      firstHash: first.hash,
+      lastHash: last.hash,
+      previousHash: previous.hash,
+      eventCount: events.length,
+      key,
+      sha256,
+      contentSha256: digest(content),
+      bytes: bytes.length,
+      eventIdentityDigest: digest(
+        events.map((e) => `${e.blockHash}:${e.logIndex}`).join("\n"),
+      ),
+    };
+    if (!dryRun) {
+      await store.upload(key, bytes, sha256);
+      await store.commit(manifest, cursor);
     }
+    return {
+      ...result,
+      ...(yieldReason ? { yieldReason } : {}),
+      toBlock,
+      coverageLagBlocks: Math.max(0, finalized.number - toBlock),
+      eventCount: events.length,
+      bytes: bytes.length,
+      status: dryRun ? "dry-run" : "archived",
+    };
+  } catch (error) {
+    if (!isCapacityError(error) || requestedBlocks <= 1) throw error;
+    // A failed oversized response may leave no room to verify a prefix. Keep
+    // coverage unchanged, but persist a smaller next attempt to avoid a loop.
+    const nextMaxBlocks = Math.max(1, Math.floor(requestedBlocks / 2));
+    if (!dryRun) await store.reduceRange(scope.id, fromBlock, nextMaxBlocks);
+    return {
+      ...result,
+      toBlock: fromBlock - 1,
+      status: "yielded",
+      yieldReason: "range-capacity",
+      nextMaxBlocks,
+    };
   }
-  const events = validateLogs(logs, scope, fromBlock, toBlock, headers);
-  // Re-read the boundary immediately before publication. Do not mix changing chains.
-  if ((await chain.header(toBlock)).hash !== last.hash)
-    throw new Error("Range changed during collection");
-  const observations = (await store.observations?.(scope)) ?? [];
-  const batch: ArchiveBatch = {
-    schema: SCHEMA,
-    scope,
-    fromBlock,
-    toBlock,
-    headers: [...headers.values()],
-    events,
-    observations,
-  };
-  const { events: _, ...metadata } = batch;
-  const content =
-    [
-      JSON.stringify({ kind: "range", ...metadata }),
-      ...events.map((event) => JSON.stringify({ kind: "event", ...event })),
-    ].join("\n") + "\n";
-  if (Buffer.byteLength(content) > 8 * 1024 * 1024)
-    throw new Error("Archive content allowance exceeded; reduce the range");
-  const bytes = gzipSync(content);
-  const sha256 = digest(bytes);
-  const key = `raw/${SCHEMA}/chain=8453/scope=${scope.id}/${fromBlock}-${toBlock}/${sha256}.jsonl.gz`;
-  const manifest: Manifest = {
-    schema: SCHEMA,
-    scopeId: scope.id,
-    fromBlock,
-    toBlock,
-    firstHash: first.hash,
-    lastHash: last.hash,
-    previousHash: previous.hash,
-    eventCount: events.length,
-    key,
-    sha256,
-    contentSha256: digest(content),
-    bytes: bytes.length,
-    eventIdentityDigest: digest(
-      events.map((e) => `${e.blockHash}:${e.logIndex}`).join("\n"),
-    ),
-  };
-  if (!dryRun) {
-    await store.upload(key, bytes, sha256);
-    await store.commit(manifest, cursor);
-  }
-  return {
-    ...result,
-    toBlock,
-    coverageLagBlocks: Math.max(0, finalized.number - toBlock),
-    eventCount: events.length,
-    bytes: bytes.length,
-    status: dryRun ? "dry-run" : "archived",
-  };
 }

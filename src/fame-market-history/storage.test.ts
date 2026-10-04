@@ -2,7 +2,7 @@ import { jest } from "@jest/globals";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { S3Client } from "@aws-sdk/client-s3";
-import { awsArchive, commitInput, dailyAllowance } from "./storage.ts";
+import { awsArchive, commitInput } from "./storage.ts";
 import { digest, type Manifest } from "./model.ts";
 
 const h = `0x${"1".repeat(64)}` as const;
@@ -89,6 +89,54 @@ test("a changed pool scope cannot silently restart historical collection", async
   expect(send).toHaveBeenCalledTimes(1);
 });
 
+test.each([100, 99])(
+  "a scan hint for block %i only applies at that cursor",
+  async (nextBlock) => {
+    const client = db();
+    jest
+      .spyOn(client, "send")
+      .mockResolvedValueOnce({} as never)
+      .mockResolvedValueOnce({} as never)
+      .mockResolvedValueOnce({ Item: { nextBlock, maxBlocks: 250 } } as never);
+    const cursor = await awsArchive({
+      table: "history",
+      bucket: "archive",
+      db: client,
+    }).cursor("scope", 100);
+    expect(cursor).toEqual({
+      startBlock: 100,
+      nextBlock: 100,
+      previousHash: null,
+      ...(nextBlock === 100 ? { maxBlocks: 250 } : {}),
+    });
+  },
+);
+
+test("hint write failures surface, except a competing narrower/newer hint", async () => {
+  const client = db();
+  const send = jest
+    .spyOn(client, "send")
+    .mockRejectedValueOnce(
+      Object.assign(new Error("already smaller"), {
+        name: "ConditionalCheckFailedException",
+      }) as never,
+    )
+    .mockRejectedValueOnce(new Error("database unavailable") as never);
+  const store = awsArchive({ table: "history", bucket: "archive", db: client });
+  await expect(store.reduceRange("scope", 100, 250)).resolves.toBeUndefined();
+  await expect(store.reduceRange("scope", 100, 250)).rejects.toThrow(
+    "database unavailable",
+  );
+  expect(send.mock.calls[0][0].input).toMatchObject({
+    Item: {
+      pk: "scope:scope",
+      sk: "scan-window",
+      nextBlock: 100,
+      maxBlocks: 250,
+    },
+  });
+});
+
 test("S3 checksum mismatch fails verification", async () => {
   const s3 = new S3Client({ region: "us-west-1" });
   const send = jest
@@ -133,27 +181,4 @@ test("existing content-addressed object is verified on a retry, never overwritte
   );
   expect(send.mock.calls).toHaveLength(2);
   expect(send.mock.calls[0][0].input).toMatchObject({ IfNoneMatch: "*" });
-});
-
-test("daily allowance uses one conditional atomic update and failure stops RPC", async () => {
-  const client = db();
-  const send = jest
-    .spyOn(client, "send")
-    .mockResolvedValueOnce({} as never)
-    .mockImplementationOnce(() => {
-      throw new Error("conditional");
-    });
-  const reserve = dailyAllowance(
-    "history",
-    50,
-    client,
-    () => new Date("2026-10-03T12:00:00Z"),
-  );
-  await reserve();
-  await expect(reserve()).rejects.toThrow("allowance");
-  expect(send.mock.calls[0][0].input).toMatchObject({
-    Key: { pk: "budget:base-history", sk: "2026-10-03" },
-    ConditionExpression:
-      "attribute_not_exists(usedRequests) OR usedRequests < :limit",
-  });
 });

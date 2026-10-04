@@ -140,9 +140,9 @@ Use existing RPC first. Benchmark HyperSync as a possible one-time bulk source i
 
 No claim that the previous $2–3+/day bill was caused by one particular component: billing attribution remains unverified. Avoid repeating known expensive patterns: full CL reconstruction, broad PoolManager scans, per-trade enrichment, repeated timestamp reads, and raw-payload logging.
 
-Use one chain/pool-filtered collection run every five minutes initially. Configure bounded request attempts, range size, response bytes, retry count, and invocation duration. Persist remaining work when budgets are exhausted; expose lag rather than discarding data. A shared daily provider-request allowance covers live and backfill with reserved capacity for live collection. Price-weight methods when estimating spend; a request counter is not a universal dollar cap.
+Use one chain/pool-filtered collection run every five minutes initially. Configure bounded request attempts, range size, response bytes, retry count, and invocation duration. Persist remaining work when invocation resources are exhausted; expose lag rather than discarding data. Per the operator's 2026-10-04 decision, cost monitoring is soft: no daily/monthly cutoff and no request reservation ledger. Emit method counts, bytes, yields, failures, progress and lag; provide a dashboard and advisory alarms. Price-weight methods when estimating spend; a request counter is not a universal dollar cap.
 
-Proposed planning target: **at most $10/month incremental ongoing cost** for the initial reviewed pool scope, excluding the separately estimated one-time backfill. This is a design target, not a user-approved exact budget or an achieved estimate. Resolve the final budget during implementation planning before production activation. Do not use free credits to disguise steady-state economics.
+Proposed planning target: **at most $10/month incremental ongoing cost** for the initial reviewed pool scope, excluding the separately estimated one-time backfill. This is an unverified design target, not a spending cutoff or deployment input. Monitor actual provider/AWS usage and adjust with the operator; never automatically suspend collection on cost thresholds. Do not use free credits to disguise steady-state economics.
 
 Record a reproducible cost worksheet:
 
@@ -188,18 +188,18 @@ Acceptance: adjacent live/backfilled ranges produce continuous verified coverage
 - Boundary hash conflict invalidates coverage and derived data until repaired.
 - Backfill/compaction retry and overlap do not duplicate events, volume, or files in the active dataset.
 - Quiet intervals, missing intervals, and partial intervals have distinct API results.
-- Request/retry/day allowances and worker deadlines stop safely with persistent progress; logs contain no secrets or event payload dumps.
+- Request/retry resource bounds and worker deadlines yield safely with persistent progress; repeated bounded runs must advance. Cost thresholds are advisory only. Logs contain no secrets or event payload dumps.
 - CDK asserts private retained S3, scoped IAM, on-demand table, bounded schedules/concurrency, log retention, failure destinations, and useful lag/failure metrics.
 
 Run focused Jest tests for changed modules, `yarn types`, deploy tests/build, and CDK synthesis for affected stacks using the repository's installed tooling. Verify the DuckDB container with actual native execution and representative fixtures; mocks alone are insufficient. No Rust/Bun runtime checks apply to this TypeScript-only repository unless the implementation expands into those runtimes.
 
 ## Rollout and recovery
 
-Deployment enables the collector; no separate feature flag. Choose and record a live start block, filter revision, budget, and finalized-head policy. Retain the first committed manifests and measured cost/coverage report as release evidence. Keep quote-state behavior independent.
+Deployment enables the collector; no separate feature flag. Choose and record a live start block, filter revision, and finalized-head policy. Retain the first committed manifests and measured cost/coverage report as release evidence. Keep quote-state behavior independent.
 
 On runaway cost or repeated failures, disable the history schedule through infrastructure rollback/operations; retain S3 and checkpoints. Resume from the last verified range. Roll back the chart API/worker independently of collection where possible. Never delete retained data as part of stack removal or roll back by advancing past missing ranges.
 
-Outstanding deployment inputs: exact monthly budget, verified provider plan/range limits/finality behavior, complete initial pool inventory with ABI provenance, and measured DuckDB Lambda packaging/cost results. These do not prevent implementing the bounded first increment, but production affordability and complete coverage cannot be asserted before they are resolved.
+Outstanding validation: verified provider plan/range limits/finality behavior, complete initial pool inventory with ABI provenance, and measured DuckDB Lambda packaging/cost results. These do not prevent implementing the bounded first increment, but production affordability and complete coverage cannot be asserted before they are resolved. No exact monthly budget is required to activate collection.
 
 ## Research references
 

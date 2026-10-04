@@ -31,7 +31,11 @@ import {
   LEASE_MS,
   type Publication,
 } from "../../src/fame-market-history/worker.ts";
-import { commitInput } from "../../src/fame-market-history/storage.ts";
+import {
+  awsArchive,
+  commitInput,
+  cursorKey,
+} from "../../src/fame-market-history/storage.ts";
 import {
   scope,
   pool,
@@ -115,6 +119,29 @@ try {
     await fixtureRange(100, 107, 106),
     await fixtureRange(108, 114, 109, 3n),
   ];
+  const archive = awsArchive({ table, bucket: "local-objects", db, s3 });
+  await archive.reduceRange(scope.id, 100, 250);
+  await archive.reduceRange(scope.id, 100, 125);
+  await archive.reduceRange(scope.id, 100, 250); // Cannot undo a smaller hint.
+  await archive.reduceRange(scope.id, 99, 1); // Cannot overwrite a later hint.
+  assert.deepEqual(await archive.cursor(scope.id, 100), {
+    startBlock: 100,
+    nextBlock: 100,
+    previousHash: null,
+    maxBlocks: 125,
+  });
+  assert.equal(
+    (
+      await db.send(
+        new GetCommand({
+          TableName: table,
+          Key: cursorKey(scope.id),
+          ConsistentRead: true,
+        }),
+      )
+    ).Item,
+    undefined,
+  );
   for (let i = 0; i < ranges.length; i++) {
     const { manifest, bytes } = ranges[i];
     objects.set(manifest.key, bytes);
@@ -128,6 +155,7 @@ try {
       ),
     );
   }
+  assert.equal((await archive.cursor(scope.id, 100)).maxBlocks, undefined);
   const store = awsAggregation({ table, bucket: "local-objects", db, s3 });
   let clock = 1000;
   const run = (adapter = store) =>
@@ -224,6 +252,7 @@ try {
       crashRecovery: true,
       staleOwnerRejected: true,
       lostResponseSafe: true,
+      scanWindowRecovery: true,
       parquetPartitionsOverlap: false,
       storage: "DynamoDB Local + simulated S3",
       awsWrites: false,

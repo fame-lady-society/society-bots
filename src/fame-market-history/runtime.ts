@@ -1,9 +1,10 @@
 import { famePoolStateRegistry } from "../fame-swap-pool-state/registry/index.ts";
-import { collect } from "./collector.ts";
+import { collect, type CollectResult } from "./collector.ts";
 import { historyScope, integer } from "./model.ts";
 import { boundedTransport, chainReader } from "./rpc.ts";
-import { awsArchive, dailyAllowance } from "./storage.ts";
+import { awsArchive } from "./storage.ts";
 import { failureCode } from "./failure.ts";
+import { collectorTelemetry } from "./observability.ts";
 
 function required(env: NodeJS.ProcessEnv, key: string): string {
   const value = env[key]?.trim();
@@ -22,7 +23,6 @@ export function configuration(env: NodeJS.ProcessEnv, dryRun = false) {
     poolStateTable: required(env, "FAME_HISTORY_POOL_STATE_TABLE"),
     startBlock: numeric("FAME_HISTORY_START_BLOCK"),
     maxRequests: numeric("FAME_HISTORY_MAX_REQUESTS", 256),
-    dailyRequests: dryRun ? 0 : numeric("FAME_HISTORY_DAILY_REQUESTS"),
     maxBlocks: numeric("FAME_HISTORY_MAX_BLOCKS", 500),
     maxEvents: numeric("FAME_HISTORY_MAX_EVENTS", 5000),
     maxResponseBytes: numeric(
@@ -43,15 +43,12 @@ export async function runHistory(
     maxRequests: config.maxRequests,
     maxResponseBytes: config.maxResponseBytes,
     deadline,
-    reserveRequest: dryRun
-      ? async () => {}
-      : dailyAllowance(config.table, config.dailyRequests),
   });
   const chain = chainReader(
     scope,
     rpc.transport,
     config.maxEvents,
-    () => config.maxRequests - rpc.metrics.requests - 2,
+    rpc.capacity,
   );
   const store = awsArchive(config);
   // Rehearse before creating any history resources. Existing history can be read
@@ -62,8 +59,10 @@ export async function runHistory(
       nextBlock: startBlock,
       previousHash: null,
     });
+  let result: CollectResult | undefined;
+  let code: string | undefined;
   try {
-    const result = await collect({
+    result = await collect({
       chain,
       store,
       scope,
@@ -78,17 +77,23 @@ export async function runHistory(
       scopePools: scope.pools.map((p) => p.id),
     };
   } catch (error) {
+    code = failureCode(error);
     // Preserve cost evidence on failed runs without emitting SDK messages/URLs.
     console.error(
       JSON.stringify({
         event: "fame-history-attempt-failed",
-        code: failureCode(error),
+        code,
         scopeId: scope.id,
         metrics: rpc.metrics,
       }),
     );
     throw new Error(
-      "History collection stopped; inspect request allowance and last committed range",
+      "History collection failed; inspect operational metrics and last committed range",
     );
+  } finally {
+    if (!dryRun)
+      console.log(
+        JSON.stringify(collectorTelemetry(rpc.metrics, result, code)),
+      );
   }
 }

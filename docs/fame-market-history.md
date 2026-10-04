@@ -72,8 +72,11 @@ retains extra LP-transfer events, and quiet runs still validate boundary headers
    boundaries need headers. If necessary the collector commits a fully read
    prefix within its remaining request allowance. It must never call that prefix
    the full requested range. Oversized responses split into smaller RPC ranges;
-   single-block overflow fails without publication. Max event count still requires
-   a smaller configured range if exceeded; this is a fail-fast limit, not truncation.
+   event-heavy responses also yield only at whole-block boundaries. If response
+   bytes or other invocation resources leave no verifiable prefix, save a halved
+   scan-window hint for the unchanged cursor and retry on the next scheduled run.
+   The hint expires logically when coverage advances. A single block that exceeds
+   capacity fails visibly without skipping it; an operator must adjust sizing.
 6. **S3 and DynamoDB are not one transaction.** Objects are uploaded and SHA-256/
    length-verified first. One DynamoDB transaction conditionally publishes the
    active scope, manifest, next cursor, and pending work. Conditional S3 creation
@@ -81,12 +84,13 @@ retains extra LP-transfer events, and quiet runs still validate boundary headers
    can leave unreferenced objects; readers must enumerate committed manifests,
    not bucket contents. A later retry may capture a newer liquidity observation
    and therefore create a different object; only the winning manifest is visible.
-7. **Request allowance is not a dollar cap.** Every outbound RPC attempt reserves
-   one unit with a conditional daily DynamoDB update; viem retries are disabled.
-   Failed reservations stop outbound calls. A lost reservation is conservative.
-   Read-only rehearsal uses a per-run allowance but does not mutate the daily
-   ledger, so its cost must be accounted separately. AWS requests, SSM reads,
-   headers, provider method weights, and storage/version growth need measurement.
+7. **Cost awareness never gates collection.** There is no daily request ledger or
+   daily/monthly cutoff. Each attempt records request counts by method, response
+   bytes, progress, yields, and failures through CloudWatch embedded metrics;
+   viem retries are disabled. These are best-effort operational signals, not a
+   billing ledger: hard termination can lose final metrics, and rehearsal/other
+   pollers are outside this production series. Compare against provider usage and
+   AWS billing, including telemetry, requests, SSM, and storage/version growth.
 8. **No ABI assumptions are required to retain raw logs.** Canonical V2 and
    Slipstream sources support the planned decoder families, but per-deployment
    ABI verification is still needed before production normalized candles. The
@@ -136,11 +140,13 @@ The live start block is an explicit deployment input; earlier history is missing
   Only references from these committed records are visible. Objects under
   `derived/<scope>/<from>-<to>/<sha256>/` are immutable Parquet/evidence objects.
   Listing that prefix alone also finds orphan candidates and is not a dataset.
-- Daily allowance: `pk=budget:base-history, sk=YYYY-MM-DD` in UTC. Only these
-  accounting rows have a 90-day TTL. Manifests/cursors/archive do not expire.
+- Adaptive scan window: `pk=scope:<digest>, sk=scan-window`, with `nextBlock` and
+  `maxBlocks`. This scheduling hint never changes coverage. Concurrent writes
+  cannot replace a newer cursor's hint or enlarge its retry window. A hint for an
+  already committed cursor is ignored. Manifests/cursors/archive do not expire.
 
 A failed run never commits a partially scanned range. Check the last committed
-cursor and daily allowance before retrying. A changed committed block hash requires
+cursor, scan window, lag, and failure metrics before retrying. A changed committed block hash requires
 operator investigation and a canonical repair procedure; do not reset the cursor
 or advance it past the problem. Even a caught-up invocation rejects a conflicting
 finalized boundary or a finalized head behind committed coverage.
@@ -151,7 +157,7 @@ the backfill/rebuild increment and must be finished before exposing candle histo
 
 Production runtime requires `FAME_HISTORY_RPC_URL` (HTTPS, do not print),
 `FAME_HISTORY_TABLE`, `FAME_HISTORY_BUCKET`, `FAME_HISTORY_POOL_STATE_TABLE`,
-`FAME_HISTORY_START_BLOCK`, and `FAME_HISTORY_DAILY_REQUESTS`. Rehearsal requires
+and `FAME_HISTORY_START_BLOCK`. Rehearsal requires
 only the RPC URL, existing pool-state table, and explicit start block; it can run
 before any history resources are created. Supply `FAME_HISTORY_TABLE` only when
 intentionally rehearsing from an existing history cursor.
@@ -168,7 +174,8 @@ yarn nodets scripts/market-history/rehearse.ts
 
 This reads the existing liquidity table (and history cursor only if configured)
 and makes bounded RPC requests.
-It never writes S3, manifests, cursors, or the daily ledger. It reports request
+It never writes S3, manifests, cursors, or scan-window hints. A capacity yield
+reports the smaller recommended range for a subsequent rehearsal. It reports request
 counts by method, response bytes, covered prefix, event count, and compressed size.
 It still consumes provider quota. Do not load or print a general secret dump to
 prepare the environment. A real dry-run needs AWS read access and the chosen RPC.
@@ -199,7 +206,7 @@ This is a fixed reproducible test range, not the proposed production start block
 
 Deployment runs through `.github/workflows/market-history.yml`. Pull requests
 run tests/type checks. After merge, explicitly dispatch `Market history` from
-`main` with the reviewed `start_block` and `daily_requests`. Keep the original
+`main` with the reviewed `start_block`. Keep the original
 start block on subsequent deployments; changing it is not a backfill mechanism.
 The workflow uses the existing AWS Actions credentials, verifies account
 `590183914614`, discovers the pool-state table from `Bot-prod` in `us-west-1`,
@@ -228,8 +235,6 @@ Required deploy inputs:
   The initial policy assumes the AWS-managed SSM key; a customer-managed key needs
   an explicitly scoped KMS grant before deployment.
 - `FAME_HISTORY_START_BLOCK`: reviewed finalized starting block, integer >= 1.
-- `FAME_HISTORY_DAILY_REQUESTS`: explicit daily request allowance based on measured
-  provider prices and the operator's monthly budget.
 - `FAME_HISTORY_POOL_STATE_TABLE`: existing pool-state table for observations.
 
 The dedicated stack immediately schedules collection every five minutes and
@@ -237,9 +242,14 @@ aggregation every minute upon deployment. There is no feature flag. It retains a
 on-demand DynamoDB table on removal. A 512 MiB, five-minute Lambda has reserved
 concurrency one, bounded invocation work, no automatic Lambda retries, a failure
 queue, and passive error/throttle/failure-depth/missed-invocation/coverage-lag
-alarms. Successful invocations emit coverage-lag, request-count, and response-byte
-metrics; failed collection attempts log bounded request metrics and a fixed error
-code, never the provider message. No NAT gateway is created.
+alarms. Every completed collector attempt emits request-count and response-byte
+metrics, including failures; failures carry a fixed code, never provider messages.
+Results also expose coverage lag, progress, and yields. The dashboard shows RPC
+methods, bytes, collector/worker lag, progress, failures, duration, and queue depth.
+An hourly request-volume alarm (>2,000 requests) and aggregation-lag alarm
+(>5,000 blocks for three five-minute periods) are advisory thresholds, not approved
+spend limits. No alarm actions or notification destinations are configured; alarms
+cannot stop collection. `DashboardName` is a stack output. No NAT gateway is created.
 The separate x86-64 container aggregator has 512 MiB, a two-minute timeout,
 reserved concurrency one, no automatic retries, the shared failure queue, and
 error/throttle/missed-invocation alarms. It reads raw objects and writes verified
@@ -257,9 +267,9 @@ catch-up rate exceeds new block production. No cost soak has occurred yet.
 Run focused collector/RPC/storage tests, root `yarn types`, the history CDK tests,
 and deploy build. Tests exercise upload/checkpoint crash boundaries, empty ranges,
 canonical identity, exact byte preservation, duplicate conflicts, provider failures,
-budget limits, busy-range prefixes, and private/retained infrastructure.
+invocation resource bounds, busy-range prefixes, and private/retained infrastructure.
 
-An external review must challenge event completeness, allowance accounting, failure
+An external review must challenge event completeness, telemetry accounting, failure
 visibility, native runtime assumptions for step 2, and whether the actual measured
 budget can sustain the requested scope. Keep its findings and resolutions here.
 
@@ -295,9 +305,9 @@ cause of the stalled model response was not established. No independent approval
 is claimed; rerun that review before production activation.
 
 The user directed discovery of existing GitHub/Doppler credentials. AWS profile,
-account, pool-state table, and RPC references are now resolved. The exact monthly
-budget, sustained cost/catch-up measurements, deployed ABI verification,
-and independent review remain outstanding. Do not claim full step 1 acceptance
+account, pool-state table, and RPC references are now resolved. Sustained
+cost/catch-up measurements and deployed ABI verification remain outstanding.
+The review follow-up below records the later independent reviews. Do not claim full step 1 acceptance
 from these bounded samples. The dedicated CDK app also synthesized successfully with
 dummy account/table/parameter inputs and lookups disabled; no resources were
 created.
@@ -525,12 +535,48 @@ before its three-minute timeout and was stopped/joined; independent review remai
 outstanding. CI/deployment status is separate from these local results.
 
 Activation follows review/merge and the existing manual CI dispatch. Choose a
-recent finalized start for live collection; backfill is deferred. Resolve the
-daily request allowance against the monthly target before dispatch. After deploy,
+recent finalized start for live collection; backfill is deferred. Inspect the
+operational dashboard and observed provider usage after dispatch. After deploy,
 verify collector `archived` and worker `published` logs, aggregation progress
 catching the collector cursor, committed partition checksums, and candle coverage.
 Both Lambda names, bucket, and table are stack outputs. A public history endpoint
 is still a separate next increment.
+
+## Operational-awareness review follow-up (2026-10-04)
+
+The operator chose soft cost awareness with no spending cutoff. Removed the daily
+DynamoDB reservation and required daily-limit deployment input. Invocation bounds
+remain resource controls: completed prefixes commit and subsequent schedules resume.
+The repeated-invocation tests cover provider range rejection, 6,000 events exceeding
+one job's event capacity, and a streamed response exceeding 4 MiB. They assert
+eventual progress and exact event identities with no gaps or duplicates; a failed
+oversized first attempt saves a smaller window without claiming coverage.
+
+Independent consistency, simplification, security, and adversarial reviews found
+two collector progress stalls and a candle-completion bug. The collector now retains
+verified prefixes when request/event capacity is reached and persists a smaller
+window if response bytes prevent any prefix from being verified. The worker rebuilds
+the preceding range's final candle and intervening empty buckets when new coverage
+arrives, including an exact five-minute boundary or timestamp gap. Regression tests
+compare all published candles with a full rebuild using the same SQL.
+
+These are local/synthetic checks. They do not establish deployed throughput,
+provider completeness, billing accuracy, or AWS permissions. A single block that
+cannot fit configured resource limits still requires operator intervention; it is
+reported as failure rather than skipped. A timestamp gap requiring more than 90
+candle writes also needs explicit operator reconciliation because the current
+publication is atomic; reducing a collector range cannot repair a gap between
+adjacent blocks. Tests verify no progress or candles change in that case.
+No automatic budget shutdown exists.
+
+Final local validation: 410 root tests, root type checking, three history CDK
+tests, and deploy build passed. DynamoDB Local verified actual scan-window
+conditions (narrower wins, stale writes cannot enlarge/replace it, and advancing
+coverage ignores the old hint), plus existing worker crash/lease recovery.
+The offline Lambda Linux proof passed under 512 MiB: 17 events, five trades,
+matching Parquet-only rebuild and HTTP 200 (842 ms, 251,224,064 RSS bytes).
+Security, adversarial, and simplification follow-up reviews found no remaining
+blocker in these changes. No deployment or production writes were performed.
 
 ## Source references
 

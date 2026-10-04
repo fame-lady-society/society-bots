@@ -83,9 +83,12 @@ async function archive(logs: RawLog[], from = 100, to = 120) {
     chain: {
       finalized: async () => header(to),
       header: async (n) => header(n),
-      logs: async () => logs,
+      logs: async () => ({ logs, throughBlock: to }),
     },
     store: {
+      reduceRange: async () => {
+        throw new Error("Unexpected capacity yield in fixture");
+      },
       cursor: async () => ({
         startBlock: from,
         nextBlock: from,

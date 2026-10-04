@@ -6,6 +6,10 @@ import {
 } from "./worker.ts";
 import { digest } from "./model.ts";
 import { type Candle } from "./analytics.ts";
+import { buildHistory } from "./analytics.ts";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import {
   scope,
   metadata,
@@ -39,7 +43,10 @@ class Store implements AggregationStore {
     this.owner = owner;
     this.revision = revision;
     this.leaseUntil = now + LEASE_MS;
-    return { nextBlock: this.nextBlock };
+    return {
+      nextBlock: this.nextBlock,
+      collectedThrough: this.ranges.at(-1)!.manifest.toBlock,
+    };
   }
   async pending(_scope: string, next: number) {
     return (
@@ -94,6 +101,43 @@ class Store implements AggregationStore {
   }
 }
 
+test.each([0, 600])(
+  "aligned boundary and timestamp jump (%s seconds) match a full rebuild",
+  async (timeShift) => {
+    const ranges = [
+      await fixtureRange(100, 109, 106),
+      await fixtureRange(110, 114, 111, 3n, timeShift),
+    ];
+    const store = new Store(ranges);
+    await store.run();
+    await store.run();
+    const directory = await mkdtemp(
+      path.join(tmpdir(), "history-boundary-review-"),
+    );
+    try {
+      const full = await buildHistory(
+        ranges,
+        metadata,
+        path.join(directory, "full"),
+      );
+      for (const candle of full.dataset.candles[300])
+        expect(
+          store.candles.get(`${candle.poolId}:${candle.timestamp}`),
+        ).toEqual(candle);
+      expect(store.candles.get(`${pool.id}:${epoch + 300}`)?.coverage).toBe(
+        "complete",
+      );
+      if (timeShift)
+        for (const offset of [600, 900])
+          expect(
+            store.candles.get(`${pool.id}:${epoch + offset}`),
+          ).toMatchObject({ coverage: "complete", tradeCount: 0 });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
 test("adjacent archives replace a boundary candle; canonical partitions do not overlap", async () => {
   const store = new Store([
     await fixtureRange(100, 107, 106),
@@ -125,7 +169,10 @@ test("adjacent archives replace a boundary candle; canonical partitions do not o
   expect(
     evidence.ranges.map((r: { fromBlock: number }) => r.fromBlock),
   ).toEqual([108]);
-  expect(await store.run()).toEqual({ status: "caught-up" });
+  expect(await store.run()).toEqual({
+    status: "caught-up",
+    aggregationLagBlocks: 0,
+  });
 });
 
 test.each(["upload", "before"])(
@@ -155,7 +202,10 @@ test("lost transaction response cannot duplicate volume on retry", async () => {
   store.fail = "after";
   await expect(store.run()).rejects.toThrow("lost");
   store.fail = "";
-  expect(await store.run()).toEqual({ status: "caught-up" });
+  expect(await store.run()).toEqual({
+    status: "caught-up",
+    aggregationLagBlocks: 0,
+  });
   expect(store.candles.get(`${pool.id}:${epoch + 300}`)?.tradeCount).toBe(1);
 });
 
@@ -186,4 +236,16 @@ test("missing candle context and changed metadata fail rather than degrading res
       now: () => store.clock,
     }),
   ).rejects.toThrow("metadata");
+});
+
+test("a timestamp gap exceeding atomic capacity remains visible without advancing progress", async () => {
+  const store = new Store([
+    await fixtureRange(100, 109, 106),
+    await fixtureRange(110, 114, 112, 3n, 300 * 91),
+  ]);
+  await store.run();
+  const candles = [...store.candles.entries()];
+  await expect(store.run()).rejects.toThrow("operator reconciliation required");
+  expect(store.nextBlock).toBe(110);
+  expect([...store.candles.entries()]).toEqual(candles);
 });

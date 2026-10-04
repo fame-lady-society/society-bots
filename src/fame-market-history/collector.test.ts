@@ -1,4 +1,5 @@
 import { gunzipSync } from "node:zlib";
+import { WorkLimit } from "./limits.ts";
 import type { Hex } from "viem";
 import { collect, type ArchiveStore, type ChainReader } from "./collector.ts";
 import {
@@ -41,10 +42,13 @@ function fixture(logs: RawLog[] = [event()]) {
       headers.push(n);
       return header(n);
     },
-    logs: async () => logs,
+    logs: async (_from, to) => ({ logs, throughBlock: to }),
   };
   const store: ArchiveStore = {
     cursor: async () => ({ ...cursor }),
+    reduceRange: async (_, nextBlock, maxBlocks) => {
+      if (nextBlock === cursor.nextBlock) cursor = { ...cursor, maxBlocks };
+    },
     upload: async (_, bytes) => {
       operations.push("upload");
       uploaded.push(bytes);
@@ -115,6 +119,17 @@ test("successful empty ranges have durable coverage", async () => {
   expect(f.uploaded).toHaveLength(1);
 });
 
+test("a one-block range can commit with one boundary header", async () => {
+  const f = fixture([]);
+  f.chain.finalized = async () => header(100);
+  expect(await f.run()).toMatchObject({
+    status: "archived",
+    fromBlock: 100,
+    toBlock: 100,
+  });
+  expect(f.cursor().nextBlock).toBe(101);
+});
+
 test("caught-up runs still validate the committed finalized boundary", async () => {
   const f = fixture([]);
   await f.run();
@@ -134,6 +149,39 @@ test("provider failure is not empty success", async () => {
   };
   await expect(f.run()).rejects.toThrow("provider down");
   expect(f.operations).toEqual([]);
+});
+
+test("dry-run capacity yield recommends a smaller range without any writes", async () => {
+  const f = fixture();
+  f.chain.logs = async () => {
+    throw new WorkLimit("Total RPC response allowance exhausted");
+  };
+  f.store.reduceRange = async () => {
+    throw new Error("Dry run must not save a hint");
+  };
+  expect(await f.run(true)).toMatchObject({
+    status: "yielded",
+    nextMaxBlocks: 2,
+    toBlock: 99,
+    coverageLagBlocks: 11,
+  });
+  expect(f.operations).toEqual([]);
+  expect(f.cursor()).toEqual({
+    startBlock: 100,
+    nextBlock: 100,
+    previousHash: null,
+  });
+});
+
+test("an unprocessable single block remains a visible failure with no skipped coverage", async () => {
+  const f = fixture();
+  await f.store.reduceRange(scope.id, 100, 1);
+  f.chain.logs = async () => {
+    throw new WorkLimit("Single block exceeds event capacity");
+  };
+  await expect(f.run()).rejects.toThrow("Single block");
+  expect(f.operations).toEqual([]);
+  expect(f.cursor().nextBlock).toBe(100);
 });
 
 test("upload failure cannot advance the cursor", async () => {

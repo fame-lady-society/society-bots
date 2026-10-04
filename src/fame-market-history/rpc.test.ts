@@ -5,7 +5,6 @@ import { createPublicClient } from "viem";
 
 const scope = historyScope(famePoolStateRegistry);
 function fixture(respond: (body: Record<string, unknown>) => Response) {
-  let reserves = 0;
   const requests: Record<string, unknown>[] = [];
   const fetcher: typeof fetch = async (_input, init) => {
     const body = JSON.parse(String(init?.body));
@@ -17,25 +16,24 @@ function fixture(respond: (body: Record<string, unknown>) => Response) {
     maxRequests: 8,
     maxResponseBytes: 1024,
     deadline: Date.now() + 60000,
-    reserveRequest: async () => {
-      reserves++;
-    },
     fetcher,
   });
   return {
     rpc,
     requests,
-    reserves: () => reserves,
     client: createPublicClient({ transport: rpc.transport }),
   };
 }
 const response = (body: Record<string, unknown>, result: unknown) =>
   new Response(JSON.stringify({ jsonrpc: "2.0", id: body.id, result }));
 
-test("charges every request and sends only exact pool addresses", async () => {
+test("counts every request and sends only exact pool addresses", async () => {
   const f = fixture((body) => response(body, []));
   const chain = chainReader(scope, f.rpc.transport, 100);
-  expect(await chain.logs(100, 110)).toEqual([]);
+  expect(await chain.logs(100, 110)).toMatchObject({
+    logs: [],
+    throughBlock: 110,
+  });
   expect(f.requests[0]).toMatchObject({
     method: "eth_getLogs",
     params: [
@@ -46,7 +44,6 @@ test("charges every request and sends only exact pool addresses", async () => {
       },
     ],
   });
-  expect(f.reserves()).toBe(1);
   expect(f.rpc.metrics.methods.eth_getLogs).toBe(1);
 });
 
@@ -63,9 +60,9 @@ test("range limits split without turning errors into empty results", async () =>
         )
       : response(body, []);
   });
-  expect(await chainReader(scope, f.rpc.transport, 100).logs(100, 101)).toEqual(
-    [],
-  );
+  expect(
+    await chainReader(scope, f.rpc.transport, 100).logs(100, 101),
+  ).toMatchObject({ logs: [], throughBlock: 101 });
   expect(f.requests).toHaveLength(3);
 });
 
@@ -89,27 +86,6 @@ test("per-run request limit prevents additional outbound calls", async () => {
   expect(f.requests).toHaveLength(8);
 });
 
-test("failed daily reservation prevents sending", async () => {
-  let sent = false;
-  const rpc = boundedTransport({
-    url: "https://example.test",
-    maxRequests: 1,
-    maxResponseBytes: 100,
-    deadline: Date.now() + 10000,
-    reserveRequest: async () => {
-      throw new Error("budget");
-    },
-    fetcher: async () => {
-      sent = true;
-      return new Response();
-    },
-  });
-  await expect(
-    createPublicClient({ transport: rpc.transport }).getChainId(),
-  ).rejects.toThrow();
-  expect(sent).toBe(false);
-});
-
 test("response byte limit stops oversized streams", async () => {
   const f = fixture(() => new Response("x".repeat(2048)));
   await expect(f.client.getChainId()).rejects.toThrow();
@@ -131,7 +107,6 @@ test("total response allowance also bounds many individually small responses", a
     maxResponseBytes: 1024,
     maxTotalResponseBytes: 80,
     deadline: Date.now() + 10000,
-    reserveRequest: async () => {},
     fetcher: async (_input, init) =>
       response(JSON.parse(String(init?.body)), "0x2105"),
   });

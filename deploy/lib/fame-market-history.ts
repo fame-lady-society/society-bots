@@ -85,18 +85,12 @@ export class FameMarketHistory extends Construct {
     props: {
       rpcParameterName: string;
       startBlock: number;
-      dailyRequests: number;
       poolStateTableName: string;
     },
   ) {
     super(scope, id);
-    for (const [key, value] of Object.entries({
-      startBlock: props.startBlock,
-      dailyRequests: props.dailyRequests,
-    })) {
-      if (!Number.isSafeInteger(value) || value <= 0)
-        throw new Error(`${key} must be a positive safe integer`);
-    }
+    if (!Number.isSafeInteger(props.startBlock) || props.startBlock <= 0)
+      throw new Error("startBlock must be a positive safe integer");
     if (!props.rpcParameterName.startsWith("/"))
       throw new Error("RPC SecureString parameter path required");
     if (!props.poolStateTableName)
@@ -112,7 +106,6 @@ export class FameMarketHistory extends Construct {
       partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
       sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
-      timeToLiveAttribute: "expiresAt",
       pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
       removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
@@ -142,7 +135,6 @@ export class FameMarketHistory extends Construct {
         FAME_HISTORY_BUCKET: bucket.bucketName,
         FAME_HISTORY_POOL_STATE_TABLE: poolState.tableName,
         FAME_HISTORY_START_BLOCK: String(props.startBlock),
-        FAME_HISTORY_DAILY_REQUESTS: String(props.dailyRequests),
       },
     });
     // Read the secret at runtime, rather than embedding it in synthesized templates.
@@ -249,5 +241,94 @@ export class FameMarketHistory extends Construct {
     new cdk.CfnOutput(this, "TableName", { value: table.tableName });
     new cdk.CfnOutput(this, "CollectorName", { value: collector.functionName });
     new cdk.CfnOutput(this, "AggregatorName", { value: worker.functionName });
+    const historyMetric = (
+      metricName: string,
+      statistic = "Sum",
+      period = cdk.Duration.minutes(5),
+    ) =>
+      new cloudwatch.Metric({
+        namespace: "Society/FameMarketHistory",
+        metricName,
+        statistic,
+        period,
+      });
+    new cloudwatch.Alarm(this, "RequestVolumeAlarm", {
+      alarmDescription:
+        "History RPC attempts exceeded 2000 in an hour. Investigate usage and provider cost; this alarm never stops collection.",
+      metric: historyMetric("RpcRequests", "Sum", cdk.Duration.hours(1)),
+      threshold: 2000,
+      evaluationPeriods: 1,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    });
+    new cloudwatch.Alarm(this, "AggregationLagAlarm", {
+      alarmDescription:
+        "Published candles are more than 5000 blocks behind collected history.",
+      metric: historyMetric("AggregationLagBlocks", "Maximum"),
+      threshold: 5000,
+      evaluationPeriods: 3,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    });
+    const dashboard = new cloudwatch.Dashboard(this, "Operations", {
+      defaultInterval: cdk.Duration.days(1),
+    });
+    dashboard.addWidgets(
+      new cloudwatch.TextWidget({
+        width: 24,
+        height: 2,
+        markdown:
+          "# FAME history operations\nUsage and lag are informational: no daily cutoff or automatic shutdown. Request counts are not provider credits or dollars. Alarm notifications require an operator-configured destination.",
+      }),
+      new cloudwatch.GraphWidget({
+        title: "RPC attempts (includes failed calls)",
+        width: 12,
+        left: [
+          historyMetric("RpcRequests"),
+          historyMetric("RpcGetLogsRequests"),
+          historyMetric("RpcHeaderRequests"),
+          historyMetric("RpcChainIdRequests"),
+        ],
+      }),
+      new cloudwatch.GraphWidget({
+        title: "Response bytes and collection progress",
+        width: 12,
+        left: [historyMetric("ResponseBytes")],
+        right: [historyMetric("CollectionProgressBlocks")],
+      }),
+      new cloudwatch.GraphWidget({
+        title: "Collection and aggregation lag (blocks)",
+        width: 12,
+        left: [
+          historyMetric("CoverageLagBlocks", "Maximum"),
+          historyMetric("AggregationLagBlocks", "Maximum"),
+        ],
+      }),
+      new cloudwatch.GraphWidget({
+        title: "Failures, yields, and worker activity",
+        width: 12,
+        left: [
+          historyMetric("CollectionFailures"),
+          historyMetric("CollectionYields"),
+          historyMetric("AggregationPublishedRanges"),
+          historyMetric("AggregationBusyRuns"),
+        ],
+      }),
+      new cloudwatch.GraphWidget({
+        title: "Lambda errors and failure queue",
+        width: 12,
+        left: [
+          collector.metricErrors(),
+          worker.metricErrors(),
+          failures.metricApproximateNumberOfMessagesVisible(),
+        ],
+      }),
+      new cloudwatch.GraphWidget({
+        title: "Lambda duration (ms)",
+        width: 12,
+        left: [collector.metricDuration(), worker.metricDuration()],
+      }),
+    );
+    new cdk.CfnOutput(this, "DashboardName", {
+      value: dashboard.dashboardName,
+    });
   }
 }

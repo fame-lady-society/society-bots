@@ -25,23 +25,6 @@ export async function handler(
       JSON.stringify({
         event: "fame-history-collected",
         ...result,
-        _aws: {
-          Timestamp: Date.now(),
-          CloudWatchMetrics: [
-            {
-              Namespace: "Society/FameMarketHistory",
-              Dimensions: [[]],
-              Metrics: [
-                { Name: "CoverageLagBlocks", Unit: "Count" },
-                { Name: "RpcRequests", Unit: "Count" },
-                { Name: "ResponseBytes", Unit: "Bytes" },
-              ],
-            },
-          ],
-        },
-        CoverageLagBlocks: result.coverageLagBlocks,
-        RpcRequests: result.metrics.requests,
-        ResponseBytes: result.metrics.responseBytes,
       }),
     );
     return result;
@@ -50,7 +33,7 @@ export async function handler(
       JSON.stringify({
         event: "fame-history-failed",
         message:
-          "Collection stopped. Inspect budget and last committed coverage; provider details suppressed.",
+          "Collection stopped. Inspect operational metrics and last committed coverage; provider details suppressed.",
       }),
     );
     throw new Error("FAME history collection failed");

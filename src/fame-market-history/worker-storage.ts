@@ -176,6 +176,8 @@ export function awsAggregation({
             "aggregation cursor",
             startBlock,
           ),
+          collectedThrough:
+            integer(cursor.nextBlock, "collector cursor", startBlock) - 1,
         };
       } catch (error) {
         if (
