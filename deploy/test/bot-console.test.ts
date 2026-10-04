@@ -126,7 +126,9 @@ test("onboarding isolates credentials and seeds only the verified group before c
     "telegram.worker",
   ]) {
     const f = Object.values(functions).find(
-      (f) => f.Properties.Handler === handler,
+      (f) =>
+        f.Properties.Handler === handler &&
+        f.Properties.Environment?.Variables?.GROUP_TABLE,
     )!;
     expect(f.Properties.Environment.Variables).not.toHaveProperty(
       "TELEGRAM_TOKEN_ARN",
@@ -162,5 +164,41 @@ test("onboarding isolates credentials and seeds only the verified group before c
   );
   expect(seed.Properties.Update).toBeUndefined();
   expect(seed.Properties.Delete).toBeUndefined();
-  t.resourceCountIs("AWS::DynamoDB::Table", 3);
+  t.resourceCountIs("AWS::DynamoDB::Table", 4);
+});
+
+test("access policy is retained, owner bootstrap is create-only, and only API gets the registry", () => {
+  const t = Template.fromStack(
+    new BotConsoleStack(new cdk.App(), "FlsBotConsole", config),
+  );
+  const tables = t.findResources("AWS::DynamoDB::Table");
+  const access = Object.entries(tables).find(([id]) =>
+    id.startsWith("Access"),
+  )!;
+  expect(access[1].DeletionPolicy).toBe("Retain");
+  expect(
+    access[1].Properties.PointInTimeRecoverySpecification
+      .PointInTimeRecoveryEnabled,
+  ).toBe(true);
+  const resources = t.findResources("Custom::AWS");
+  const bootstrap = Object.entries(resources).find(([id]) =>
+    id.startsWith("AccessBootstrap"),
+  )!;
+  expect(JSON.stringify(bootstrap[1].Properties.Create)).toContain(
+    "discord:931691901592145930",
+  );
+  expect(bootstrap[1].Properties.Update).toBeUndefined();
+  expect(bootstrap[1].Properties.Delete).toBeUndefined();
+  for (const [id, fn] of Object.entries(
+    t.findResources("AWS::Lambda::Function"),
+  )) {
+    if (id.startsWith("ApiFunction"))
+      expect(fn.Properties.Environment.Variables.ACCESS_TABLE).toEqual({
+        Ref: access[0],
+      });
+    else
+      expect(
+        fn.Properties.Environment?.Variables?.ACCESS_TABLE,
+      ).toBeUndefined();
+  }
 });

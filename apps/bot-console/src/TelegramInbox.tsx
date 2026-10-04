@@ -1,14 +1,13 @@
-import { TelegramGroups } from "./TelegramGroups";
+import { apiFetch } from "./api";
 import { useState } from "react";
 import { useQuery, useInfiniteQuery } from "@tanstack/react-query";
 import {
-  connectionSchema,
+  inboxStatusSchema,
   messagePageSchema,
   type CapturedMessage,
 } from "./telegram-contracts";
 async function get(path: string) {
-  const response = await fetch(path);
-  if (response.status === 401) throw new Error("SIGN_IN");
+  const response = await apiFetch(path);
   if (!response.ok) throw new Error("Could not load Telegram data. Try again.");
   return response.json();
 }
@@ -18,7 +17,7 @@ export function TelegramInbox() {
   const status = useQuery({
     queryKey: ["telegram-status"],
     queryFn: async () =>
-      connectionSchema.parse(await get("/api/telegram/status")),
+      inboxStatusSchema.parse(await get("/api/telegram/status")),
     retry: false,
     refetchInterval: 30_000,
   });
@@ -37,15 +36,7 @@ export function TelegramInbox() {
     refetchInterval: 30_000,
     retry: false,
   });
-  if (
-    status.error?.message === "SIGN_IN" ||
-    messages.error?.message === "SIGN_IN"
-  )
-    return (
-      <p>
-        <a href="/api/auth/login">Session expired. Sign in again.</a>
-      </p>
-    );
+
   return (
     <>
       <header>
@@ -68,33 +59,39 @@ export function TelegramInbox() {
         </div>
       ) : (
         <section className="connection-panel">
-          <div>
-            <span className="eyebrow">SOCIETY BOT</span>
-            <h2>@{status.data.username}</h2>
-            <p>
-              {status.data.registeredAt
-                ? `Webhook registration recorded ${new Date(status.data.registeredAt).toLocaleString()}`
-                : "Webhook not registered by this service"}
-            </p>
-            <small>
-              Registration is configuration, not a live Telegram health check.
-            </small>
-          </div>
+          {"username" in status.data && (
+            <div>
+              <span className="eyebrow">SOCIETY BOT</span>
+              <h2>@{status.data.username}</h2>
+              <p>
+                {status.data.registeredAt
+                  ? `Webhook registration recorded ${new Date(status.data.registeredAt).toLocaleString()}`
+                  : "Webhook not registered by this service"}
+              </p>
+              <small>
+                Registration is configuration, not a live Telegram health check.
+              </small>
+            </div>
+          )}
           <div>
             <p>
               {status.data.chats.length} group
               {status.data.chats.length === 1 ? "" : "s"} in inbox
             </p>
-            <p>
-              {status.data.queued} updates processing · {status.data.failed}{" "}
-              failed
-            </p>
-            <small>Queue counts are approximate.</small>
+            {"queued" in status.data && (
+              <>
+                <p>
+                  {status.data.queued} updates processing · {status.data.failed}{" "}
+                  failed
+                </p>
+                <small>Queue counts are approximate.</small>
+              </>
+            )}
           </div>
         </section>
       )}
-      <TelegramGroups />
-      {status.data?.failed ? (
+
+      {status.data && "failed" in status.data && status.data.failed ? (
         <p role="alert">
           Some updates could not be stored. They are held in the recovery queue
           for operator investigation.
@@ -103,10 +100,7 @@ export function TelegramInbox() {
       {status.data && !status.data.chats.length ? (
         <div className="empty">
           <h2>Choose the first group.</h2>
-          <p>
-            Use Connect group above to generate a command, then approve the
-            request.
-          </p>
+          <p>No groups with captured history are available to your account.</p>
         </div>
       ) : chat ? (
         <>

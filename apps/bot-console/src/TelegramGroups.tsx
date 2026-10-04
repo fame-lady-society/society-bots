@@ -1,3 +1,4 @@
+import { apiFetch } from "./api";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -7,7 +8,7 @@ import {
   type TelegramGroup,
 } from "./telegram-groups-contracts";
 async function request(path: string, body?: unknown) {
-  const response = await fetch(
+  const response = await apiFetch(
     `/api/telegram/${path}`,
     body === undefined
       ? {}
@@ -17,8 +18,6 @@ async function request(path: string, body?: unknown) {
           body: JSON.stringify(body),
         },
   );
-  if (response.status === 401)
-    throw new Error("Session expired. Sign in again.");
   if (!response.ok) {
     const result = await response.json().catch(() => ({}));
     throw new Error(

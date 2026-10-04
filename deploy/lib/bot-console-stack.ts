@@ -61,6 +61,62 @@ export class BotConsoleStack extends cdk.Stack {
       encryption: dynamodb.TableEncryption.AWS_MANAGED,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
+    const access = new dynamodb.Table(this, "Access", {
+      partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
+      sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
+    });
+    const accessSeed = new custom.AwsCustomResource(this, "AccessBootstrap", {
+      installLatestAwsSdk: false,
+      onCreate: {
+        service: "DynamoDB",
+        action: "putItem",
+        parameters: {
+          TableName: access.tableName,
+          Item: {
+            pk: { S: "policy" },
+            sk: { S: "current" },
+            version: { N: "0" },
+            value: {
+              M: {
+                version: { N: "0" },
+                principals: {
+                  L: [
+                    {
+                      M: {
+                        id: { S: "discord:931691901592145930" },
+                        kind: { S: "human" },
+                        name: { S: "Flick" },
+                        enabled: { BOOL: true },
+                        sessionVersion: { N: "0" },
+                        grants: {
+                          L: [
+                            { M: { role: { S: "owner" }, scope: { S: "*" } } },
+                          ],
+                        },
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+          ConditionExpression: "attribute_not_exists(pk)",
+        },
+        physicalResourceId: custom.PhysicalResourceId.of(
+          "portal-owner-bootstrap",
+        ),
+        ignoreErrorCodesMatching: "ConditionalCheckFailedException",
+      },
+      policy: custom.AwsCustomResourcePolicy.fromStatements([
+        new iam.PolicyStatement({
+          actions: ["dynamodb:PutItem"],
+          resources: [access.tableArn],
+        }),
+      ]),
+    });
     const auth = secrets.Secret.fromSecretCompleteArn(
       this,
       "Auth",
@@ -76,6 +132,7 @@ export class BotConsoleStack extends cdk.Stack {
       reservedConcurrentExecutions: 5,
       environment: {
         SESSION_TABLE: sessions.tableName,
+        ACCESS_TABLE: access.tableName,
         AUTH_SECRET_ARN: auth.secretArn,
       },
       logGroup: new logs.LogGroup(this, "ApiLogs", {
@@ -83,6 +140,8 @@ export class BotConsoleStack extends cdk.Stack {
         removalPolicy: cdk.RemovalPolicy.DESTROY,
       }),
     });
+    access.grantReadWriteData(apiFunction);
+    apiFunction.node.addDependency(accessSeed);
     sessions.grantReadWriteData(apiFunction);
     auth.grantRead(apiFunction);
     const api = new apigw.HttpApi(this, "Api", {

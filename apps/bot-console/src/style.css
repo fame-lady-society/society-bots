@@ -837,3 +837,67 @@ select {
     padding: 1rem;
   }
 }
+
+.access-catalog,
+.access-editor,
+.access-audit {
+  margin: 2rem 0;
+}
+.access-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  gap: 1rem;
+}
+.access-cards article,
+.access-audit article,
+.access-editor {
+  padding: 1.25rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow-wrap: anywhere;
+}
+.access-editor form {
+  display: grid;
+  gap: 1rem;
+}
+.access-editor label {
+  display: grid;
+  gap: 0.4rem;
+}
+.access-editor input:not([type="checkbox"]),
+.access-editor select {
+  width: 100%;
+  padding: 0.7rem;
+  background: var(--paper);
+  color: var(--bone);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.access-editor input[type="checkbox"] {
+  width: auto;
+  justify-self: start;
+}
+.access-editor fieldset {
+  border: 1px solid var(--line);
+  padding: 1rem;
+}
+.access-grant {
+  display: flex;
+  align-items: end;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+.access-grant label {
+  flex: 1;
+}
+.access-audit article {
+  margin: 0.75rem 0;
+}
+@media (max-width: 650px) {
+  .access-grant {
+    display: grid;
+  }
+  .access-editor {
+    padding: 1rem;
+  }
+}
