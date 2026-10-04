@@ -674,6 +674,9 @@ footer {
     min-width: 0;
   }
 }
+nav {
+  margin-top: 32px;
+}
 nav button {
   display: flex;
   align-items: center;
