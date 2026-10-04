@@ -90,3 +90,31 @@ test("runtime boundary grants only the verifier invocation and dedicated credent
     "telegram-verifier",
   );
 });
+
+test("runtime boundary permits only the exact Overclaw status item in the producer region", () => {
+  const t = Template.fromStack(
+    new BotConsoleAccessStack(new cdk.App(), "FlsBotConsoleAccess", {
+      env: { account: "590183914614", region: "us-east-1" },
+    }),
+  );
+  const statements = Object.values(
+    t.findResources("AWS::IAM::ManagedPolicy"),
+  )[0].Properties.PolicyDocument.Statement;
+  const crossRegion = statements.filter((s: { Resource: unknown }) =>
+    JSON.stringify(s.Resource).includes("us-west-1"),
+  );
+  expect(crossRegion).toEqual([
+    {
+      Effect: "Allow",
+      Action: "dynamodb:GetItem",
+      Resource:
+        "arn:aws:dynamodb:us-west-1:590183914614:table/OverclawLeader-OperatorStatus",
+      Condition: {
+        "ForAllValues:StringEquals": {
+          "dynamodb:LeadingKeys": ["runtime:overclaw-leader"],
+        },
+        Null: { "dynamodb:LeadingKeys": "false" },
+      },
+    },
+  ]);
+});

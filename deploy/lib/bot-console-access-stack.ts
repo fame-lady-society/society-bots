@@ -19,6 +19,18 @@ export class BotConsoleAccessStack extends cdk.Stack {
       managedPolicyName: "FlsBotConsoleRuntimeBoundary",
       statements: [
         statement(
+          ["dynamodb:GetItem"],
+          [
+            "arn:aws:dynamodb:us-west-1:590183914614:table/OverclawLeader-OperatorStatus",
+          ],
+          {
+            "ForAllValues:StringEquals": {
+              "dynamodb:LeadingKeys": ["runtime:overclaw-leader"],
+            },
+            Null: { "dynamodb:LeadingKeys": "false" },
+          },
+        ),
+        statement(
           ["lambda:InvokeFunction"],
           [
             `arn:aws:lambda:us-east-1:${account}:function:FlsBotConsole-TelegramVerifier*`,
