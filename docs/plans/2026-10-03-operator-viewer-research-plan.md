@@ -136,3 +136,116 @@ Additional changes: a hard publication time budget after all safety work; preser
 Completed-document review also found that Runtime::recovery changes phase without updating since (`src/model.rs:249–253`). The contract therefore omits phase duration/phaseSince rather than presenting the prior phase's timestamp as recovery-entry time or modifying lifecycle behavior for the viewer. Worker output was reduced to aggregate counts: an individual worker list adds identifiers and privacy decisions without answering an additional agreed question. Worker heartbeat matching is explicitly per-worker, not against the current leader generation.
 
 Review recommendation: proceed with this research direction and the discovery/contract gates above. No new reader Lambda or telemetry service is justified for the first slice. These are design-review findings and resolutions, not runtime test results.
+
+## Implementation task backlog
+
+All tasks below are **pending**. This is an ordered backlog, not a claim that implementation or deployment is authorized by this planning turn. Task IDs are local to this document. No separate Codex chats, issues or background jobs have been created.
+
+### T1 Verify deployment ownership and prerequisites
+
+Repository ownership: read-only discovery across Overclaw and society-bots. Depends on: none.
+
+- [ ] Refresh main/source references and inspect each checkout for concurrent work before editing.
+- [ ] Verify the actual leader stack, region, account, deployed watchdog artifact, schedule, timeout and single-writer concurrency.
+- [ ] Verify console runtime/deployment roles and the existing access-stack CI path.
+- [ ] Confirm lifecycle/heartbeat/worker record shapes using bounded allowlisted reads; resolve how complete fleet observations can be returned from the existing reconciler.
+- [ ] Record source/deployment differences, exact resource references, and any required change to this plan. Do not inspect secrets or dump raw tables.
+
+Done when: a short discovery record establishes the correct producer and consumer, the observation hooks, and whether T4 needs an access-stack change. If deployment differs materially from the inspected architecture, revise the plan before T2.
+
+### T2 Freeze the status and authorization contracts
+
+Repository ownership: contract fixtures in Overclaw and society-bots. Depends on: T1.
+
+- [ ] Define schema version 1, exact runtime/key, explicit nullable fields, allowed reason codes, and distinct producer snapshot versus browser response shapes.
+- [ ] Define generation matching, component error precedence, 180-second freshness, permitted clock skew, absent/malformed schema behavior, and retained historical heartbeat/checkpoint semantics.
+- [ ] Specify complete worker counts, no per-worker records, no phase duration, and launch-version provenance.
+- [ ] Specify operator-viewer/runtime.read grants, exact scope, owner inheritance, list filtering, and identical unknown/unauthorized detail responses.
+- [ ] Create identical JSON examples for both implementations: fresh ready, starting, fresh asleep with old heartbeat, recovery, stale observer, partial failure, no observation and historical checkpoint.
+- [ ] Set explicit read/publish size and timeout bounds; confirm the proposed publisher deadline against the Lambda context and measured local work.
+
+Done when: both repositories can test the same fixture contract, including rejection cases, without introducing a shared package or fallback parser. Source observations and display derivation have a field-by-field mapping.
+
+### T3 Build the Overclaw snapshot producer
+
+Repository ownership: Overclaw Rust reconciler/model projection and CDK infrastructure. Depends on: T2.
+
+- [ ] Add the dedicated status table, retained item with no TTL, deployment outputs, and publisher IAM restricted to its exact key. Choose and document stack deletion/retention behavior.
+- [ ] Return small typed lifecycle/fleet observation results from existing reconciliation without changing lifecycle decisions.
+- [ ] Build an explicit sanitizer; exclude raw errors, task/session/node IDs, checkpoint locations and credential-bearing fields.
+- [ ] Preserve last good evidence and its timestamps; record current component failures independently. Handle orphan and early-return paths explicitly.
+- [ ] Publish after all safety work with bounded awaited I/O, conditional revision replacement, no retries after uncertain timeouts, and no detached work.
+- [ ] Test missing/old-generation heartbeat, partial failure, long sleep, incomplete fleet observations, failed checkpoint acceptance, publication denial/timeout and delayed remote write completion.
+- [ ] Run repository-required Rust formatting, clippy and tests plus JavaScript/CDK checks. Assert no new scheduler, gateway ingress, public endpoint or controller invocation grant.
+
+Done when: local tests show that reporting failures cannot change safety effects or reconciliation error results, all snapshots match T2, and the infrastructure diff is limited to status publication. Deliver one Overclaw PR; do not deploy merely because producer code is ready.
+
+### T4 Prepare the console IAM prerequisite
+
+Repository ownership: society-bots access infrastructure and existing CI. Depends on: T1 and T2; final exact resource configuration depends on T3 outputs.
+
+- [ ] Determine whether existing deployment permissions can grant the required cross-region GetItem permission without modification.
+- [ ] If needed, update FlsBotConsoleAccess narrowly through its existing access CI; keep main CI unable to expand its own authority.
+- [ ] Specify the exact status table ARN/region/key configuration; avoid cross-region CloudFormation imports and browser-selected infrastructure identifiers.
+- [ ] Assert the new integration grant permits only GetItem for that key and adds no Scan, raw-state, mutation, secrets, S3 or controller access.
+
+Done when: either evidence records that no prerequisite change is needed, or a separate narrowly scoped prerequisite PR is ready with required checks. Assess new permissions separately from existing Telegram permissions; do not remove permissions needed by the working Telegram integration.
+
+### T5 Build scoped access and the console status API
+
+Repository ownership: society-bots access contracts, server routes, status reader and runtime-role CDK. Depends on: T2. Can proceed alongside T3 against fixtures; deployment depends on T3 and T4.
+
+- [ ] Add operator-viewer, runtime.read and exact runtime scope validation; update owner permissions and audit parsing through the same current schema.
+- [ ] Implement fixed-runtime list/detail routes with current-session authorization before upstream reads.
+- [ ] Add the bounded strongly consistent GetItem reader in the producer region. Missing item, unavailable backend and invalid schema have explicit outcomes with no raw-state fallback.
+- [ ] Validate and allowlist the browser response independently; do not serialize the producer record wholesale.
+- [ ] Test anonymous, owner, viewer-only, Telegram reader, manager, disabled, revoked and wrong-runtime identities; assert denied calls never reach DynamoDB.
+- [ ] Test privacy canaries, malformed/future timestamps, unknown schema, incomplete worker counts and timeout behavior.
+- [ ] Define a tested role-aware rollback artifact; prove a policy and audit containing operator-viewer remain readable by that artifact.
+
+Done when: application tests and targeted CDK checks prove authorization and data boundaries locally. No real AWS IAM or OAuth acceptance is claimed from test doubles.
+
+### T6 Build the Runtime page and owner grant controls
+
+Repository ownership: society-bots React UI and local rehearsal. Depends on: T2; final integration depends on T5.
+
+- [ ] Add the permitted Runtime navigation item and named runtime selection in the access editor.
+- [ ] Render state/observation age, startup or blocker, historical last heard, checkpoint creation-time provenance, aggregate workers and recorded launch version.
+- [ ] Provide loading, no-observation, partial, stale and unavailable states without implying success or zero workers.
+- [ ] Poll every 30 seconds only while visible; bound retries and clear runtime data on permission loss. Test the endpoint's 404 policy-denial behavior explicitly so cache clearing does not depend only on the existing 401/403 handler.
+- [ ] Verify owner and viewer-only navigation and desktop/mobile layout using fixtures, including slow responses and role revocation while a tab is open.
+- [ ] Run application tests/build and browser checks; record screenshots and any remaining live-flow gaps.
+
+Done when: each T2 fixture has an honest readable presentation, revoked users lose displayed data on authority refresh or denied fetch, and the UI has no action controls. Combine T5 and T6 in one console feature PR so the first deployed feature is complete.
+
+### T7 Perform integrated adversarial and release review
+
+Repository ownership: both PRs and the conditional access prerequisite. Depends on: T3–T6.
+
+- [ ] Review exact final diffs for controller capability exposure, raw-state access, metadata leakage and privilege inheritance.
+- [ ] Re-run targeted adversarial cases against the final producer/consumer: failed source plus fresh publication, historical checkpoint/current generation, incomplete workers, timeout late completion and stale authorization.
+- [ ] Verify consumer fixtures match producer serialization and that all repository-required checks pass on the reviewed revisions.
+- [ ] Verify publisher-before-consumer deployment order, access prerequisite ordering, supported rollback artifact and preservation of role-bearing audit history.
+- [ ] Produce a concise release checklist identifying local proof, cloud checks still pending, exact artifacts and rollback steps.
+
+Done when: blocking review findings are resolved or explicitly accepted by the operator, and the cross-repository release is concrete and reviewable. No new architecture review agents need to run during this planning turn.
+
+### T8 Deploy and prove the read-only slice
+
+Repository ownership: Overclaw release, society-bots access CI if needed, then console deployment. Depends on: T7 and deployment authorization in the implementation session.
+
+- [ ] Deploy the producer and verify a valid snapshot with genuine observation timestamps.
+- [ ] Apply T4's prerequisite if required, then deploy the complete console feature with the exact reviewed configuration.
+- [ ] Verify actual scoped reads and non-destructive IAM denial checks. Never probe a mutating controller operation to prove a deny; use policy evaluation or an isolated safe test resource where necessary, and label simulation versus live proof.
+- [ ] Verify real owner/viewer authentication, permission revocation and absence of unrelated metadata. Use a designated test identity; do not grant an unrelated person access for testing.
+- [ ] Observe awake and asleep evidence through natural transitions or a separately authorized rehearsal. If a transition is unavailable, record it as pending; viewing status must never initiate it.
+- [ ] Confirm that a page refresh causes no runtime intent write, compute wake, worker launch or inference request.
+- [ ] Record deployed versions, observed results, remaining gaps and the role-aware rollback reference.
+
+Done when: the six agreed questions are answered honestly by the deployed portal and the real access boundary is verified. A missing lifecycle rehearsal remains a clearly stated acceptance gap rather than an inferred pass.
+
+### Dependency and PR order
+
+T1 → T2 → parallel implementation of T3, T4 and T5/T6 → T7 → T8.
+
+T4 can be omitted only with recorded evidence that no deployment-permission change is needed. T6 may use fixtures while T5 is being implemented, but both ship together. Expected delivery is one Overclaw producer PR, one console feature PR, and an access-infrastructure prerequisite PR only if required. No Society Agents or workspace code PR is planned. Deployment order is producer, access prerequisite if needed, then console; no merge or deployment occurs in this task-planning turn.
