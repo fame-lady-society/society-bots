@@ -1,3 +1,5 @@
+import { wakeInputSchema } from "../src/runtime-wake-contracts";
+import type { WakeService } from "./runtime-wake";
 import { projectStatus } from "./operator-status";
 import { runtime, runtimeScope } from "../src/runtime-contracts";
 import { connectionSchema } from "../src/telegram-contracts";
@@ -47,6 +49,7 @@ export interface Dependencies {
     ): Promise<unknown>;
   };
   groups?: GroupService;
+  wake?: WakeService;
   operatorStatus?: () => Promise<unknown>;
   now?: () => number;
 }
@@ -62,7 +65,7 @@ export function createApp(deps: Dependencies) {
     throw new Error("Invalid origin");
   const now = deps.now ?? (() => Math.floor(Date.now() / 1000));
   const app = new Hono<{
-    Variables: { actor: string; principal: Principal };
+    Variables: { actor: string; principal: Principal; policyVersion: number };
   }>();
   app.use("*", secureHeaders());
   app.use("*", async (c, next) => {
@@ -137,7 +140,8 @@ export function createApp(deps: Dependencies) {
     const raw = getCookie(c, sessionCookie);
     if (!validToken(raw)) return c.json({ error: "Sign in required." }, 401);
     const session = await deps.store.get(`session#${digest(raw)}`);
-    const principal = (await deps.access.read()).principals.find(
+    const policy = await deps.access.read();
+    const principal = policy.principals.find(
       (p) => p.id === `discord:${session?.userId}` && p.kind === "human",
     );
     if (
@@ -157,6 +161,7 @@ export function createApp(deps: Dependencies) {
       return c.json({ error: "Request origin rejected." }, 403);
     c.set("actor", session.userId);
     c.set("principal", principal);
+    c.set("policyVersion", policy.version);
     await next();
   });
   app.get("/api/runtimes", (c) =>
@@ -181,6 +186,54 @@ export function createApp(deps: Dependencies) {
     } catch {
       return c.json({ error: "Runtime status unavailable." }, 503);
     }
+  });
+  app.post("/api/runtimes/:id/wake", async (c) => {
+    if (
+      c.req.param("id") !== runtime.id ||
+      c.get("principal").kind !== "human" ||
+      !permits(c.get("principal"), "runtime.wake", runtimeScope)
+    )
+      return c.json({ error: "Runtime not found." }, 404);
+    const body = await c.req.text();
+    if (body.length > 256)
+      return c.json({ error: "Invalid wake request." }, 400);
+    let input;
+    try {
+      input = wakeInputSchema.parse(JSON.parse(body));
+    } catch {
+      return c.json({ error: "Invalid wake request." }, 400);
+    }
+    if (!deps.wake) return c.json({ error: "Wake is unavailable." }, 503);
+    const record = await deps.wake.submit(
+      {
+        ...input,
+        runtimeId: runtime.id,
+        action: "wake",
+        actor: c.get("principal").id,
+        requestedAt: now(),
+      },
+      c.get("policyVersion"),
+    );
+    return c.json(record);
+  });
+  app.get("/api/runtimes/:id/wake/:requestId", async (c) => {
+    if (
+      c.req.param("id") !== runtime.id ||
+      !permits(c.get("principal"), "runtime.wake", runtimeScope)
+    )
+      return c.json({ error: "Runtime not found." }, 404);
+    const input = wakeInputSchema.safeParse({
+      requestId: c.req.param("requestId"),
+    });
+    if (!input.success) return c.json({ error: "Invalid request ID." }, 400);
+    const record = await deps.wake?.get(input.data.requestId);
+    if (
+      !record ||
+      (record.request.actor !== c.get("principal").id &&
+        !permits(c.get("principal"), "access.manage"))
+    )
+      return c.json({ error: "Request not found." }, 404);
+    return c.json(record);
   });
   app.on(["GET", "POST"], "/api/session", async (c) => {
     const session = await deps.store.get(

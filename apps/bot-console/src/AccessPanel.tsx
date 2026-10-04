@@ -286,7 +286,8 @@ export function AccessPanel({
                               scope:
                                 role === "reader"
                                   ? ""
-                                  : role === "operator-viewer"
+                                  : role === "operator-viewer" ||
+                                      role === "runtime-operator"
                                     ? "runtime:overclaw-leader"
                                     : "*",
                             };
@@ -297,7 +298,7 @@ export function AccessPanel({
                             .filter(
                               ([id]) =>
                                 edit.principal.kind === "human" ||
-                                id !== "owner",
+                                (id !== "owner" && id !== "runtime-operator"),
                             )
                             .map(([id, r]) => (
                               <option key={id} value={id}>
@@ -308,7 +309,8 @@ export function AccessPanel({
                       </label>
                       <label>
                         Scope
-                        {g.role === "operator-viewer" ? (
+                        {g.role === "operator-viewer" ||
+                        g.role === "runtime-operator" ? (
                           <select
                             value="runtime:overclaw-leader"
                             aria-label="Runtime scope"
@@ -361,8 +363,8 @@ export function AccessPanel({
                   </button>
                   <p>
                     Reader scope: telegram:* for all groups, or telegram:-100…
-                    for one group. Operator viewers see the named runtime only.
-                    Owners and connection managers use *.
+                    for one group. Runtime roles apply to the named runtime
+                    only. Owners and connection managers use *.
                   </p>
                 </fieldset>
                 <p>

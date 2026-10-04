@@ -240,3 +240,27 @@ test("only console API receives exact-key read access to the Overclaw status pro
     },
   });
 });
+
+test("only API can invoke the exact lifecycle Wake handler", () => {
+  const t = Template.fromStack(
+    new BotConsoleStack(new cdk.App(), "FlsBotConsole", config),
+  );
+  const policies = Object.entries(t.findResources("AWS::IAM::Policy")).filter(
+    ([, p]) => JSON.stringify(p).includes("OverclawLeader-console-wake"),
+  );
+  expect(policies).toHaveLength(1);
+  expect(policies[0][0]).toMatch(/^ApiFunction/);
+  const statements = policies[0][1].Properties.PolicyDocument.Statement.filter(
+    (s: { Resource: unknown }) =>
+      JSON.stringify(s.Resource).includes("OverclawLeader-console-wake"),
+  );
+  expect(statements).toEqual([
+    {
+      Effect: "Allow",
+      Action: "lambda:InvokeFunction",
+      Resource:
+        "arn:aws:lambda:us-west-1:590183914614:function:OverclawLeader-console-wake",
+    },
+  ]);
+  expect(JSON.stringify(policies[0][1])).not.toContain("OverclawLeader-State");
+});

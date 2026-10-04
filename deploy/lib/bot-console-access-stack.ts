@@ -34,6 +34,7 @@ export class BotConsoleAccessStack extends cdk.Stack {
           ["lambda:InvokeFunction"],
           [
             `arn:aws:lambda:us-east-1:${account}:function:FlsBotConsole-TelegramVerifier*`,
+            "arn:aws:lambda:us-west-1:590183914614:function:OverclawLeader-console-wake",
           ],
         ),
         statement(

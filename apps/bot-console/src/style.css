@@ -7,8 +7,8 @@
   --muted: #bdb4a4;
   --line: rgba(201, 170, 103, 0.24);
   --display: "Iowan Old Style", "Baskerville", "Times New Roman", serif;
-  font-family:
-    "Helvetica Neue", "Avenir Next", "Segoe UI", Helvetica, Arial, sans-serif;
+  font-family: "Helvetica Neue", "Avenir Next", "Segoe UI", Helvetica, Arial,
+    sans-serif;
   color: var(--bone);
   background: var(--ink);
   color-scheme: dark;
@@ -954,4 +954,13 @@ select {
 
 .runtime-header {
   display: block;
+}
+
+.runtime-action {
+  margin-bottom: 24px;
+}
+.runtime-action small {
+  display: block;
+  overflow-wrap: anywhere;
+  margin-top: 16px;
 }

@@ -136,6 +136,8 @@ export class BotConsoleStack extends cdk.Stack {
         AUTH_SECRET_ARN: auth.secretArn,
         OPERATOR_STATUS_TABLE: "OverclawLeader-OperatorStatus",
         OPERATOR_STATUS_REGION: "us-west-1",
+        RUNTIME_WAKE_ARN:
+          "arn:aws:lambda:us-west-1:590183914614:function:OverclawLeader-console-wake",
       },
       logGroup: new logs.LogGroup(this, "ApiLogs", {
         retention: logs.RetentionDays.ONE_MONTH,
@@ -155,6 +157,14 @@ export class BotConsoleStack extends cdk.Stack {
           },
           Null: { "dynamodb:LeadingKeys": "false" },
         },
+      }),
+    );
+    apiFunction.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["lambda:InvokeFunction"],
+        resources: [
+          "arn:aws:lambda:us-west-1:590183914614:function:OverclawLeader-console-wake",
+        ],
       }),
     );
     apiFunction.node.addDependency(accessSeed);

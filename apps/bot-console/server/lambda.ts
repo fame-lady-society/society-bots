@@ -1,3 +1,4 @@
+import { productionWake } from "./runtime-wake";
 import { operatorStatusReader } from "./operator-status";
 import { accessStore } from "./access-store";
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
@@ -127,6 +128,7 @@ export const handler = async (
       origin,
       access: accessStore(),
       operatorStatus,
+      wake: productionWake(),
       store,
       groups: onboarding,
       telegram: {
