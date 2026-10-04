@@ -134,6 +134,8 @@ export class BotConsoleStack extends cdk.Stack {
         SESSION_TABLE: sessions.tableName,
         ACCESS_TABLE: access.tableName,
         AUTH_SECRET_ARN: auth.secretArn,
+        OPERATOR_STATUS_TABLE: "OverclawLeader-OperatorStatus",
+        OPERATOR_STATUS_REGION: "us-west-1",
       },
       logGroup: new logs.LogGroup(this, "ApiLogs", {
         retention: logs.RetentionDays.ONE_MONTH,
@@ -141,6 +143,20 @@ export class BotConsoleStack extends cdk.Stack {
       }),
     });
     access.grantReadWriteData(apiFunction);
+    apiFunction.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["dynamodb:GetItem"],
+        resources: [
+          "arn:aws:dynamodb:us-west-1:590183914614:table/OverclawLeader-OperatorStatus",
+        ],
+        conditions: {
+          "ForAllValues:StringEquals": {
+            "dynamodb:LeadingKeys": ["runtime:overclaw-leader"],
+          },
+          Null: { "dynamodb:LeadingKeys": "false" },
+        },
+      }),
+    );
     apiFunction.node.addDependency(accessSeed);
     sessions.grantReadWriteData(apiFunction);
     auth.grantRead(apiFunction);

@@ -296,7 +296,6 @@ preserves pending updates and records registration time. It no longer accepts a
 group ID or edits associations. Manage those in the panel. Inspect before retrying
 failed setup; only sanitized errors are emitted.
 
-
 ## Owner-managed access
 
 Access & roles is the production RBAC interface. Owners can register people by
@@ -306,11 +305,11 @@ MFA enabled at login. Sign-in requires an enabled human principal with a role.
 
 Roles are a reviewed catalog, not user-editable policy expressions:
 
-| Role | Permissions | Scope |
-| --- | --- | --- |
-| Owner | Access administration, connection management, message reads | `*` |
-| Connection manager | Connection reads/changes, invite generation/revocation | `*` |
-| Inbox reader | Group metadata and captured messages/history | `telegram:*` or `telegram:<negative-chat-id>` |
+| Role               | Permissions                                                 | Scope                                         |
+| ------------------ | ----------------------------------------------------------- | --------------------------------------------- |
+| Owner              | Access administration, connection management, message reads | `*`                                           |
+| Connection manager | Connection reads/changes, invite generation/revocation      | `*`                                           |
+| Inbox reader       | Group metadata and captured messages/history                | `telegram:*` or `telegram:<negative-chat-id>` |
 
 Reader status responses contain only explicitly selected permitted group fields;
 bot identity, webhook registration and queue metadata are restricted to owners and
@@ -367,3 +366,50 @@ Do not roll back to the old allowlist-based application after admitting non-owne
 without an explicit access review: it does not enforce this RBAC model. If all owner
 access is lost due to external corruption, recovery is an operator-reviewed AWS
 policy repair with a recorded incident; there is no public recovery endpoint.
+
+### Read-only runtime viewer
+
+Owners and the **Operator viewer** role with exact scope
+`runtime:overclaw-leader` can read FAMEliza's Overclaw status. Telegram reader
+and connection-manager roles grant no runtime visibility. The role cannot wake,
+stop, recover or otherwise control compute. It grants no Discord, vault or message
+permissions; agent/service identities remain inventory only.
+
+`GET /api/runtimes` lists permitted runtimes. `GET
+/api/runtimes/overclaw-leader/status` returns `{status: null}` before the first
+snapshot, a sanitized snapshot when valid, or generic 503 when its source is
+unavailable/malformed. Denied and unknown runtime IDs return the same 404 before
+any source read. All responses are no-store.
+
+The API reads only the `runtime:overclaw-leader` item from
+`OPERATOR_STATUS_TABLE=OverclawLeader-OperatorStatus` in
+`OPERATOR_STATUS_REGION=us-west-1`. The strongly consistent read has one attempt
+and a two-second abort deadline. The source record is a revision plus a JSON
+string `data`, at most16 KiB, matching schema version1. Browser output excludes
+both generation fields. Observation/heartbeat age is recomputed as time passes;
+publishedAt never establishes health. Lifecycle and fleet failures override
+retained evidence. Checkpoint creation time is runtime-reported, and launch version
+is a recorded launch-template version, not a Git commit or binary digest.
+
+For local browser rehearsal, start `npm run dev`, open
+`http://127.0.0.1:5173/api/auth/login`, then choose Runtime. Change synthetic
+state via `POST /api/local/runtime` with JSON `{"scenario":"asleep"}`. Available
+scenarios: ready, starting, asleep, recovery, stale, partial-failure,
+no-observation, historical-checkpoint, unavailable. JSON `{"role":"operator-viewer"}`
+switches the synthetic session role; `owner` and `reader` are also supported.
+Reload after switching roles, or wait for session/status refresh to exercise
+revocation. These local endpoints are not included in the production API.
+
+The tests contain identical source-contract fixtures under
+`test/fixtures/operator-status/`, authorization denial-before-read checks,
+generation privacy, malformed/future evidence, actual timeout cancellation,
+advancing freshness, runtime404 cache erasure, and persisted policy/audit
+round-trip with role history after grant removal. They do not prove deployed IAM,
+real Discord OAuth, or live producer freshness.
+
+**Rollback boundary:** once an operator-viewer grant has been saved, retain a
+build from this role-aware release or later as the rollback artifact. Removing
+the grant does not remove role-bearing audit entries. Pre-role releases cannot
+parse that history and are not supported rollback targets. Preserve audit history;
+prefer a forward fix. Producer rollback leaves snapshots that become visibly
+stale; it must never fall back to raw runtime state.

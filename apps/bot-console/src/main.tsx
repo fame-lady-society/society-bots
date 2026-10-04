@@ -1,3 +1,5 @@
+import { RuntimePanel } from "./RuntimePanel";
+import { runtimeScope } from "./runtime-contracts";
 import { createDataClient } from "./data-client";
 import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -71,9 +73,12 @@ function App() {
   const reader = principal.grants.some(
     (g) => g.role === "owner" || g.role === "reader",
   );
+  const operator = permits(principal, "runtime.read", runtimeScope);
   const manager = permits(principal, "connections.manage");
   const current =
-    (view === "telegram" && !reader) || (view === "connections" && !manager)
+    (view === "telegram" && !reader) ||
+    (view === "connections" && !manager) ||
+    (view === "runtime" && !operator)
       ? "access"
       : view;
   return (
@@ -90,9 +95,16 @@ function App() {
             ["access", owner ? "Access & roles" : "My access"],
             ["telegram", "Telegram inbox"],
             ["connections", "Connections"],
+            ["runtime", "Runtime"],
           ]
             .filter(
-              ([v]) => v === "access" || (v === "telegram" ? reader : manager),
+              ([v]) =>
+                v === "access" ||
+                (v === "telegram"
+                  ? reader
+                  : v === "runtime"
+                    ? operator
+                    : manager),
             )
             .map(([v, label]) => (
               <button
@@ -134,6 +146,8 @@ function App() {
               session={session.data}
               onAccessChange={() => void session.refetch()}
             />
+          ) : current === "runtime" ? (
+            <RuntimePanel />
           ) : current === "telegram" ? (
             <TelegramInbox />
           ) : (

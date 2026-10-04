@@ -5,11 +5,13 @@ export function createDataClient(onAuthorityDenied: () => void) {
   const onError = (error: Error) => {
     if (error instanceof AuthorityError && !notified) {
       notified = true;
+      client.clear();
       onAuthorityDenied();
     }
   };
-  return new QueryClient({
+  const client = new QueryClient({
     queryCache: new QueryCache({ onError }),
     mutationCache: new MutationCache({ onError }),
   });
+  return client;
 }

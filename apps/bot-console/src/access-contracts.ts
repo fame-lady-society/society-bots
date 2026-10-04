@@ -4,13 +4,21 @@ export const roles = {
     name: "Owner",
     permissions: [
       "access.manage",
+      "runtime.read",
       "connections.read",
       "connections.manage",
       "messages.read",
     ],
     scope: "global",
     description:
-      "Manage portal access and all Telegram connections and history.",
+      "Manage portal access, runtime visibility and all Telegram connections and history.",
+  },
+  "operator-viewer": {
+    name: "Operator viewer",
+    permissions: ["runtime.read"],
+    scope: "runtime",
+    description:
+      "Read FAMEliza runtime status. Does not grant runtime actions or message access.",
   },
   reader: {
     name: "Inbox reader",
@@ -28,7 +36,7 @@ export const roles = {
 } as const;
 export const grantSchema = z
   .object({
-    role: z.enum(["owner", "reader", "manager"]),
+    role: z.enum(["owner", "reader", "manager", "operator-viewer"]),
     scope: z.string().max(80),
   })
   .strict()
@@ -36,7 +44,9 @@ export const grantSchema = z
     (g) =>
       g.role === "reader"
         ? g.scope === "telegram:*" || /^telegram:-\d+$/.test(g.scope)
-        : g.scope === "*",
+        : g.role === "operator-viewer"
+          ? g.scope === "runtime:overclaw-leader"
+          : g.scope === "*",
     "Invalid scope for role",
   );
 export const principalSchema = z

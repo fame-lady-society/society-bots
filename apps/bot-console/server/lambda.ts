@@ -1,3 +1,4 @@
+import { operatorStatusReader } from "./operator-status";
 import { accessStore } from "./access-store";
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
 import { dynamoGroupStore } from "./telegram-groups-store";
@@ -25,6 +26,7 @@ const configSchema = z.object({
   clientSecret: z.string().min(1),
 });
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+const operatorStatus = operatorStatusReader();
 const secrets = new SecretsManagerClient({});
 const groups = dynamoGroupStore();
 const lambda = new LambdaClient({});
@@ -124,6 +126,7 @@ export const handler = async (
     const app = createApp({
       origin,
       access: accessStore(),
+      operatorStatus,
       store,
       groups: onboarding,
       telegram: {

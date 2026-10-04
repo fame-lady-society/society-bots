@@ -202,3 +202,41 @@ test("access policy is retained, owner bootstrap is create-only, and only API ge
       ).toBeUndefined();
   }
 });
+
+test("only console API receives exact-key read access to the Overclaw status projection", () => {
+  const t = Template.fromStack(
+    new BotConsoleStack(new cdk.App(), "FlsBotConsole", config),
+  );
+  const functions = Object.values(t.findResources("AWS::Lambda::Function"));
+  const readers = functions.filter(
+    (f) => f.Properties.Environment?.Variables?.OPERATOR_STATUS_TABLE,
+  );
+  expect(readers).toHaveLength(1);
+  expect(readers[0].Properties.Handler).toBe("index.handler");
+  expect(
+    readers[0].Properties.Environment.Variables.OPERATOR_STATUS_REGION,
+  ).toBe("us-west-1");
+  const policies = Object.entries(t.findResources("AWS::IAM::Policy"));
+  const statusPolicies = policies.filter(([, p]) =>
+    JSON.stringify(p).includes("OverclawLeader-OperatorStatus"),
+  );
+  expect(statusPolicies).toHaveLength(1);
+  expect(statusPolicies[0][0]).toMatch(/^ApiFunction/);
+  const statement =
+    statusPolicies[0][1].Properties.PolicyDocument.Statement.find(
+      (s: { Resource: unknown }) =>
+        JSON.stringify(s.Resource).includes("OverclawLeader-OperatorStatus"),
+    );
+  expect(statement).toEqual({
+    Effect: "Allow",
+    Action: "dynamodb:GetItem",
+    Resource:
+      "arn:aws:dynamodb:us-west-1:590183914614:table/OverclawLeader-OperatorStatus",
+    Condition: {
+      "ForAllValues:StringEquals": {
+        "dynamodb:LeadingKeys": ["runtime:overclaw-leader"],
+      },
+      Null: { "dynamodb:LeadingKeys": "false" },
+    },
+  });
+});

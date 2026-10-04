@@ -1,6 +1,6 @@
 # FAMEliza operator viewer research and implementation plan
 
-Status: proposed, 3 October 2026. This turn covers source research, alternatives, implementation planning, and adversarial review. No runtime, IAM, application behavior, or deployment changes are included.
+Status: implementation completed locally, 3 October 2026; deployment pending. See [release evidence](2026-10-03-operator-viewer-release.md) for source baselines, validation and release dependencies. The research sections below preserve the original design rationale.
 
 ## Recommended first slice
 
@@ -139,17 +139,17 @@ Review recommendation: proceed with this research direction and the discovery/co
 
 ## Implementation task backlog
 
-All tasks below are **pending**. This is an ordered backlog, not a claim that implementation or deployment is authorized by this planning turn. Task IDs are local to this document. No separate Codex chats, issues or background jobs have been created.
+T1–T7 implementation and local review are complete except the explicitly pending release-artifact subchecks below. T8 deployment/live acceptance remains pending. Task IDs are local to this document; completion evidence is in the release record.
 
 ### T1 Verify deployment ownership and prerequisites
 
 Repository ownership: read-only discovery across Overclaw and society-bots. Depends on: none.
 
-- [ ] Refresh main/source references and inspect each checkout for concurrent work before editing.
-- [ ] Verify the actual leader stack, region, account, deployed watchdog artifact, schedule, timeout and single-writer concurrency.
-- [ ] Verify console runtime/deployment roles and the existing access-stack CI path.
-- [ ] Confirm lifecycle/heartbeat/worker record shapes using bounded allowlisted reads; resolve how complete fleet observations can be returned from the existing reconciler.
-- [ ] Record source/deployment differences, exact resource references, and any required change to this plan. Do not inspect secrets or dump raw tables.
+- [x] Refresh main/source references and inspect each checkout for concurrent work before editing.
+- [x] Verify the actual leader stack, region, account, deployed watchdog artifact, schedule, timeout and single-writer concurrency.
+- [x] Verify console runtime/deployment roles and the existing access-stack CI path.
+- [x] Confirm lifecycle/heartbeat/worker record shapes using bounded allowlisted reads; resolve how complete fleet observations can be returned from the existing reconciler.
+- [x] Record source/deployment differences, exact resource references, and any required change to this plan. Do not inspect secrets or dump raw tables.
 
 Done when: a short discovery record establishes the correct producer and consumer, the observation hooks, and whether T4 needs an access-stack change. If deployment differs materially from the inspected architecture, revise the plan before T2.
 
@@ -157,12 +157,12 @@ Done when: a short discovery record establishes the correct producer and consume
 
 Repository ownership: contract fixtures in Overclaw and society-bots. Depends on: T1.
 
-- [ ] Define schema version 1, exact runtime/key, explicit nullable fields, allowed reason codes, and distinct producer snapshot versus browser response shapes.
-- [ ] Define generation matching, component error precedence, 180-second freshness, permitted clock skew, absent/malformed schema behavior, and retained historical heartbeat/checkpoint semantics.
-- [ ] Specify complete worker counts, no per-worker records, no phase duration, and launch-version provenance.
-- [ ] Specify operator-viewer/runtime.read grants, exact scope, owner inheritance, list filtering, and identical unknown/unauthorized detail responses.
-- [ ] Create identical JSON examples for both implementations: fresh ready, starting, fresh asleep with old heartbeat, recovery, stale observer, partial failure, no observation and historical checkpoint.
-- [ ] Set explicit read/publish size and timeout bounds; confirm the proposed publisher deadline against the Lambda context and measured local work.
+- [x] Define schema version 1, exact runtime/key, explicit nullable fields, allowed reason codes, and distinct producer snapshot versus browser response shapes.
+- [x] Define generation matching, component error precedence, 180-second freshness, permitted clock skew, absent/malformed schema behavior, and retained historical heartbeat/checkpoint semantics.
+- [x] Specify complete worker counts, no per-worker records, no phase duration, and launch-version provenance.
+- [x] Specify operator-viewer/runtime.read grants, exact scope, owner inheritance, list filtering, and identical unknown/unauthorized detail responses.
+- [x] Create identical JSON examples for both implementations: fresh ready, starting, fresh asleep with old heartbeat, recovery, stale observer, partial failure, no observation and historical checkpoint.
+- [x] Set explicit read/publish size and timeout bounds; confirm the proposed publisher deadline against the Lambda context and measured local work.
 
 Done when: both repositories can test the same fixture contract, including rejection cases, without introducing a shared package or fallback parser. Source observations and display derivation have a field-by-field mapping.
 
@@ -170,13 +170,13 @@ Done when: both repositories can test the same fixture contract, including rejec
 
 Repository ownership: Overclaw Rust reconciler/model projection and CDK infrastructure. Depends on: T2.
 
-- [ ] Add the dedicated status table, retained item with no TTL, deployment outputs, and publisher IAM restricted to its exact key. Choose and document stack deletion/retention behavior.
-- [ ] Return small typed lifecycle/fleet observation results from existing reconciliation without changing lifecycle decisions.
-- [ ] Build an explicit sanitizer; exclude raw errors, task/session/node IDs, checkpoint locations and credential-bearing fields.
-- [ ] Preserve last good evidence and its timestamps; record current component failures independently. Handle orphan and early-return paths explicitly.
-- [ ] Publish after all safety work with bounded awaited I/O, conditional revision replacement, no retries after uncertain timeouts, and no detached work.
-- [ ] Test missing/old-generation heartbeat, partial failure, long sleep, incomplete fleet observations, failed checkpoint acceptance, publication denial/timeout and delayed remote write completion.
-- [ ] Run repository-required Rust formatting, clippy and tests plus JavaScript/CDK checks. Assert no new scheduler, gateway ingress, public endpoint or controller invocation grant.
+- [x] Add the dedicated status table, retained item with no TTL, deployment outputs, and publisher IAM restricted to its exact key. Choose and document stack deletion/retention behavior.
+- [x] Return small typed lifecycle/fleet observation results from existing reconciliation without changing lifecycle decisions.
+- [x] Build an explicit sanitizer; exclude raw errors, task/session/node IDs, checkpoint locations and credential-bearing fields.
+- [x] Preserve last good evidence and its timestamps; record current component failures independently. Handle orphan and early-return paths explicitly.
+- [x] Publish after all safety work with bounded awaited I/O, conditional revision replacement, no retries after uncertain timeouts, and no detached work.
+- [x] Test missing/old-generation heartbeat, partial failure, long sleep, incomplete fleet observations, failed checkpoint acceptance, publication denial/timeout and delayed remote write completion.
+- [x] Run repository-required Rust formatting, clippy and tests plus JavaScript/CDK checks. Assert no new scheduler, gateway ingress, public endpoint or controller invocation grant.
 
 Done when: local tests show that reporting failures cannot change safety effects or reconciliation error results, all snapshots match T2, and the infrastructure diff is limited to status publication. Deliver one Overclaw PR; do not deploy merely because producer code is ready.
 
@@ -184,10 +184,10 @@ Done when: local tests show that reporting failures cannot change safety effects
 
 Repository ownership: society-bots access infrastructure and existing CI. Depends on: T1 and T2; final exact resource configuration depends on T3 outputs.
 
-- [ ] Determine whether existing deployment permissions can grant the required cross-region GetItem permission without modification.
-- [ ] If needed, update FlsBotConsoleAccess narrowly through its existing access CI; keep main CI unable to expand its own authority.
-- [ ] Specify the exact status table ARN/region/key configuration; avoid cross-region CloudFormation imports and browser-selected infrastructure identifiers.
-- [ ] Assert the new integration grant permits only GetItem for that key and adds no Scan, raw-state, mutation, secrets, S3 or controller access.
+- [x] Determine whether existing deployment permissions can grant the required cross-region GetItem permission without modification.
+- [x] If needed, update FlsBotConsoleAccess narrowly through its existing access CI; keep main CI unable to expand its own authority.
+- [x] Specify the exact status table ARN/region/key configuration; avoid cross-region CloudFormation imports and browser-selected infrastructure identifiers.
+- [x] Assert the new integration grant permits only GetItem for that key and adds no Scan, raw-state, mutation, secrets, S3 or controller access.
 
 Done when: either evidence records that no prerequisite change is needed, or a separate narrowly scoped prerequisite PR is ready with required checks. Assess new permissions separately from existing Telegram permissions; do not remove permissions needed by the working Telegram integration.
 
@@ -195,12 +195,12 @@ Done when: either evidence records that no prerequisite change is needed, or a s
 
 Repository ownership: society-bots access contracts, server routes, status reader and runtime-role CDK. Depends on: T2. Can proceed alongside T3 against fixtures; deployment depends on T3 and T4.
 
-- [ ] Add operator-viewer, runtime.read and exact runtime scope validation; update owner permissions and audit parsing through the same current schema.
-- [ ] Implement fixed-runtime list/detail routes with current-session authorization before upstream reads.
-- [ ] Add the bounded strongly consistent GetItem reader in the producer region. Missing item, unavailable backend and invalid schema have explicit outcomes with no raw-state fallback.
-- [ ] Validate and allowlist the browser response independently; do not serialize the producer record wholesale.
-- [ ] Test anonymous, owner, viewer-only, Telegram reader, manager, disabled, revoked and wrong-runtime identities; assert denied calls never reach DynamoDB.
-- [ ] Test privacy canaries, malformed/future timestamps, unknown schema, incomplete worker counts and timeout behavior.
+- [x] Add operator-viewer, runtime.read and exact runtime scope validation; update owner permissions and audit parsing through the same current schema.
+- [x] Implement fixed-runtime list/detail routes with current-session authorization before upstream reads.
+- [x] Add the bounded strongly consistent GetItem reader in the producer region. Missing item, unavailable backend and invalid schema have explicit outcomes with no raw-state fallback.
+- [x] Validate and allowlist the browser response independently; do not serialize the producer record wholesale.
+- [x] Test anonymous, owner, viewer-only, Telegram reader, manager, disabled, revoked and wrong-runtime identities; assert denied calls never reach DynamoDB.
+- [x] Test privacy canaries, malformed/future timestamps, unknown schema, incomplete worker counts and timeout behavior.
 - [ ] Define a tested role-aware rollback artifact; prove a policy and audit containing operator-viewer remain readable by that artifact.
 
 Done when: application tests and targeted CDK checks prove authorization and data boundaries locally. No real AWS IAM or OAuth acceptance is claimed from test doubles.
@@ -209,12 +209,12 @@ Done when: application tests and targeted CDK checks prove authorization and dat
 
 Repository ownership: society-bots React UI and local rehearsal. Depends on: T2; final integration depends on T5.
 
-- [ ] Add the permitted Runtime navigation item and named runtime selection in the access editor.
-- [ ] Render state/observation age, startup or blocker, historical last heard, checkpoint creation-time provenance, aggregate workers and recorded launch version.
-- [ ] Provide loading, no-observation, partial, stale and unavailable states without implying success or zero workers.
-- [ ] Poll every 30 seconds only while visible; bound retries and clear runtime data on permission loss. Test the endpoint's 404 policy-denial behavior explicitly so cache clearing does not depend only on the existing 401/403 handler.
-- [ ] Verify owner and viewer-only navigation and desktop/mobile layout using fixtures, including slow responses and role revocation while a tab is open.
-- [ ] Run application tests/build and browser checks; record screenshots and any remaining live-flow gaps.
+- [x] Add the permitted Runtime navigation item and named runtime selection in the access editor.
+- [x] Render state/observation age, startup or blocker, historical last heard, checkpoint creation-time provenance, aggregate workers and recorded launch version.
+- [x] Provide loading, no-observation, partial, stale and unavailable states without implying success or zero workers.
+- [x] Poll every 30 seconds only while visible; bound retries and clear runtime data on permission loss. Test the endpoint's 404 policy-denial behavior explicitly so cache clearing does not depend only on the existing 401/403 handler.
+- [x] Verify owner and viewer-only navigation and desktop/mobile layout using fixtures, including slow responses and role revocation while a tab is open.
+- [x] Run application tests/build and browser checks; record screenshots and any remaining live-flow gaps.
 
 Done when: each T2 fixture has an honest readable presentation, revoked users lose displayed data on authority refresh or denied fetch, and the UI has no action controls. Combine T5 and T6 in one console feature PR so the first deployed feature is complete.
 
@@ -222,11 +222,11 @@ Done when: each T2 fixture has an honest readable presentation, revoked users lo
 
 Repository ownership: both PRs and the conditional access prerequisite. Depends on: T3–T6.
 
-- [ ] Review exact final diffs for controller capability exposure, raw-state access, metadata leakage and privilege inheritance.
-- [ ] Re-run targeted adversarial cases against the final producer/consumer: failed source plus fresh publication, historical checkpoint/current generation, incomplete workers, timeout late completion and stale authorization.
-- [ ] Verify consumer fixtures match producer serialization and that all repository-required checks pass on the reviewed revisions.
-- [ ] Verify publisher-before-consumer deployment order, access prerequisite ordering, supported rollback artifact and preservation of role-bearing audit history.
-- [ ] Produce a concise release checklist identifying local proof, cloud checks still pending, exact artifacts and rollback steps.
+- [x] Review exact final diffs for controller capability exposure, raw-state access, metadata leakage and privilege inheritance.
+- [x] Re-run targeted adversarial cases against the final producer/consumer: failed source plus fresh publication, historical checkpoint/current generation, incomplete workers, timeout late completion and stale authorization.
+- [x] Verify consumer fixtures match producer serialization and that all repository-required checks pass on the reviewed revisions.
+- [ ] Verify publisher-before-consumer deployment order, access prerequisite ordering, supported rollback artifact and preservation of role-bearing audit history. Ordering and audit parsing verified; deployable role-aware CI artifact retention remains a release gate.
+- [x] Produce a concise release checklist identifying local proof, cloud checks still pending, exact artifacts and rollback steps.
 
 Done when: blocking review findings are resolved or explicitly accepted by the operator, and the cross-repository release is concrete and reviewable. No new architecture review agents need to run during this planning turn.
 
