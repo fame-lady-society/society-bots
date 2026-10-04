@@ -904,3 +904,54 @@ select {
     padding: 1rem;
   }
 }
+
+.runtime-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+}
+.runtime-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 24px;
+  min-width: 0;
+}
+.runtime-card h2 {
+  margin: 8px 0 16px;
+}
+.runtime-card p {
+  line-height: 1.6;
+}
+.runtime-card dd {
+  margin: 6px 0 18px;
+  overflow-wrap: anywhere;
+}
+.runtime-card dt,
+.runtime-time {
+  color: var(--muted);
+}
+.runtime-card small {
+  display: block;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.runtime-count {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+.runtime-count dd {
+  margin: 0 0 8px;
+}
+@media (max-width: 760px) {
+  .runtime-grid {
+    grid-template-columns: 1fr;
+  }
+  .runtime-card {
+    padding: 20px;
+  }
+}
+
+.runtime-header {
+  display: block;
+}

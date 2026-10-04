@@ -1,3 +1,11 @@
+import {
+  rehearsalSnapshot,
+  rehearsalScenarios,
+  type RehearsalScenario,
+} from "./operator-status";
+import { projectStatus } from "../server/operator-status";
+import { runtime, runtimeScope } from "../src/runtime-contracts";
+import { permits, type Principal } from "../src/access-contracts";
 import { z } from "zod";
 import { memoryAccess, localOwner } from "./access-store";
 import { editAccess } from "../server/access";
@@ -68,6 +76,8 @@ const incidents: Incident[] = [
   },
 ];
 let signedIn = false;
+let runtimeScenario: RehearsalScenario = "ready";
+let rehearsalPrincipal: Principal = structuredClone(localOwner);
 const app = new Hono();
 const access = memoryAccess();
 app.use("*", async (c, next) => {
@@ -86,11 +96,63 @@ app.get("/api/session", (c) =>
   c.json({
     user: { id: "local-operator", name: "Local operator" },
     rehearsal: true,
-    principal: localOwner,
+    principal: rehearsalPrincipal,
     expires: Math.floor(Date.now() / 1000) + 604800,
     absoluteExpires: Math.floor(Date.now() / 1000) + 2592000,
   }),
 );
+app.post("/api/local/runtime", async (c) => {
+  const body = z
+    .object({
+      scenario: z.enum(rehearsalScenarios).optional(),
+      role: z.enum(["owner", "operator-viewer", "reader"]).optional(),
+    })
+    .strict()
+    .parse(await c.req.json());
+  if (body.scenario) runtimeScenario = body.scenario;
+  if (body.role)
+    rehearsalPrincipal = {
+      ...localOwner,
+      grants: [
+        {
+          role: body.role,
+          scope:
+            body.role === "operator-viewer"
+              ? runtimeScope
+              : body.role === "reader"
+                ? "telegram:-100"
+                : "*",
+        },
+      ],
+    };
+  return c.body(null, 204);
+});
+app.get("/api/runtimes", (c) =>
+  c.json({
+    runtimes: permits(rehearsalPrincipal, "runtime.read", runtimeScope)
+      ? [runtime]
+      : [],
+  }),
+);
+app.get("/api/runtimes/:id/status", (c) => {
+  if (
+    c.req.param("id") !== runtime.id ||
+    !permits(rehearsalPrincipal, "runtime.read", runtimeScope)
+  )
+    return c.json({ error: "Runtime not found." }, 404);
+  if (runtimeScenario === "unavailable")
+    return c.json({ error: "Runtime status unavailable." }, 503);
+  const now = Math.floor(Date.now() / 1000);
+  const snapshot = rehearsalSnapshot(runtimeScenario, now);
+  return c.json({
+    status: projectStatus(
+      snapshot
+        ? { revision: snapshot.revision, data: JSON.stringify(snapshot) }
+        : undefined,
+      now,
+    ),
+  });
+});
 app.get("/api/access", async (c) =>
   c.json({
     policy: await access.store.read(),

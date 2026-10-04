@@ -1,3 +1,5 @@
+import { projectStatus } from "./operator-status";
+import { runtime, runtimeScope } from "../src/runtime-contracts";
 import { connectionSchema } from "../src/telegram-contracts";
 import { permits, type Principal } from "../src/access-contracts";
 import { AccessConflict, editAccess, type AccessStore } from "./access";
@@ -45,6 +47,7 @@ export interface Dependencies {
     ): Promise<unknown>;
   };
   groups?: GroupService;
+  operatorStatus?: () => Promise<unknown>;
   now?: () => number;
 }
 const sessionCookie = "__Host-bot-session";
@@ -155,6 +158,29 @@ export function createApp(deps: Dependencies) {
     c.set("actor", session.userId);
     c.set("principal", principal);
     await next();
+  });
+  app.get("/api/runtimes", (c) =>
+    c.json({
+      runtimes: permits(c.get("principal"), "runtime.read", runtimeScope)
+        ? [runtime]
+        : [],
+    }),
+  );
+  app.get("/api/runtimes/:id/status", async (c) => {
+    if (
+      c.req.param("id") !== runtime.id ||
+      !permits(c.get("principal"), "runtime.read", runtimeScope)
+    )
+      return c.json({ error: "Runtime not found." }, 404);
+    if (!deps.operatorStatus)
+      return c.json({ error: "Runtime status unavailable." }, 503);
+    try {
+      return c.json({
+        status: projectStatus(await deps.operatorStatus(), now()),
+      });
+    } catch {
+      return c.json({ error: "Runtime status unavailable." }, 503);
+    }
   });
   app.on(["GET", "POST"], "/api/session", async (c) => {
     const session = await deps.store.get(

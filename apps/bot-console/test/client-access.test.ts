@@ -77,3 +77,28 @@ test("ordinary network errors do not reset authority", async () => {
   assert.equal(refreshes, 0);
   client.clear();
 });
+
+test("runtime 404 clears cached evidence and refreshes authority without retry", async (t) => {
+  const { runtimeFetch } = await import("../src/api");
+  let refreshes = 0;
+  const client = createDataClient(() => refreshes++);
+  client.setQueryData(["runtime-status", "overclaw-leader"], {
+    private: "old evidence",
+  });
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async () => new Response(null, { status: 404 }),
+  );
+  await assert.rejects(
+    client.fetchQuery({
+      queryKey: ["denied-runtime"],
+      retry: false,
+      queryFn: async () => runtimeFetch("/api/runtimes/overclaw-leader/status"),
+    }),
+    (error: unknown) => error instanceof AuthorityError && error.status === 404,
+  );
+  assert.equal(refreshes, 1);
+  assert.equal(client.getQueryCache().getAll().length, 0);
+  client.clear();
+});

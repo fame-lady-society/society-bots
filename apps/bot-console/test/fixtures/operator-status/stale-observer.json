@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "runtimeId": "overclaw-leader",
+  "revision": 1,
+  "publishedAt": 2000,
+  "lifecycle": {
+    "availability": "available",
+    "observedAt": 1000,
+    "error": null,
+    "phase": "awake",
+    "generation": "current",
+    "lastHeardAt": 900,
+    "lastHeardGeneration": "current",
+    "ready": true,
+    "startup": null,
+    "blocker": null,
+    "checkpointCreatedAt": null,
+    "launchVersion": "7"
+  },
+  "workers": {
+    "availability": "available",
+    "observedAt": 1000,
+    "error": null,
+    "counts": {
+      "queued": 0,
+      "launching": 0,
+      "ready": 0,
+      "draining": 0,
+      "terminating": 0,
+      "stopping": 0,
+      "asleep": 0,
+      "paused": 0,
+      "recovery": 0
+    },
+    "total": 0
+  }
+}

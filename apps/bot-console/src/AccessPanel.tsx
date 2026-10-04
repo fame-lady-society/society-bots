@@ -283,7 +283,12 @@ export function AccessPanel({
                             const role = e.target.value as typeof g.role;
                             grants[i] = {
                               role,
-                              scope: role === "reader" ? "" : "*",
+                              scope:
+                                role === "reader"
+                                  ? ""
+                                  : role === "operator-viewer"
+                                    ? "runtime:overclaw-leader"
+                                    : "*",
                             };
                             change({ grants });
                           }}
@@ -303,17 +308,28 @@ export function AccessPanel({
                       </label>
                       <label>
                         Scope
-                        <input
-                          required
-                          placeholder="telegram:-100… or telegram:*"
-                          value={g.scope}
-                          disabled={g.role !== "reader"}
-                          onChange={(e) => {
-                            const grants = [...edit.principal.grants];
-                            grants[i] = { ...g, scope: e.target.value };
-                            change({ grants });
-                          }}
-                        />
+                        {g.role === "operator-viewer" ? (
+                          <select
+                            value="runtime:overclaw-leader"
+                            aria-label="Runtime scope"
+                          >
+                            <option value="runtime:overclaw-leader">
+                              FAMEliza · Overclaw
+                            </option>
+                          </select>
+                        ) : (
+                          <input
+                            required
+                            placeholder="telegram:-100… or telegram:*"
+                            value={g.scope}
+                            disabled={g.role !== "reader"}
+                            onChange={(e) => {
+                              const grants = [...edit.principal.grants];
+                              grants[i] = { ...g, scope: e.target.value };
+                              change({ grants });
+                            }}
+                          />
+                        )}
                       </label>
                       <button
                         type="button"
@@ -345,7 +361,8 @@ export function AccessPanel({
                   </button>
                   <p>
                     Reader scope: telegram:* for all groups, or telegram:-100…
-                    for one group. Other roles use *.
+                    for one group. Operator viewers see the named runtime only.
+                    Owners and connection managers use *.
                   </p>
                 </fieldset>
                 <p>
