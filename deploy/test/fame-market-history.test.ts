@@ -66,7 +66,16 @@ test("history deploy is retained, private, bounded, and independent of bot stack
     MaximumRetryAttempts: 0,
   });
   template.resourceCountIs("AWS::EC2::NatGateway", 0);
-  template.resourceCountIs("AWS::Lambda::Function", 1);
+  template.hasResourceProperties("AWS::Lambda::Function", {
+    PackageType: "Image",
+    Timeout: 120,
+    MemorySize: 512,
+    ReservedConcurrentExecutions: 1,
+  });
+  template.hasResourceProperties("AWS::Events::Rule", {
+    ScheduleExpression: "rate(1 minute)",
+  });
+  template.resourceCountIs("AWS::Lambda::Function", 2);
 });
 
 test("deployment rejects an implicit starting point or budget", () => {

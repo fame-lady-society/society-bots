@@ -9,7 +9,7 @@ import * as sqs from "aws-cdk-lib/aws-sqs";
 import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
 import { Construct } from "constructs";
 import { buildSync } from "esbuild";
-import { copyFileSync } from "node:fs";
+import { copyFileSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createLambdaLogGroup } from "./lambda-log-groups.js";
@@ -30,6 +30,46 @@ export function bundleHistoryCollector(): string {
     format: "esm",
     inject: [path.join(root, "deploy/lib/esbuild/cjs-shim.ts")],
   });
+  copyFileSync(
+    path.join(root, "src/fame-swap-pool-state/registry/base-v1-pools.json"),
+    path.join(bundle, "base-v1-pools.json"),
+  );
+  return bundle;
+}
+
+export function bundleHistoryWorker(): string {
+  const bundle = cdk.FileSystem.mkdtemp("fame-history-worker-");
+  const app = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
+  const runtime = JSON.parse(
+    readFileSync(
+      path.join(root, "deploy/docker/market-history/package.json"),
+      "utf8",
+    ),
+  );
+  if (
+    app.dependencies["@duckdb/node-api"] !==
+    runtime.dependencies["@duckdb/node-api"]
+  )
+    throw new Error("DuckDB worker dependency differs from application lock");
+  buildSync({
+    entryPoints: [path.join(root, "src/fame-market-history/worker-lambda.ts")],
+    outfile: path.join(bundle, "index.mjs"),
+    bundle: true,
+    platform: "node",
+    target: "node24",
+    format: "esm",
+    external: ["@duckdb/node-api"],
+    inject: [path.join(root, "deploy/lib/esbuild/cjs-shim.ts")],
+  });
+  for (const file of ["Dockerfile", "package.json", "package-lock.json"])
+    copyFileSync(
+      path.join(root, "deploy/docker/market-history", file),
+      path.join(bundle, file),
+    );
+  copyFileSync(
+    path.join(root, "src/fame-market-history/token-metadata.json"),
+    path.join(bundle, "token-metadata.json"),
+  );
   copyFileSync(
     path.join(root, "src/fame-swap-pool-state/registry/base-v1-pools.json"),
     path.join(bundle, "base-v1-pools.json"),
@@ -126,6 +166,52 @@ export class FameMarketHistory extends Construct {
       schedule: events.Schedule.rate(cdk.Duration.minutes(5)),
       targets: [new targets.LambdaFunction(collector, { retryAttempts: 0 })],
     });
+    const worker = new lambda.DockerImageFunction(this, "Aggregator", {
+      code: lambda.DockerImageCode.fromImageAsset(bundleHistoryWorker(), {
+        target: "runtime",
+        platform: cdk.aws_ecr_assets.Platform.LINUX_AMD64,
+      }),
+      architecture: lambda.Architecture.X86_64,
+      memorySize: 512,
+      timeout: cdk.Duration.minutes(2),
+      reservedConcurrentExecutions: 1,
+      retryAttempts: 0,
+      onFailure: new destinations.SqsDestination(failures),
+      logGroup: createLambdaLogGroup(this, "AggregatorLogs", "baseOperational"),
+      environment: {
+        FAME_HISTORY_TABLE: table.tableName,
+        FAME_HISTORY_BUCKET: bucket.bucketName,
+        FAME_HISTORY_START_BLOCK: String(props.startBlock),
+      },
+    });
+    table.grantReadWriteData(worker);
+    bucket.grantRead(worker, "raw/*");
+    bucket.grantRead(worker, "derived/*");
+    bucket.grantPut(worker, "derived/*");
+    new events.Rule(this, "AggregationSchedule", {
+      schedule: events.Schedule.rate(cdk.Duration.minutes(1)),
+      targets: [new targets.LambdaFunction(worker, { retryAttempts: 0 })],
+    });
+    for (const [name, metric] of [
+      ["AggregationErrors", worker.metricErrors()],
+      ["AggregationThrottles", worker.metricThrottles()],
+    ] as const)
+      new cloudwatch.Alarm(this, `${name}Alarm`, {
+        metric,
+        threshold: 1,
+        evaluationPeriods: 1,
+        treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+      });
+    new cloudwatch.Alarm(this, "AggregationMissedInvocationsAlarm", {
+      metric: worker.metricInvocations({
+        period: cdk.Duration.minutes(5),
+        statistic: "Sum",
+      }),
+      threshold: 1,
+      evaluationPeriods: 1,
+      comparisonOperator: cloudwatch.ComparisonOperator.LESS_THAN_THRESHOLD,
+      treatMissingData: cloudwatch.TreatMissingData.BREACHING,
+    });
     for (const [name, metric] of [
       ["Errors", collector.metricErrors()],
       ["Throttles", collector.metricThrottles()],
@@ -162,5 +248,6 @@ export class FameMarketHistory extends Construct {
     new cdk.CfnOutput(this, "BucketName", { value: bucket.bucketName });
     new cdk.CfnOutput(this, "TableName", { value: table.tableName });
     new cdk.CfnOutput(this, "CollectorName", { value: collector.functionName });
+    new cdk.CfnOutput(this, "AggregatorName", { value: worker.functionName });
   }
 }

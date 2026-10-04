@@ -15,8 +15,9 @@ execution candles → a bounded authenticated loopback HTTP response. A fresh
 Parquet-only rebuild produces identical results. CI now runs this proof both on
 the runner and in the Lambda Node 24 Linux image.
 
-No production collection, cloud aggregation worker, deployed candle API, measured
-cost claim, or historical backfill has shipped. Steps 2 and 3 remain incomplete.
+The cloud worker and atomic publication path are now implemented and packaged in
+the dedicated stack. Neither collector nor worker has been deployed. The candle
+API, measured production cost, and historical backfill remain unfinished.
 
 ## Which events are captured?
 
@@ -124,8 +125,17 @@ The live start block is an explicit deployment input; earlier history is missing
   The latter permits durable rebuild verification without requiring a future
   gzip implementation to produce byte-identical compressed output. This is a
   predeployment format tightening; no legacy manifest fallback is provided.
-- Pending aggregation: `pk=work:<digest>, sk=range:<16-digit-start>`; no worker
-  consumes this until step 2. Never delete it merely because aggregation is absent.
+- Pending aggregation: `pk=work:<digest>, sk=range:<16-digit-start>`; the worker
+  marks it `done` in the same transaction that publishes candles and progress.
+- Aggregation progress/lease: `pk=scope:<digest>, sk=aggregation`. The cursor is
+  independent of collection. A random owner and three-minute lease fence writes.
+- Five-minute candles: `pk=candles:<scope>:<pool-id>:300`, timestamp padded to
+  16 digits in `sk`. Records include source revision, metadata revision, and
+  through-block; volume is replaced, never incremented.
+- Canonical derived partitions: `pk=partitions:<scope>, sk=range:<16-digit-start>`.
+  Only references from these committed records are visible. Objects under
+  `derived/<scope>/<from>-<to>/<sha256>/` are immutable Parquet/evidence objects.
+  Listing that prefix alone also finds orphan candidates and is not a dataset.
 - Daily allowance: `pk=budget:base-history, sk=YYYY-MM-DD` in UTC. Only these
   accounting rows have a 90-day TTL. Manifests/cursors/archive do not expire.
 
@@ -222,14 +232,19 @@ Required deploy inputs:
   provider prices and the operator's monthly budget.
 - `FAME_HISTORY_POOL_STATE_TABLE`: existing pool-state table for observations.
 
-The dedicated stack immediately schedules collection every five minutes upon
-deployment. There is no feature flag. It retains a private/versioned S3 bucket and
+The dedicated stack immediately schedules collection every five minutes and
+aggregation every minute upon deployment. There is no feature flag. It retains a private/versioned S3 bucket and
 on-demand DynamoDB table on removal. A 512 MiB, five-minute Lambda has reserved
 concurrency one, bounded invocation work, no automatic Lambda retries, a failure
 queue, and passive error/throttle/failure-depth/missed-invocation/coverage-lag
 alarms. Successful invocations emit coverage-lag, request-count, and response-byte
 metrics; failed collection attempts log bounded request metrics and a fixed error
 code, never the provider message. No NAT gateway is created.
+The separate x86-64 container aggregator has 512 MiB, a two-minute timeout,
+reserved concurrency one, no automatic retries, the shared failure queue, and
+error/throttle/missed-invocation alarms. It reads raw objects and writes verified
+derived objects and DynamoDB records; it has no RPC secret or pool-state access.
+Both functions are enabled by the same explicit CI deployment.
 Passive alarms do not notify anyone; wire an approved destination if notifications
 are required. Never present a synthesized template as deployment evidence.
 
@@ -420,13 +435,102 @@ real collector bundle import. Root type checking, deploy build, workflow YAML
 parsing, and whitespace checks passed. CI itself has not run. The existing
 collector bundle remains independent of the native analytics runtime.
 
-Remaining work before production history can be offered: a leased cloud worker
-consuming committed pending work; canonical input/revision reconciliation;
-atomic publication of Parquet partitions and DynamoDB chart records; production
-API/auth integration; serving retention and rollup materialization; busy-window
-and deployed cost tests; deployed ABI verification; and resumable historical
-backfill/repair tooling. The current container is a reproducible native-runtime
-proof, not a deployed Lambda handler. Production activation remains on hold.
+Remaining work before production history can be offered: production API/auth
+integration; serving retention and rollup materialization; busy-window and
+deployed cost tests; deployed ABI verification; and resumable historical
+backfill/repair tooling. The next section records the worker/publication milestone.
+
+### Cloud worker and atomic publication milestone, 2026-10-03
+
+`worker.ts` consumes one sequential committed range per invocation. It loads
+earlier adjacent archives until it can recompute the first affected five-minute
+bucket without dropping earlier trades. It uses the existing verified DuckDB
+pipeline; missing context, overlapping inputs, unexpected hashes, and excessive
+work fail without advancing progress. Only affected five-minute candles publish.
+Hourly/daily materialization is deferred; the local analytical core still supports
+those resolutions, but the cloud worker does not publish incomplete replacements
+for larger buckets.
+
+The canonical Parquet partition contains events from the target range only.
+Earlier context affects candle computation but is never duplicated into that
+partition. The evidence sidecar preserves raw range checksums and source
+liquidity observations for a later rebuild. Objects upload with conditional
+creation and SHA-256 verification. A single DynamoDB transaction then checks the
+active scope, target manifest checksum, lease owner/expiry, expected aggregation
+cursor, pinned decoder/metadata revision, and pending work identity. That same
+transaction publishes every affected candle, the partition references, completed
+work status, and next cursor. Publication is all-or-nothing. The future API must
+still choose suitable read consistency: multiple reads spanning a concurrent
+commit are not automatically a snapshot merely because the writer is atomic.
+
+The bounded live worker allows eight input archives, 10,000 combined events, and
+90 affected pool/candle records per transaction (95 total operations). The default
+500-block collector range is intended to fit this limit. A larger custom range
+or extremely fragmented input can fail this limit: it does not silently split,
+skip, or label incomplete data as complete. Sustained busy-window sizing remains
+an acceptance item. There is no automatic canonical repair or metadata migration;
+a decoder/metadata change stops with a rebuild requirement. No compatibility
+path for earlier experimental formats has been added.
+
+Token order/decimals are pinned in `src/fame-market-history/token-metadata.json`,
+with the on-chain anchor/provisional-review provenance from the captured sample.
+Assumption: these deployed tokens' decimals and pool token identities remain
+stable. A registry mismatch fails validation. The worker does not spend RPC calls
+rechecking them on every run. Before changing a deployment's metadata, review the
+contracts and implement the corresponding explicit rebuild. Do not present the
+provisional family decoder as verified for every deployed contract.
+
+Failure behavior:
+
+- Crash before publication: uploaded candidates remain unreferenced, pending
+  work remains pending, and the next worker retries after the lease expires.
+- Transaction succeeds but the response is lost: the next invocation reads the
+  advanced checkpoint and cannot duplicate the completed range's volume.
+- Expired or replaced worker: conditional publication rejects its entire write.
+- Collector commits while the worker reads pending work: a DynamoDB transactional
+  read obtains work, cursor, and manifest together, avoiding a false missing-work
+  error caused by independently timed reads.
+- No pending range: release the lease and return caught-up. Polling uses bounded
+  key reads, never a DynamoDB scan. Publication retains work records as evidence.
+
+Reproduce the actual transaction rehearsal using a disposable local database:
+
+```sh
+# Terminal 1, foreground; stop with Ctrl-C after the rehearsal.
+docker run --rm -p 127.0.0.1:18001:8000 \
+  amazon/dynamodb-local@sha256:ff89bd48ff32cd8d9be5fee8873b65b8854dc408f1afe881be6eb00247bc0dab \
+  -jar DynamoDBLocal.jar -inMemory -sharedDb
+
+# Terminal 2, repository root.
+yarn nodets scripts/market-history/worker-rehearse.ts
+```
+
+This uses real DynamoDB Local transactions and native DuckDB, with an in-memory
+S3 adapter. It requires a loopback endpoint, supplies dummy credentials, creates
+one uniquely named table, and deletes it afterward. It verifies interrupted
+publication, stale-owner rejection, lost-response recovery, exact cross-range
+volume, and nonoverlapping Parquet partitions. It does not test AWS IAM or real
+S3 durability. CI runs this rehearsal using the pinned database image.
+
+The container now has a production `runtime` stage with `index.handler` and a
+separate `proof` stage. The proof imports the actual worker bundle/metadata before
+running the existing offline event-to-HTTP fixture. The Linux run passed within
+512 MiB (883 ms for the fixture pipeline; 252,727,296 RSS bytes at completion).
+This remains a small local fixture measurement, not a deployed Lambda cost test.
+
+Local checks: 398 root tests, root type checking, three history CDK tests including
+collector bundle import and worker infrastructure, deploy build, and the actual
+DynamoDB Local rehearsal passed. A fifth bounded Grok attempt returned no findings
+before its three-minute timeout and was stopped/joined; independent review remains
+outstanding. CI/deployment status is separate from these local results.
+
+Activation follows review/merge and the existing manual CI dispatch. Choose a
+recent finalized start for live collection; backfill is deferred. Resolve the
+daily request allowance against the monthly target before dispatch. After deploy,
+verify collector `archived` and worker `published` logs, aggregation progress
+catching the collector cursor, committed partition checksums, and candle coverage.
+Both Lambda names, bucket, and table are stack outputs. A public history endpoint
+is still a separate next increment.
 
 ## Source references
 
