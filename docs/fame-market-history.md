@@ -6,11 +6,35 @@ The approved plan is `docs/plans/2026-10-03-001-feat-affordable-market-history-p
 This first increment implements a bounded Base log collector, lossless compressed
 S3 batches, atomic DynamoDB manifests/cursors/pending aggregation work, and
 periodic capture of existing liquidity state. It has a separate CDK stack entrypoint.
-It does not alter the quote poller or notifier, and deploying the existing bot
-stack does not deploy this service.
+It does not alter the quote poller or notifier. The `Market history` GitHub Actions
+workflow deploys the separate `FameMarketHistory` stack; the existing bot stack's
+deployment does not deploy this service.
 
 No production collection, measured cost claim, candle API, Parquet job, or
 historical backfill has shipped. Steps 2 and 3 remain outstanding.
+
+## Which events are captured?
+
+`eth_getLogs` filters by the emitting contract address, not the transaction's
+destination or caller. A wallet calling a router, which internally calls one of
+the registered pools, produces pool logs that this collector captures. Nested
+calls do not require transaction traces or per-transaction receipts. Reverted
+calls leave no persistent logs. Under `DELEGATECALL`, the log emitter is the
+calling execution context (for example the proxy), not the implementation.
+
+Logs emitted by a token contract, router, position manager, or unrelated pool
+are not automatically included merely because they participated in the same
+transaction. The current scope archives all logs from the five pool addresses.
+That preserves pool swap and liquidity events for the planned per-pool charts;
+it does not claim a wallet ledger, router attribution, or all FAME transfers.
+Shared-manager venues such as V4 need their own emitter plus indexed pool-ID
+filters if added later.
+
+One multi-address log query covers each range, with bounded splitting only when
+required. Header requests are shared by events in the same block. There are no
+per-trade receipts, transaction fetches, traces, or notification enrichments.
+This is a cost-conscious baseline, not a proven optimum: all-address log capture
+retains extra LP-transfer events, and quiet runs still validate boundary headers.
 
 ## Scope and challenged assumptions
 
@@ -127,12 +151,51 @@ counts by method, response bytes, covered prefix, event count, and compressed si
 It still consumes provider quota. Do not load or print a general secret dump to
 prepare the environment. A real dry-run needs AWS read access and the chosen RPC.
 
+Verified local setup on 2026-10-03: Doppler project `fls`, config `dev`, contains
+`BASE_RPC`; the directory's inherited Doppler config was unrelated (`fame-contracts`).
+Specify the project/config explicitly rather than changing global/local defaults
+or loading unrelated secrets. GitHub has both `BASE_RPCS_JSON` and
+`FAME_POOL_STATE_INDEXER_BASE_RPCS_JSON`; GitHub exposes their names, not readable
+values. The deployed indexer's primary endpoint differs from Doppler's `BASE_RPC`.
+
+Reproduce the fixed historical sample locally with Node 24 and a valid
+`fls-power` AWS session (the secret is passed only through the process environment;
+do not enable shell tracing):
+
+```sh
+AWS_PROFILE=fls-power AWS_REGION=us-west-1 \
+FAME_HISTORY_RPC_URL="$(doppler secrets get BASE_RPC --project fls --config dev --plain)" \
+FAME_HISTORY_POOL_STATE_TABLE=Bot-prod-FamePoolState5E3B5F6E-S7X39UX7FUQJ \
+FAME_HISTORY_START_BLOCK=52090000 FAME_HISTORY_MAX_BLOCKS=50000 \
+FAME_HISTORY_MAX_REQUESTS=64 FAME_HISTORY_TABLE= \
+yarn nodets scripts/market-history/rehearse.ts
+```
+
+This is a fixed reproducible test range, not the proposed production start block.
+
 ## Deployment boundary
 
-`deploy/bin/market-history.ts` is a dedicated CDK app; it is not included by the
-existing deployment workflow. After setting the explicit inputs below, prepare
-the template with `yarn cdk --app "yarn history:app" synth` from `deploy/`.
-This only synthesizes; running `deploy` is a separate production action.
+Deployment runs through `.github/workflows/market-history.yml`. Pull requests
+run tests/type checks. After merge, explicitly dispatch `Market history` from
+`main` with the reviewed `start_block` and `daily_requests`. Keep the original
+start block on subsequent deployments; changing it is not a backfill mechanism.
+The workflow uses the existing AWS Actions credentials, verifies account
+`590183914614`, discovers the pool-state table from `Bot-prod` in `us-west-1`,
+and synchronizes the first `FAME_POOL_STATE_INDEXER_BASE_RPCS_JSON` endpoint to
+`/society-bots/market-history/base-rpc` as an SSM SecureString. No new GitHub RPC
+secret is required. SSM publication is a production mutation performed only by
+that deployment job. CI credentials need `ssm:PutParameter` on that path as well
+as the existing CDK deployment permissions; this has not been verified by a run.
+
+`deploy/bin/market-history.ts` remains the dedicated CDK app. Local
+`yarn cdk --app "yarn history:app" synth` from `deploy/` only prepares a template
+after setting the inputs below. Production deployment belongs in CI.
+
+**There is no history HTTP endpoint in this increment.** EventBridge invokes
+the collector every five minutes. The proposed later authenticated chart route
+is `/fame/history` on the existing API (`https://api.fame.support/fame/history`);
+that route is not implemented or deployed. Existing `/fame/pool-state` and
+`/fame/pool-quotes` routes serve current state/quotes, not historical charts.
 Required deploy inputs:
 
 - `CDK_DEFAULT_ACCOUNT`, `CDK_DEFAULT_REGION`.
@@ -177,7 +240,9 @@ Local validation under Node 24.16.0: all 369 root tests passed (36 suites),
 including 39 history tests; all three history CDK tests passed, including actual
 bundled Lambda import. Root `yarn types`, deploy `yarn build`, and `git diff
 --check` passed. CDK tests synthesize the dedicated construct with dummy inputs;
-they do not validate an AWS deployment. No live RPC/AWS rehearsal has run.
+they do not validate an AWS deployment. Live read-only results follow below.
+The CI follow-up adds nine passing secret-configuration tests; root `yarn types`
+and workflow YAML parsing also pass. The GitHub workflow itself has not run.
 
 Implementation review challenged these assumptions and added regression coverage:
 
@@ -200,19 +265,56 @@ and joined. Startup logs included unrelated MCP authentication failures, but the
 cause of the stalled model response was not established. No independent approval
 is claimed; rerun that review before production activation.
 
-Operator assistance requested: monthly budget, AWS profile/account, existing
-pool-state table, and approved RPC SSM parameter reference (never its secret
-value). Those inputs are unavailable in the current environment. Independent
-event-source comparison and deployed ABI/decimal verification remain outstanding.
-Do not progress to production activation or claim step 1 acceptance from local
-test results alone. The dedicated CDK app also synthesized successfully with
+The user directed discovery of existing GitHub/Doppler credentials. AWS profile,
+account, pool-state table, and RPC references are now resolved. The exact monthly
+budget, sustained cost/catch-up measurements, deployed ABI/decimal verification,
+and independent review remain outstanding. Do not claim full step 1 acceptance
+from these bounded samples. The dedicated CDK app also synthesized successfully with
 dummy account/table/parameter inputs and lookups disabled; no resources were
 created.
+
+### Live read-only rehearsal, 2026-10-03
+
+All runs used the unchanged `yarn nodets scripts/market-history/rehearse.ts` entrypoint
+and read existing liquidity rows. They made no S3/DynamoDB/SSM writes and no deployment.
+
+| Source | Inclusive blocks | Events | RPC calls | Response bytes | Compressed candidate |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Doppler `fls/dev BASE_RPC` | 52140000–52140499 | 0 | 7 | 51,142 | 3,086 bytes |
+| Doppler `fls/dev BASE_RPC` | 52135000–52139999 | 0 | 7 | 48,934 | 3,085 bytes |
+| Deployed pool-state indexer primary RPC | 52090000–52139999 | 17 | 13 | 151,302 | 5,075 bytes |
+
+The eventful run took 9.74 seconds including TypeScript startup: one `eth_getLogs`,
+eleven block-header requests, and one chain-ID request. Seventeen means raw pool
+events, not seventeen trades. Two diagnostic log queries against both endpoints
+returned the same 17 events, agreeing on emitting address, block identity,
+transaction identity/order, log index, topics, data, and removed status. This is
+agreement between configured endpoints; independent underlying infrastructure
+has not been established.
+
+One diagnostic transaction fetch confirmed nested-call capture: transaction
+`0x5c6042102156ea0b3cfaf5703a81671c7ae140048b63922a9fafc1cbe647dbe7`
+targets `0x0000000000001ff3684f28c67538d4d072c22734`, while a returned log was emitted
+by the tracked SCALE/FAME pool `0xbbf6e67f14ed21884d9e12505a9b979fc42808be`.
+This transaction lookup was validation only; ingestion does not fetch transactions.
+
+The initial near-head attempt made two preflight requests and two collector requests,
+but scanned no range: preflight reported finalized block 52142739, followed by
+52142578 from the same endpoint. The first finalized timestamp was 1,098 seconds
+old. Subsequent fixed ranges avoided this head disagreement. A committed cursor
+ahead of a regressed finalized head fails closed; an unstarted scope may simply
+wait for its configured start. Finalized semantics/lag and sustained throughput
+still need monitoring before claiming a five-minute chart freshness bound.
+
+These samples prove the configured RPC accepts combined pool-address queries and
+that both empty and eventful dry runs complete. They do not measure monthly bills,
+busy-market throughput, decoder correctness, or live S3 publication permissions.
 
 ## Source references
 
 - [Uniswap V2 pair](https://github.com/Uniswap/v2-core/blob/master/contracts/UniswapV2Pair.sol)
 - [Slipstream events](https://github.com/aerodrome-finance/slipstream/blob/main/contracts/core/interfaces/pool/ICLPoolEvents.sol)
+- [eth_getLogs address/range semantics](https://www.alchemy.com/docs/chains/ethereum/ethereum-api-endpoints/eth-get-logs)
 
 These source references are family-level context, not proof of deployed-bytecode
 equivalence for every pool.

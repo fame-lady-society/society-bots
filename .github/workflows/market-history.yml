@@ -1,0 +1,106 @@
+name: Market history
+
+on:
+  pull_request:
+    paths:
+      - "src/fame-market-history/**"
+      - "src/fame-swap-pool-state/registry/**"
+      - "scripts/market-history/**"
+      - "deploy/lib/fame-market-history.ts"
+      - "deploy/bin/market-history.ts"
+      - "deploy/test/fame-market-history.test.ts"
+      - "package.json"
+      - "yarn.lock"
+      - "deploy/package.json"
+      - "deploy/yarn.lock"
+      - ".github/workflows/market-history.yml"
+  workflow_dispatch:
+    inputs:
+      start_block:
+        description: "Reviewed initial finalized block (keep the original value on updates)"
+        required: true
+        type: string
+      daily_requests:
+        description: "Daily RPC request allowance from the measured budget"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+      - run: corepack enable
+      - name: Install native build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libcairo2-dev libjpeg-dev libpango1.0-dev libgif-dev librsvg2-dev
+      - run: yarn install --frozen-lockfile --non-interactive
+      - run: yarn install --frozen-lockfile --non-interactive
+        working-directory: deploy
+      - run: yarn test --runInBand src/fame-market-history scripts/market-history
+      - run: yarn types
+      - run: yarn test --runInBand test/fame-market-history.test.ts
+        working-directory: deploy
+      - run: yarn build
+        working-directory: deploy
+      - name: Validate deployment inputs
+        if: github.event_name == 'workflow_dispatch'
+        working-directory: deploy
+        env:
+          CDK_DEFAULT_ACCOUNT: "590183914614"
+          CDK_DEFAULT_REGION: us-west-1
+          FAME_HISTORY_RPC_PARAMETER: /society-bots/market-history/base-rpc
+          FAME_HISTORY_POOL_STATE_TABLE: validation-only
+          FAME_HISTORY_START_BLOCK: ${{ inputs.start_block }}
+          FAME_HISTORY_DAILY_REQUESTS: ${{ inputs.daily_requests }}
+        run: yarn cdk --app 'yarn history:app' synth --no-lookups --quiet
+
+  deploy:
+    needs: validate
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: market-history-production
+      cancel-in-progress: false
+    env:
+      CDK_DEFAULT_ACCOUNT: "590183914614"
+      CDK_DEFAULT_REGION: us-west-1
+      FAME_HISTORY_RPC_PARAMETER: /society-bots/market-history/base-rpc
+      FAME_HISTORY_START_BLOCK: ${{ inputs.start_block }}
+      FAME_HISTORY_DAILY_REQUESTS: ${{ inputs.daily_requests }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+      - run: corepack enable
+      - name: Install native build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libcairo2-dev libjpeg-dev libpango1.0-dev libgif-dev librsvg2-dev
+      - run: yarn install --frozen-lockfile --non-interactive
+      - run: yarn install --frozen-lockfile --non-interactive
+        working-directory: deploy
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-west-1
+      - name: Verify account and discover existing pool-state table
+        run: |
+          test "$(aws sts get-caller-identity --query Account --output text)" = "$CDK_DEFAULT_ACCOUNT"
+          TABLE_NAME="$(aws cloudformation describe-stacks --stack-name Bot-prod --query 'Stacks[0].Outputs[?OutputKey==`FamePoolStateFamePoolStateTableName19BB0848`].OutputValue | [0]' --output text)"
+          test -n "$TABLE_NAME" && test "$TABLE_NAME" != None
+          echo "FAME_HISTORY_POOL_STATE_TABLE=$TABLE_NAME" >> "$GITHUB_ENV"
+      - name: Synchronize existing indexer RPC secret to runtime SecureString
+        env:
+          FAME_POOL_STATE_INDEXER_BASE_RPCS_JSON: ${{ secrets.FAME_POOL_STATE_INDEXER_BASE_RPCS_JSON }}
+        run: yarn nodets scripts/market-history/publish-ci-rpc.ts
+      - name: Deploy history stack
+        working-directory: deploy
+        run: yarn cdk --app 'yarn history:app' deploy FameMarketHistory --require-approval never
