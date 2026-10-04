@@ -5,7 +5,6 @@ import { historyScope, integer } from "./model.ts";
 import { aggregateNext } from "./worker.ts";
 import { awsAggregation } from "./worker-storage.ts";
 import type { TokenMetadata } from "./decode.ts";
-import { telemetry } from "./observability.ts";
 import { failureCode } from "./failure.ts";
 
 export const tokenMetadata: TokenMetadata = JSON.parse(
@@ -32,24 +31,12 @@ export async function handler(_event: unknown, context: Context) {
       store: awsAggregation({ table, bucket }),
     });
     console.log(
-      JSON.stringify(
-        telemetry(
-          "fame-history-aggregation",
-          {
-            AggregationPublishedRanges: result.status === "published" ? 1 : 0,
-            AggregationBusyRuns: result.status === "busy" ? 1 : 0,
-            ...("aggregationLagBlocks" in result
-              ? { AggregationLagBlocks: result.aggregationLagBlocks }
-              : {}),
-          },
-          result,
-        ),
-      ),
+      JSON.stringify({ event: "fame-history-aggregation", ...result }),
     );
     return result;
   } catch (error) {
     // SDK error text may contain credentials or request details. Leave the
-    // checkpoint intact and let the failure destination/alarms expose failure.
+    // checkpoint intact and retain failure evidence for operator inspection.
     console.error(
       JSON.stringify({
         event: "fame-history-aggregation-failed",

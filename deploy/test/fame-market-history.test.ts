@@ -74,13 +74,9 @@ test("history deploy is retained, private, bounded, and independent of bot stack
     ScheduleExpression: "rate(1 minute)",
   });
   template.resourceCountIs("AWS::Lambda::Function", 2);
-  template.resourceCountIs("AWS::CloudWatch::Dashboard", 1);
-  template.hasResourceProperties("AWS::CloudWatch::Alarm", {
-    MetricName: "RpcRequests",
-    Period: 3600,
-    Threshold: 2000,
-    AlarmActions: Match.absent(),
-  });
+  template.resourceCountIs("AWS::CloudWatch::Dashboard", 0);
+  template.resourceCountIs("AWS::CloudWatch::Alarm", 0);
+  template.resourceCountIs("AWS::Logs::MetricFilter", 0);
   expect(JSON.stringify(template.toJSON())).not.toContain(
     "FAME_HISTORY_DAILY_REQUESTS",
   );

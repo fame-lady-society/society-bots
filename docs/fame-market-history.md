@@ -86,11 +86,13 @@ retains extra LP-transfer events, and quiet runs still validate boundary headers
    and therefore create a different object; only the winning manifest is visible.
 7. **Cost awareness never gates collection.** There is no daily request ledger or
    daily/monthly cutoff. Each attempt records request counts by method, response
-   bytes, progress, yields, and failures through CloudWatch embedded metrics;
-   viem retries are disabled. These are best-effort operational signals, not a
-   billing ledger: hard termination can lose final metrics, and rehearsal/other
-   pollers are outside this production series. Compare against provider usage and
-   AWS billing, including telemetry, requests, SSM, and storage/version growth.
+   bytes, progress, yields, and failures in ordinary structured diagnostic logs;
+   viem retries are disabled. These are best-effort records, not a billing ledger:
+   hard termination can lose final logs. No custom CloudWatch metrics, dashboards,
+   or alarms are provisioned. Monitoring is deferred to Overclaw; no integration
+   is added here. Efficiency comes from filtered block-range batches, fetching
+   only necessary headers, committing complete prefixes, and resuming at durable
+   checkpoints. Compare request counts with provider usage when investigating cost.
 8. **No ABI assumptions are required to retain raw logs.** Canonical V2 and
    Slipstream sources support the planned decoder families, but per-deployment
    ABI verification is still needed before production normalized candles. The
@@ -146,7 +148,7 @@ The live start block is an explicit deployment input; earlier history is missing
   already committed cursor is ignored. Manifests/cursors/archive do not expire.
 
 A failed run never commits a partially scanned range. Check the last committed
-cursor, scan window, lag, and failure metrics before retrying. A changed committed block hash requires
+cursor, scan window, lag, and failure logs before retrying. A changed committed block hash requires
 operator investigation and a canonical repair procedure; do not reset the cursor
 or advance it past the problem. Even a caught-up invocation rejects a conflicting
 finalized boundary or a finalized head behind committed coverage.
@@ -240,25 +242,22 @@ Required deploy inputs:
 The dedicated stack immediately schedules collection every five minutes and
 aggregation every minute upon deployment. There is no feature flag. It retains a private/versioned S3 bucket and
 on-demand DynamoDB table on removal. A 512 MiB, five-minute Lambda has reserved
-concurrency one, bounded invocation work, no automatic Lambda retries, a failure
-queue, and passive error/throttle/failure-depth/missed-invocation/coverage-lag
-alarms. Every completed collector attempt emits request-count and response-byte
-metrics, including failures; failures carry a fixed code, never provider messages.
-Results also expose coverage lag, progress, and yields. The dashboard shows RPC
-methods, bytes, collector/worker lag, progress, failures, duration, and queue depth.
-An hourly request-volume alarm (>2,000 requests) and aggregation-lag alarm
-(>5,000 blocks for three five-minute periods) are advisory thresholds, not approved
-spend limits. No alarm actions or notification destinations are configured; alarms
-cannot stop collection. `DashboardName` is a stack output. No NAT gateway is created.
+concurrency one, bounded invocation work, no automatic Lambda retries, and a failure
+queue. Completed collection results log request counts by method, response bytes,
+coverage lag, progress, and yields. Failures log request counts and a fixed code,
+never provider messages. These are ordinary JSON logs with seven-day retention,
+not embedded metric records. No CloudWatch alarms, dashboard, custom metrics, or
+metric filters are created. Standard AWS service metrics remain available.
+No NAT gateway is created.
 The separate x86-64 container aggregator has 512 MiB, a two-minute timeout,
-reserved concurrency one, no automatic retries, the shared failure queue, and
-error/throttle/missed-invocation alarms. It reads raw objects and writes verified
+reserved concurrency one, no automatic retries, and the shared failure queue.
+It logs outcomes and lag, reads raw objects, and writes verified
 derived objects and DynamoDB records; it has no RPC secret or pool-state access.
 Both functions are enabled by the same explicit CI deployment.
-Passive alarms do not notify anyone; wire an approved destination if notifications
-are required. Never present a synthesized template as deployment evidence.
+Monitoring and notifications are deferred to Overclaw. No new monitor, schedule,
+or integration is included. Never present a synthesized template as deployment evidence.
 
-Before deploying: agree the dollar target, verify provider finalized/range behavior,
+Before deploying: verify provider finalized/range behavior,
 cross-check sample event identities, project actual provider/AWS cost, and demonstrate
 catch-up rate exceeds new block production. No cost soak has occurred yet.
 
@@ -269,7 +268,7 @@ and deploy build. Tests exercise upload/checkpoint crash boundaries, empty range
 canonical identity, exact byte preservation, duplicate conflicts, provider failures,
 invocation resource bounds, busy-range prefixes, and private/retained infrastructure.
 
-An external review must challenge event completeness, telemetry accounting, failure
+An external review must challenge event completeness, request efficiency, failure
 visibility, native runtime assumptions for step 2, and whether the actual measured
 budget can sustain the requested scope. Keep its findings and resolutions here.
 
@@ -536,7 +535,7 @@ outstanding. CI/deployment status is separate from these local results.
 
 Activation follows review/merge and the existing manual CI dispatch. Choose a
 recent finalized start for live collection; backfill is deferred. Inspect the
-operational dashboard and observed provider usage after dispatch. After deploy,
+diagnostic logs and observed provider usage after dispatch. After deploy,
 verify collector `archived` and worker `published` logs, aggregation progress
 catching the collector cursor, committed partition checksums, and candle coverage.
 Both Lambda names, bucket, and table are stack outputs. A public history endpoint
@@ -577,6 +576,17 @@ The offline Lambda Linux proof passed under 512 MiB: 17 events, five trades,
 matching Parquet-only rebuild and HTTP 200 (842 ms, 251,224,064 RSS bytes).
 Security, adversarial, and simplification follow-up reviews found no remaining
 blocker in these changes. No deployment or production writes were performed.
+
+The operator subsequently clarified that the requirement is efficient algorithms
+and batching, with monitoring eventually handled by Overclaw. Removed all ten
+CloudWatch alarms, the dashboard, and the twelve custom metric series/EMF emitter.
+Ordinary structured logs, existing checkpoints, and the failure queue retain
+diagnostic evidence. Log ingestion/storage still has normal usage-based costs;
+this change adds no dedicated paid monitoring resources. The collector batching,
+adaptive range recovery, and candle-boundary fixes remain intact.
+Validation after removal: all 78 history/script tests, root type checking, three
+history CDK tests, and deploy build passed. The CDK checks explicitly assert zero
+alarms, dashboards, and metric filters.
 
 ## Source references
 

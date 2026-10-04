@@ -1,10 +1,9 @@
 import { famePoolStateRegistry } from "../fame-swap-pool-state/registry/index.ts";
-import { collect, type CollectResult } from "./collector.ts";
+import { collect } from "./collector.ts";
 import { historyScope, integer } from "./model.ts";
 import { boundedTransport, chainReader } from "./rpc.ts";
 import { awsArchive } from "./storage.ts";
 import { failureCode } from "./failure.ts";
-import { collectorTelemetry } from "./observability.ts";
 
 function required(env: NodeJS.ProcessEnv, key: string): string {
   const value = env[key]?.trim();
@@ -59,10 +58,8 @@ export async function runHistory(
       nextBlock: startBlock,
       previousHash: null,
     });
-  let result: CollectResult | undefined;
-  let code: string | undefined;
   try {
-    result = await collect({
+    const result = await collect({
       chain,
       store,
       scope,
@@ -77,23 +74,17 @@ export async function runHistory(
       scopePools: scope.pools.map((p) => p.id),
     };
   } catch (error) {
-    code = failureCode(error);
     // Preserve cost evidence on failed runs without emitting SDK messages/URLs.
     console.error(
       JSON.stringify({
         event: "fame-history-attempt-failed",
-        code,
+        code: failureCode(error),
         scopeId: scope.id,
         metrics: rpc.metrics,
       }),
     );
     throw new Error(
-      "History collection failed; inspect operational metrics and last committed range",
+      "History collection failed; inspect diagnostic logs and last committed range",
     );
-  } finally {
-    if (!dryRun)
-      console.log(
-        JSON.stringify(collectorTelemetry(rpc.metrics, result, code)),
-      );
   }
 }

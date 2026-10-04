@@ -140,7 +140,7 @@ Use existing RPC first. Benchmark HyperSync as a possible one-time bulk source i
 
 No claim that the previous $2–3+/day bill was caused by one particular component: billing attribution remains unverified. Avoid repeating known expensive patterns: full CL reconstruction, broad PoolManager scans, per-trade enrichment, repeated timestamp reads, and raw-payload logging.
 
-Use one chain/pool-filtered collection run every five minutes initially. Configure bounded request attempts, range size, response bytes, retry count, and invocation duration. Persist remaining work when invocation resources are exhausted; expose lag rather than discarding data. Per the operator's 2026-10-04 decision, cost monitoring is soft: no daily/monthly cutoff and no request reservation ledger. Emit method counts, bytes, yields, failures, progress and lag; provide a dashboard and advisory alarms. Price-weight methods when estimating spend; a request counter is not a universal dollar cap.
+Use one chain/pool-filtered collection run every five minutes initially. Configure bounded request attempts, range size, response bytes, retry count, and invocation duration. Persist remaining work when invocation resources are exhausted; expose lag rather than discarding data. Per the operator's 2026-10-04 clarification, prioritize efficient algorithms and batching. Keep method counts, bytes, yields, failures, progress and lag in ordinary diagnostic logs. No daily/monthly cutoff, request reservation ledger, custom CloudWatch metrics, dashboard, or alarms. Monitoring is deferred to Overclaw; do not build that integration in this increment. Price-weight methods when estimating spend; a request counter is not a universal dollar cap.
 
 Proposed planning target: **at most $10/month incremental ongoing cost** for the initial reviewed pool scope, excluding the separately estimated one-time backfill. This is an unverified design target, not a spending cutoff or deployment input. Monitor actual provider/AWS usage and adjust with the operator; never automatically suspend collection on cost thresholds. Do not use free credits to disguise steady-state economics.
 
@@ -189,7 +189,7 @@ Acceptance: adjacent live/backfilled ranges produce continuous verified coverage
 - Backfill/compaction retry and overlap do not duplicate events, volume, or files in the active dataset.
 - Quiet intervals, missing intervals, and partial intervals have distinct API results.
 - Request/retry resource bounds and worker deadlines yield safely with persistent progress; repeated bounded runs must advance. Cost thresholds are advisory only. Logs contain no secrets or event payload dumps.
-- CDK asserts private retained S3, scoped IAM, on-demand table, bounded schedules/concurrency, log retention, failure destinations, and useful lag/failure metrics.
+- CDK asserts private retained S3, scoped IAM, on-demand table, bounded schedules/concurrency, log retention, failure destinations, and absence of dedicated paid monitoring resources. Diagnostic logs preserve lag/failure information.
 
 Run focused Jest tests for changed modules, `yarn types`, deploy tests/build, and CDK synthesis for affected stacks using the repository's installed tooling. Verify the DuckDB container with actual native execution and representative fixtures; mocks alone are insufficient. No Rust/Bun runtime checks apply to this TypeScript-only repository unless the implementation expands into those runtimes.
 

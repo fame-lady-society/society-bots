@@ -6,7 +6,6 @@ import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as destinations from "aws-cdk-lib/aws-lambda-destinations";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as sqs from "aws-cdk-lib/aws-sqs";
-import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
 import { Construct } from "constructs";
 import { buildSync } from "esbuild";
 import { copyFileSync, readFileSync } from "node:fs";
@@ -184,151 +183,9 @@ export class FameMarketHistory extends Construct {
       schedule: events.Schedule.rate(cdk.Duration.minutes(1)),
       targets: [new targets.LambdaFunction(worker, { retryAttempts: 0 })],
     });
-    for (const [name, metric] of [
-      ["AggregationErrors", worker.metricErrors()],
-      ["AggregationThrottles", worker.metricThrottles()],
-    ] as const)
-      new cloudwatch.Alarm(this, `${name}Alarm`, {
-        metric,
-        threshold: 1,
-        evaluationPeriods: 1,
-        treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
-      });
-    new cloudwatch.Alarm(this, "AggregationMissedInvocationsAlarm", {
-      metric: worker.metricInvocations({
-        period: cdk.Duration.minutes(5),
-        statistic: "Sum",
-      }),
-      threshold: 1,
-      evaluationPeriods: 1,
-      comparisonOperator: cloudwatch.ComparisonOperator.LESS_THAN_THRESHOLD,
-      treatMissingData: cloudwatch.TreatMissingData.BREACHING,
-    });
-    for (const [name, metric] of [
-      ["Errors", collector.metricErrors()],
-      ["Throttles", collector.metricThrottles()],
-      ["Failures", failures.metricApproximateNumberOfMessagesVisible()],
-    ] as const) {
-      new cloudwatch.Alarm(this, `${name}Alarm`, {
-        metric,
-        threshold: 1,
-        evaluationPeriods: 1,
-        treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
-      });
-    }
-    new cloudwatch.Alarm(this, "CoverageLagAlarm", {
-      metric: new cloudwatch.Metric({
-        namespace: "Society/FameMarketHistory",
-        metricName: "CoverageLagBlocks",
-        statistic: "Maximum",
-        period: cdk.Duration.minutes(5),
-      }),
-      threshold: 5000,
-      evaluationPeriods: 3,
-      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
-    });
-    new cloudwatch.Alarm(this, "MissedInvocationsAlarm", {
-      metric: collector.metricInvocations({
-        period: cdk.Duration.minutes(15),
-        statistic: "Sum",
-      }),
-      threshold: 1,
-      comparisonOperator: cloudwatch.ComparisonOperator.LESS_THAN_THRESHOLD,
-      evaluationPeriods: 1,
-      treatMissingData: cloudwatch.TreatMissingData.BREACHING,
-    });
     new cdk.CfnOutput(this, "BucketName", { value: bucket.bucketName });
     new cdk.CfnOutput(this, "TableName", { value: table.tableName });
     new cdk.CfnOutput(this, "CollectorName", { value: collector.functionName });
     new cdk.CfnOutput(this, "AggregatorName", { value: worker.functionName });
-    const historyMetric = (
-      metricName: string,
-      statistic = "Sum",
-      period = cdk.Duration.minutes(5),
-    ) =>
-      new cloudwatch.Metric({
-        namespace: "Society/FameMarketHistory",
-        metricName,
-        statistic,
-        period,
-      });
-    new cloudwatch.Alarm(this, "RequestVolumeAlarm", {
-      alarmDescription:
-        "History RPC attempts exceeded 2000 in an hour. Investigate usage and provider cost; this alarm never stops collection.",
-      metric: historyMetric("RpcRequests", "Sum", cdk.Duration.hours(1)),
-      threshold: 2000,
-      evaluationPeriods: 1,
-      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
-    });
-    new cloudwatch.Alarm(this, "AggregationLagAlarm", {
-      alarmDescription:
-        "Published candles are more than 5000 blocks behind collected history.",
-      metric: historyMetric("AggregationLagBlocks", "Maximum"),
-      threshold: 5000,
-      evaluationPeriods: 3,
-      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
-    });
-    const dashboard = new cloudwatch.Dashboard(this, "Operations", {
-      defaultInterval: cdk.Duration.days(1),
-    });
-    dashboard.addWidgets(
-      new cloudwatch.TextWidget({
-        width: 24,
-        height: 2,
-        markdown:
-          "# FAME history operations\nUsage and lag are informational: no daily cutoff or automatic shutdown. Request counts are not provider credits or dollars. Alarm notifications require an operator-configured destination.",
-      }),
-      new cloudwatch.GraphWidget({
-        title: "RPC attempts (includes failed calls)",
-        width: 12,
-        left: [
-          historyMetric("RpcRequests"),
-          historyMetric("RpcGetLogsRequests"),
-          historyMetric("RpcHeaderRequests"),
-          historyMetric("RpcChainIdRequests"),
-        ],
-      }),
-      new cloudwatch.GraphWidget({
-        title: "Response bytes and collection progress",
-        width: 12,
-        left: [historyMetric("ResponseBytes")],
-        right: [historyMetric("CollectionProgressBlocks")],
-      }),
-      new cloudwatch.GraphWidget({
-        title: "Collection and aggregation lag (blocks)",
-        width: 12,
-        left: [
-          historyMetric("CoverageLagBlocks", "Maximum"),
-          historyMetric("AggregationLagBlocks", "Maximum"),
-        ],
-      }),
-      new cloudwatch.GraphWidget({
-        title: "Failures, yields, and worker activity",
-        width: 12,
-        left: [
-          historyMetric("CollectionFailures"),
-          historyMetric("CollectionYields"),
-          historyMetric("AggregationPublishedRanges"),
-          historyMetric("AggregationBusyRuns"),
-        ],
-      }),
-      new cloudwatch.GraphWidget({
-        title: "Lambda errors and failure queue",
-        width: 12,
-        left: [
-          collector.metricErrors(),
-          worker.metricErrors(),
-          failures.metricApproximateNumberOfMessagesVisible(),
-        ],
-      }),
-      new cloudwatch.GraphWidget({
-        title: "Lambda duration (ms)",
-        width: 12,
-        left: [collector.metricDuration(), worker.metricDuration()],
-      }),
-    );
-    new cdk.CfnOutput(this, "DashboardName", {
-      value: dashboard.dashboardName,
-    });
   }
 }

@@ -33,7 +33,7 @@ export async function handler(
       JSON.stringify({
         event: "fame-history-failed",
         message:
-          "Collection stopped. Inspect operational metrics and last committed coverage; provider details suppressed.",
+          "Collection stopped. Inspect diagnostic logs and last committed coverage; provider details suppressed.",
       }),
     );
     throw new Error("FAME history collection failed");
