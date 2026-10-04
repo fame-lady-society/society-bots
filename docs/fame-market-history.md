@@ -10,8 +10,13 @@ It does not alter the quote poller or notifier. The `Market history` GitHub Acti
 workflow deploys the separate `FameMarketHistory` stack; the existing bot stack's
 deployment does not deploy this service.
 
-No production collection, measured cost claim, candle API, Parquet job, or
-historical backfill has shipped. Steps 2 and 3 remain outstanding.
+The next local increment verifies captured raw data → native DuckDB → Parquet →
+execution candles → a bounded authenticated loopback HTTP response. A fresh
+Parquet-only rebuild produces identical results. CI now runs this proof both on
+the runner and in the Lambda Node 24 Linux image.
+
+No production collection, cloud aggregation worker, deployed candle API, measured
+cost claim, or historical backfill has shipped. Steps 2 and 3 remain incomplete.
 
 ## Which events are captured?
 
@@ -83,7 +88,9 @@ retains extra LP-transfer events, and quiet runs still validate boundary headers
    headers, provider method weights, and storage/version growth need measurement.
 8. **No ABI assumptions are required to retain raw logs.** Canonical V2 and
    Slipstream sources support the planned decoder families, but per-deployment
-   ABI/token-decimal verification is still needed before normalized candles.
+   ABI verification is still needed before production normalized candles. The
+   local fixture pins on-chain token order and decimals at a recorded block/hash;
+   its decoder is explicitly provisional.
    Blockscout ABI lookup on 2026-10-03 returned exhausted PRO credits; no equivalent
    live validation is claimed. Request operator assistance if credits or another
    approved verified-source route is needed for that phase.
@@ -98,7 +105,8 @@ Initial inventory (generated identities, no copied pool address list):
 | slipstream-basedflick-fame | Slipstream | All emitting logs |
 | uniswap-v2-fame-direct | UniswapV2 | All emitting logs |
 
-Historical creation blocks and token decimals are deliberately not guessed.
+Historical creation blocks are deliberately not guessed. Token decimals are
+queried at a pinned block for local analysis, never assumed from token symbols.
 The live start block is an explicit deployment input; earlier history is missing.
 
 ## Layout and recovery
@@ -112,6 +120,10 @@ The live start block is an explicit deployment input; earlier history is missing
   collection until an explicit coverage transition is reviewed; they never
   silently restart from the original start block.
 - Manifest: same partition, `sk=range:<16-digit-start>`.
+  It includes both compressed-object SHA-256 and uncompressed-content SHA-256.
+  The latter permits durable rebuild verification without requiring a future
+  gzip implementation to produce byte-identical compressed output. This is a
+  predeployment format tightening; no legacy manifest fallback is provided.
 - Pending aggregation: `pk=work:<digest>, sk=range:<16-digit-start>`; no worker
   consumes this until step 2. Never delete it merely because aggregation is absent.
 - Daily allowance: `pk=budget:base-history, sk=YYYY-MM-DD` in UTC. Only these
@@ -191,10 +203,12 @@ as the existing CDK deployment permissions; this has not been verified by a run.
 `yarn cdk --app "yarn history:app" synth` from `deploy/` only prepares a template
 after setting the inputs below. Production deployment belongs in CI.
 
-**There is no history HTTP endpoint in this increment.** EventBridge invokes
+**There is no deployed history HTTP endpoint.** EventBridge invokes
 the collector every five minutes. The proposed later authenticated chart route
 is `/fame/history` on the existing API (`https://api.fame.support/fame/history`);
-that route is not implemented or deployed. Existing `/fame/pool-state` and
+production integration for that route is not implemented or deployed. The local
+proof serves the same path on an ephemeral loopback port using a random test
+bearer token, then shuts down. Existing `/fame/pool-state` and
 `/fame/pool-quotes` routes serve current state/quotes, not historical charts.
 Required deploy inputs:
 
@@ -267,7 +281,7 @@ is claimed; rerun that review before production activation.
 
 The user directed discovery of existing GitHub/Doppler credentials. AWS profile,
 account, pool-state table, and RPC references are now resolved. The exact monthly
-budget, sustained cost/catch-up measurements, deployed ABI/decimal verification,
+budget, sustained cost/catch-up measurements, deployed ABI verification,
 and independent review remain outstanding. Do not claim full step 1 acceptance
 from these bounded samples. The dedicated CDK app also synthesized successfully with
 dummy account/table/parameter inputs and lookups disabled; no resources were
@@ -309,6 +323,110 @@ still need monitoring before claiming a five-minute chart freshness bound.
 These samples prove the configured RPC accepts combined pool-address queries and
 that both empty and eventful dry runs complete. They do not measure monthly bills,
 busy-market throughput, decoder correctness, or live S3 publication permissions.
+
+### Local analytics and Linux runtime proof, 2026-10-03
+
+The committed fixture is `src/fame-market-history/fixtures/base-52090000-52139999`.
+An explicit capture against the deployed indexer's primary RPC retained 17 raw
+logs, headers, and existing liquidity observations locally. It also queried each
+pool's token order and each unique token's decimals at block 52090000, checking
+the anchor before and after. This capture used 30 RPC calls, 192,291 response
+bytes, and 10.79 seconds including TypeScript startup. It made no AWS writes.
+The fixture README records provenance and limitations.
+
+From the repository root, Node 24 with installed dependencies:
+
+```sh
+yarn nodets scripts/market-history/e2e.ts \
+  src/fame-market-history/fixtures/base-52090000-52139999 \
+  /tmp/fame-history-proof
+```
+
+Choose a new output directory each time. The command verifies manifest checksums,
+decodes events, writes actual ZSTD Parquet, compares every stored column exactly,
+and runs the same `CANDLE_SQL` on raw and Parquet inputs. It then rebuilds in a
+fresh DuckDB instance using only `events.parquet` and `evidence.json`, verifies
+the original raw-content checksums, re-decodes raw payloads, and compares the
+whole dataset. Finally it checks HTTP 401 without authentication, 400 for an
+oversized request, 404 for POST, and an exact 200 response for a trade candle.
+It writes `history.json`, `evidence.json`, `events.parquet`, and `api-example.json`;
+the sibling `-rebuilt` directory holds the independent rebuild. It needs no
+RPC, AWS credentials, or network other than local loopback.
+
+To capture a different bounded sample, supply the same explicit environment as
+the read-only rehearsal and use `yarn nodets scripts/market-history/capture-sample.ts
+/tmp/new-history-sample`. This command consumes RPC quota and reads existing
+liquidity state but writes evidence only to the new local directory. It uses the
+configured initial block, not an existing history cursor. It adds token metadata
+calls to the same request/deadline allowance. A partial local capture is not a
+publishable dataset; `e2e.ts` requires all files and validates their checksums.
+
+Native Lambda Linux proof (no application credentials enter this build context):
+
+```sh
+yarn nodets scripts/market-history/prepare-container.ts /tmp/history-container
+docker build --platform linux/amd64 -t history-runtime-proof /tmp/history-container
+docker run --rm --platform linux/amd64 --network none --memory 512m --cpus 1 \
+  --read-only --tmpfs /tmp:rw,size=256m history-runtime-proof
+```
+
+The tested Node 24 base image resolved to
+`sha256:b5f6c6f20c76dd64924c4d09b1e3eadd91ea59eb3279d63eb99bc9102c61f58f`.
+DuckDB Node API is pinned to `1.5.6-r.1` in both application and minimal image
+lockfiles. The successful local Linux run produced 5 trades, 0 unknown events,
+0 rejected trades, and 6,047 Parquet bytes from 17 raw logs. It completed the
+aggregation/rebuild/HTTP checks in 793 ms and reported 245,555,200 RSS bytes at
+completion. This is one small fixture run under Docker, not a Lambda cold-start,
+peak-memory, busy-window, throughput, or billing measurement. DuckDB uses one
+thread, a 128 MB engine memory limit, bounded spill, and disabled extension
+autoload/install; the container provides the process-wide memory cap.
+
+Semantics and deliberately bounded scope:
+
+- Prices are quote-token units per FAME, rounded down to 18 decimal places.
+  Trade amounts and summed volumes remain exact integer strings; DuckDB sums
+  them using `BIGNUM`, including sums larger than uint256. Price intermediates
+  use JS bigint and fit checked `DECIMAL(38,0)` bounds. Underflow, overflow,
+  zero/same-sign swaps, and ambiguous multi-leg V2 swaps are rejected trades.
+- Known signatures require exact static ABI layouts. Unknown signatures remain
+  raw and make their bucket partial; malformed known events fail the job before
+  publication. V2/Solidly have live examples; Slipstream has synthetic coverage
+  but has not been exercised by a live trade in this fixture. Family-source
+  ABIs are provisional pending per-deployment review.
+- Five-minute, hourly, and daily candles currently aggregate directly from the
+  same raw events with the same SQL. There is no separate rollup materializer.
+  Ordering uses block number, transaction index, and log index. A complete quiet
+  candle has null OHLC and zero volume; missing and partial coverage are explicit.
+  Boundary timestamps are conservatively excluded from complete coverage.
+- Jobs accept at most eight archives and 10,000 total events, with at most
+  10,000 five-minute pool points across the requested span. Duplicate batches
+  are deduplicated; overlaps and inconsistent adjacent ranges fail. HTTP reads
+  at most 1,000 precomputed points and never starts ingestion.
+- Existing liquidity observations retain their original observed block and
+  unverified-finality label; identical observations are deduplicated. They are
+  preserved alongside events, not reconstructed into historical TVL or assigned
+  the trade range's timestamps.
+
+Review added regression cases for gzip-version independence, exact uint256 sums,
+reversed token orientation, price precision bounds, malformed ABI layouts,
+metadata anchor conflicts, tampered Parquet, gaps, unknown events, ambiguous
+swaps, and conservative coverage. A fourth bounded Grok review attempt for this
+increment returned no findings before its three-minute timeout; the process was
+stopped and joined. Independent review remains incomplete.
+
+Final local checks for this increment: all 389 root tests in 38 suites passed,
+including 11 analytics tests; all three history CDK tests passed, including the
+real collector bundle import. Root type checking, deploy build, workflow YAML
+parsing, and whitespace checks passed. CI itself has not run. The existing
+collector bundle remains independent of the native analytics runtime.
+
+Remaining work before production history can be offered: a leased cloud worker
+consuming committed pending work; canonical input/revision reconciliation;
+atomic publication of Parquet partitions and DynamoDB chart records; production
+API/auth integration; serving retention and rollup materialization; busy-window
+and deployed cost tests; deployed ABI verification; and resumable historical
+backfill/repair tooling. The current container is a reproducible native-runtime
+proof, not a deployed Lambda handler. Production activation remains on hold.
 
 ## Source references
 

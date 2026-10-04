@@ -17,6 +17,7 @@ const manifest: Manifest = {
   eventCount: 0,
   key: "raw/test",
   sha256: "a".repeat(64),
+  contentSha256: "c".repeat(64),
   bytes: 50,
   eventIdentityDigest: "b".repeat(64),
 };

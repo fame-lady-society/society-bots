@@ -1,0 +1,7 @@
+{
+  "name": "fame-history-runtime-proof",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": { "@duckdb/node-api": "1.5.6-r.1" }
+}

@@ -9,6 +9,7 @@ on:
       - "deploy/lib/fame-market-history.ts"
       - "deploy/bin/market-history.ts"
       - "deploy/test/fame-market-history.test.ts"
+      - "deploy/docker/market-history/**"
       - "package.json"
       - "yarn.lock"
       - "deploy/package.json"
@@ -45,6 +46,13 @@ jobs:
         working-directory: deploy
       - run: yarn test --runInBand src/fame-market-history scripts/market-history
       - run: yarn types
+      - name: Verify raw to Parquet to HTTP end to end
+        run: yarn nodets scripts/market-history/e2e.ts src/fame-market-history/fixtures/base-52090000-52139999 "$RUNNER_TEMP/history-e2e"
+      - name: Verify offline Lambda Linux runtime
+        run: |
+          yarn nodets scripts/market-history/prepare-container.ts "$RUNNER_TEMP/history-container"
+          docker build --platform linux/amd64 -t history-runtime-proof "$RUNNER_TEMP/history-container"
+          docker run --rm --platform linux/amd64 --network none --memory 512m --cpus 1 --read-only --tmpfs /tmp:rw,size=256m history-runtime-proof
       - run: yarn test --runInBand test/fame-market-history.test.ts
         working-directory: deploy
       - run: yarn build

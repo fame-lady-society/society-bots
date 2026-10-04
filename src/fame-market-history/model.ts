@@ -138,6 +138,7 @@ export interface Manifest {
   eventCount: number;
   key: string;
   sha256: string;
+  contentSha256: string;
   bytes: number;
   eventIdentityDigest: string;
 }

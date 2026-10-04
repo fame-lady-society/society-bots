@@ -11,7 +11,7 @@ date: 2026-10-03
 
 Build a durable history service in `society-bots` that records every required event for explicitly covered Base pools, preserves periodic liquidity observations, and serves precomputed charts. Archive in S3; use DynamoDB for coverage, processing progress, and chart summaries. Reuse the existing provider, viem, ABIs, reviewed registry, Lambda, and CDK. Use DuckDB for SQL aggregation and Parquet compaction, subject to a bounded packaging/runtime proof.
 
-The website (`fame-lady-society/www`) owns chart rendering. Its implementation is a separate change against the published history response contract. The operator approved this plan on 2026-10-03. Increment 1 implementation is in progress; no deployment, paid subscription, or historical ingestion has been performed. See `docs/fame-market-history.md` for tested scope, revisions, and remaining operator inputs.
+The website (`fame-lady-society/www`) owns chart rendering. Its implementation is a separate change against the published history response contract. The operator approved this plan on 2026-10-03. Increment 1 has a tested collector/archive implementation and bounded live read-only rehearsals. Increment 2 has a working local raw → DuckDB/Parquet → candles → HTTP proof, including an offline Lambda Linux container run and a fresh Parquet-only rebuild. Production acceptance and cloud worker/API integration remain incomplete. No deployment, paid subscription, or production historical ingestion has been performed. See `docs/fame-market-history.md` for tested scope, revisions, and remaining operator inputs.
 
 Decisions from the discussion:
 

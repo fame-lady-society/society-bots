@@ -144,12 +144,14 @@ export async function collect({
     observations,
   };
   const { events: _, ...metadata } = batch;
-  const bytes = gzipSync(
+  const content =
     [
       JSON.stringify({ kind: "range", ...metadata }),
       ...events.map((event) => JSON.stringify({ kind: "event", ...event })),
-    ].join("\n") + "\n",
-  );
+    ].join("\n") + "\n";
+  if (Buffer.byteLength(content) > 8 * 1024 * 1024)
+    throw new Error("Archive content allowance exceeded; reduce the range");
+  const bytes = gzipSync(content);
   const sha256 = digest(bytes);
   const key = `raw/${SCHEMA}/chain=8453/scope=${scope.id}/${fromBlock}-${toBlock}/${sha256}.jsonl.gz`;
   const manifest: Manifest = {
@@ -163,6 +165,7 @@ export async function collect({
     eventCount: events.length,
     key,
     sha256,
+    contentSha256: digest(content),
     bytes: bytes.length,
     eventIdentityDigest: digest(
       events.map((e) => `${e.blockHash}:${e.logIndex}`).join("\n"),
