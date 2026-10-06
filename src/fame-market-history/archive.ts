@@ -1,4 +1,5 @@
 import { gunzipSync } from "node:zlib";
+import { validateSnapshots } from "./valuation.ts";
 import {
   digest,
   hash,
@@ -119,6 +120,21 @@ export function readArchiveContent(
     )
   )
     throw new Error("Archive event identity mismatch");
+  if (metadata.valuation) {
+    if (!Array.isArray(metadata.valuation) || metadata.valuation.length !== 2)
+      throw new Error("Invalid valuation archive");
+    validateSnapshots(metadata.valuation, scope);
+    const [before, after] = metadata.valuation;
+    if (
+      before.block.number !== fromBlock - 1 ||
+      before.block.hash !== manifest.previousHash ||
+      before.block.timestamp > first.timestamp ||
+      after.block.number !== toBlock ||
+      after.block.hash !== last.hash ||
+      after.block.timestamp !== last.timestamp
+    )
+      throw new Error("Valuation block differs from archive");
+  }
   return {
     schema: SCHEMA,
     scope,
@@ -127,6 +143,7 @@ export function readArchiveContent(
     headers,
     events,
     observations: metadata.observations,
+    ...(metadata.valuation ? { valuation: metadata.valuation } : {}),
   };
 }
 

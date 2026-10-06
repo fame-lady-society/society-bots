@@ -123,8 +123,7 @@ export class HttpApi extends Construct {
     if (!(defaultStage instanceof apigw2.CfnStage)) {
       throw new Error("SocietyBot HTTP API requires its default stage.");
     }
-    const landingSnapshotRouteResource =
-      landingSnapshotRoute.node.defaultChild;
+    const landingSnapshotRouteResource = landingSnapshotRoute.node.defaultChild;
     if (!(landingSnapshotRouteResource instanceof apigw2.CfnRoute)) {
       throw new Error(
         "SocietyBot HTTP API requires its landing snapshot route.",
@@ -165,5 +164,11 @@ export class HttpApi extends Construct {
     });
 
     this.httpApi = httpApi;
+    new cdk.CfnOutput(this, "HistoryApiId", {
+      value: httpApi.apiId,
+    }).overrideLogicalId("HistoryApiId");
+    new cdk.CfnOutput(this, "HistoryAuthorizerId", {
+      value: famePoolStateAuthorizer.authorizerId!,
+    }).overrideLogicalId("HistoryAuthorizerId");
   }
 }

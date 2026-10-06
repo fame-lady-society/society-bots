@@ -7,6 +7,7 @@ on:
       - "src/fame-swap-pool-state/registry/**"
       - "scripts/market-history/**"
       - "deploy/lib/fame-market-history.ts"
+      - "deploy/lib/http-api.ts"
       - "deploy/bin/market-history.ts"
       - "deploy/test/fame-market-history.test.ts"
       - "deploy/docker/market-history/**"
@@ -47,9 +48,9 @@ jobs:
         working-directory: deploy
       - run: yarn test --runInBand src/fame-market-history scripts/market-history
       - run: yarn types
-      - name: Verify worker transactions and crash recovery
+      - name: Verify worker transactions, crash recovery and history HTTP API
         run: yarn nodets scripts/market-history/worker-rehearse.ts
-      - name: Verify raw to Parquet to HTTP end to end
+      - name: Verify raw to Parquet rebuild end to end
         run: yarn nodets scripts/market-history/e2e.ts src/fame-market-history/fixtures/base-52090000-52139999 "$RUNNER_TEMP/history-e2e"
       - name: Verify offline Lambda Linux runtime
         run: |
@@ -68,6 +69,8 @@ jobs:
           CDK_DEFAULT_REGION: us-west-1
           FAME_HISTORY_RPC_PARAMETER: /society-bots/market-history/base-rpc
           FAME_HISTORY_POOL_STATE_TABLE: validation-only
+          FAME_HISTORY_API_ID: validation-only
+          FAME_HISTORY_AUTHORIZER_ID: validation-only
           FAME_HISTORY_START_BLOCK: ${{ inputs.start_block }}
         run: yarn cdk --app 'yarn history:app' synth --no-lookups --quiet
 
@@ -106,6 +109,13 @@ jobs:
           TABLE_NAME="$(aws cloudformation describe-stacks --stack-name Bot-prod --query 'Stacks[0].Outputs[?OutputKey==`FamePoolStateFamePoolStateTableName19BB0848`].OutputValue | [0]' --output text)"
           test -n "$TABLE_NAME" && test "$TABLE_NAME" != None
           echo "FAME_HISTORY_POOL_STATE_TABLE=$TABLE_NAME" >> "$GITHUB_ENV"
+          API_ID="$(aws cloudformation describe-stacks --stack-name Bot-prod --query 'Stacks[0].Outputs[?OutputKey==`HistoryApiId`].OutputValue | [0]' --output text)"
+          AUTHORIZER_ID="$(aws cloudformation describe-stacks --stack-name Bot-prod --query 'Stacks[0].Outputs[?OutputKey==`HistoryAuthorizerId`].OutputValue | [0]' --output text)"
+          test -n "$API_ID" && test "$API_ID" != None
+          test -n "$AUTHORIZER_ID" && test "$AUTHORIZER_ID" != None
+          test "$(aws apigatewayv2 get-stage --api-id "$API_ID" --stage-name '$default' --query AutoDeploy --output text)" = True
+          echo "FAME_HISTORY_API_ID=$API_ID" >> "$GITHUB_ENV"
+          echo "FAME_HISTORY_AUTHORIZER_ID=$AUTHORIZER_ID" >> "$GITHUB_ENV"
       - name: Synchronize existing indexer RPC secret to runtime SecureString
         env:
           FAME_POOL_STATE_INDEXER_BASE_RPCS_JSON: ${{ secrets.FAME_POOL_STATE_INDEXER_BASE_RPCS_JSON }}

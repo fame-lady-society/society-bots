@@ -6,6 +6,8 @@ import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as destinations from "aws-cdk-lib/aws-lambda-destinations";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as sqs from "aws-cdk-lib/aws-sqs";
+import * as apigw from "aws-cdk-lib/aws-apigatewayv2";
+import * as iam from "aws-cdk-lib/aws-iam";
 import { Construct } from "constructs";
 import { buildSync } from "esbuild";
 import { copyFileSync, readFileSync } from "node:fs";
@@ -29,6 +31,37 @@ export function bundleHistoryCollector(): string {
     format: "esm",
     inject: [path.join(root, "deploy/lib/esbuild/cjs-shim.ts")],
   });
+  copyFileSync(
+    path.join(root, "src/fame-swap-pool-state/registry/base-v1-pools.json"),
+    path.join(bundle, "base-v1-pools.json"),
+  );
+  return bundle;
+}
+
+export function bundleHistoryReader(): string {
+  const bundle = cdk.FileSystem.mkdtemp("fame-history-reader-");
+  const result = buildSync({
+    entryPoints: [path.join(root, "src/fame-market-history/api-lambda.ts")],
+    outfile: path.join(bundle, "index.mjs"),
+    bundle: true,
+    platform: "node",
+    target: "node24",
+    format: "esm",
+    metafile: true,
+    inject: [path.join(root, "deploy/lib/esbuild/cjs-shim.ts")],
+  });
+  if (
+    Object.keys(result.metafile!.inputs).some((p) =>
+      /duckdb|analytics\.ts|worker-storage\.ts/.test(p),
+    )
+  )
+    throw new Error(
+      "History API must remain independent of native analytics and storage writers",
+    );
+  copyFileSync(
+    path.join(root, "src/fame-market-history/token-metadata.json"),
+    path.join(bundle, "token-metadata.json"),
+  );
   copyFileSync(
     path.join(root, "src/fame-swap-pool-state/registry/base-v1-pools.json"),
     path.join(bundle, "base-v1-pools.json"),
@@ -85,6 +118,8 @@ export class FameMarketHistory extends Construct {
       rpcParameterName: string;
       startBlock: number;
       poolStateTableName: string;
+      apiId: string;
+      authorizerId: string;
     },
   ) {
     super(scope, id);
@@ -94,6 +129,8 @@ export class FameMarketHistory extends Construct {
       throw new Error("RPC SecureString parameter path required");
     if (!props.poolStateTableName)
       throw new Error("Pool-state table name required");
+    if (!props.apiId || !props.authorizerId)
+      throw new Error("Existing API and authorizer IDs required");
     const bucket = new s3.Bucket(this, "Archive", {
       encryption: s3.BucketEncryption.S3_MANAGED,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
@@ -183,6 +220,54 @@ export class FameMarketHistory extends Construct {
       schedule: events.Schedule.rate(cdk.Duration.minutes(1)),
       targets: [new targets.LambdaFunction(worker, { retryAttempts: 0 })],
     });
+    const reader = new lambda.Function(this, "Reader", {
+      runtime: lambda.Runtime.NODEJS_24_X,
+      handler: "index.handler",
+      code: lambda.Code.fromAsset(bundleHistoryReader()),
+      memorySize: 256,
+      timeout: cdk.Duration.seconds(10),
+      logGroup: createLambdaLogGroup(this, "ReaderLogs", "baseOperational"),
+      environment: { FAME_HISTORY_TABLE: table.tableName },
+    });
+    reader.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["dynamodb:Query"],
+        resources: [table.tableArn],
+      }),
+    );
+    reader.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["dynamodb:GetItem"],
+        resources: [table.tableArn],
+        conditions: {
+          StringEquals: { "dynamodb:EnclosingOperation": "TransactGetItems" },
+        },
+      }),
+    );
+    const integration = new apigw.CfnIntegration(this, "ReadIntegration", {
+      apiId: props.apiId,
+      integrationType: "AWS_PROXY",
+      integrationUri: reader.functionArn,
+      payloadFormatVersion: "2.0",
+      timeoutInMillis: 10000,
+    });
+    new apigw.CfnRoute(this, "ReadRoute", {
+      apiId: props.apiId,
+      routeKey: "GET /fame/history",
+      authorizationType: "CUSTOM",
+      authorizerId: props.authorizerId,
+      target: cdk.Fn.join("", ["integrations/", integration.ref]),
+    });
+    reader.addPermission("ExistingApiInvoke", {
+      principal: new iam.ServicePrincipal("apigateway.amazonaws.com"),
+      sourceArn: cdk.Stack.of(this).formatArn({
+        service: "execute-api",
+        resource: props.apiId,
+        resourceName: "*/GET/fame/history",
+        arnFormat: cdk.ArnFormat.SLASH_RESOURCE_NAME,
+      }),
+    });
+    new cdk.CfnOutput(this, "ReaderName", { value: reader.functionName });
     new cdk.CfnOutput(this, "BucketName", { value: bucket.bucketName });
     new cdk.CfnOutput(this, "TableName", { value: table.tableName });
     new cdk.CfnOutput(this, "CollectorName", { value: collector.functionName });

@@ -7,6 +7,13 @@ date: 2026-10-03
 
 # Affordable FAME trade and liquidity history
 
+The proposed first production API increment is specified in
+[`2026-10-05-001-feat-market-history-api-plan.md`](2026-10-05-001-feat-market-history-api-plan.md).
+It includes a built-in market activity view and per-pool five-minute drilldowns.
+Historical quote conversion and valued liquidity serving are required backend
+layers of that comprehensive-chart plan. Longer resolutions follow afterward;
+consumers do not own cross-pool aggregation or valuation rules.
+
 ## Outcome and decisions
 
 Build a durable history service in `society-bots` that records every required event for explicitly covered Base pools, preserves periodic liquidity observations, and serves precomputed charts. Archive in S3; use DynamoDB for coverage, processing progress, and chart summaries. Reuse the existing provider, viem, ABIs, reviewed registry, Lambda, and CDK. Use DuckDB for SQL aggregation and Parquet compaction, subject to a bounded packaging/runtime proof.

@@ -400,6 +400,18 @@ describe("FamePoolState infrastructure", () => {
     template.hasResourceProperties("AWS::ApiGatewayV2::Authorizer", {
       IdentitySource: ["$request.header.Authorization"],
     });
+    const outputs = template.toJSON().Outputs;
+    const [apiId] = Object.keys(
+      template.findResources("AWS::ApiGatewayV2::Api"),
+    );
+    const [authorizerId] = Object.keys(
+      template.findResources("AWS::ApiGatewayV2::Authorizer"),
+    );
+    expect(outputs.HistoryApiId.Value).toEqual({ Ref: apiId });
+    expect(outputs.HistoryAuthorizerId.Value).toEqual({ Ref: authorizerId });
+    template.hasResourceProperties("AWS::ApiGatewayV2::Stage", {
+      AutoDeploy: true,
+    });
     const synthesized = JSON.stringify(template.toJSON());
     expect(synthesized).not.toContain("GET /thumb/{tokenId}");
     expect(synthesized).not.toContain("GET /mosaic/{tokenId}");

@@ -588,11 +588,85 @@ Validation after removal: all 78 history/script tests, root type checking, three
 history CDK tests, and deploy build passed. The CDK checks explicitly assert zero
 alarms, dashboards, and metric filters.
 
+## Market API implementation (2026-10-05; not deployed)
+
+The service now materializes a market partition alongside the five pool partitions.
+`GET /fame/history?view=market&resolution=300&from=<unix-seconds>&to=<unix-seconds>`
+returns native quote groups, combined FAME execution volume, ETH and USD OHLC/VWAP,
+and valued liquidity. Use `view=pool&pool=<registry-id>` for native pool candles.
+Both endpoints require the existing pool-state service bearer credential. The
+website server should keep that credential private; it is not a browser token.
+
+Ranges are aligned, half-open `[from,to)`, five-minute buckets, at most 288 buckets
+(24 hours). Unknown or duplicate parameters and future ranges beyond the current
+bucket fail before storage reads. Responses use `Cache-Control: private, no-store`.
+Published zero-trade buckets have zero volume and null OHLC. Unpublished buckets
+have null values and an explicit reason. Missing rows inside published coverage
+fail with 503 instead of silently inventing empty candles. The reader captures
+progress, queries one partition, then rechecks publication; it retries once on a
+concurrent publish, with a seven-second read deadline and two-page/two-MiB limits.
+
+ETH/USD and connector observations are archived at each finalized range boundary
+using two batched Multicalls per range, independent of trade count. An execution
+uses only a prior-block observation no older than 30 minutes. Chainlink's Base
+ETH/USD standard proxy supplies the USD anchor; no stablecoin peg is assumed.
+Prices use observed pool spots, with explicit priced/unpriced FAME denominators.
+Gross volume counts each pool execution, including arbitrage across two pools.
+Do not interpret this as unique user flow. Connector spots can be manipulated in
+thin pools and are not executable quotes; their snapshot age is not the age of
+the pool's last trade. Zero active CL liquidity makes that connector unavailable.
+
+Liquidity uses actual token balances at each pool contract, valued at that pool's
+FAME spot and independent quote routes. It includes custody balances such as fees
+and donations, and is not active trading depth. Missing/stale pools yield explicit
+partial subtotals. These are sampled balance/FX observations even where swap event
+coverage is complete. No future observation is used to fill an earlier trade.
+Raw snapshots (including oracle rounds and timestamps) survive Parquet rebuilds.
+
+Deployment order: merge/release the bot-stack API/authorizer outputs first, then
+manually dispatch **Market history** on main with the original reviewed start
+block. CI discovers `HistoryApiId` and `HistoryAuthorizerId` from `Bot-prod`, verifies
+the existing `$default` stage auto-deploys, and creates the authenticated route in
+`FameMarketHistory`. It adds no new service credential, default stage, dashboard,
+alarm, custom metric, or cost cutoff. API requests never invoke RPC, S3 or DuckDB.
+
+Verification commands:
+
+```sh
+yarn test --runInBand src/fame-market-history scripts/market-history
+yarn types
+# Temporary DynamoDB Local on 127.0.0.1:18001; no AWS writes:
+yarn nodets scripts/market-history/worker-rehearse.ts
+# Raw and Parquet-only equivalence, including market output:
+yarn nodets scripts/market-history/e2e.ts src/fame-market-history/fixtures/base-52090000-52139999 /tmp/new-history-proof
+# Optional bounded read-only RPC source check, using local configured RPC:
+yarn nodets scripts/market-history/valuation-rehearse.ts
+```
+
+The worker rehearsal now serves the production parser/reader through a loopback
+HTTP adapter and exercises the entire 288-bucket market response. Its synthetic
+valued dataset used two DynamoDB pages and approximately 1.34 MB. The source
+rehearsal verified all quote routes and balance reads at Base block 52,233,578 in
+four RPC requests (59,930 response bytes). Neither proves production IAM,
+gateway authentication, billing, or historical RPC state availability.
+
+Final local validation passed 112 history/script tests, 26 history/pool-state CDK
+tests, root type checking and deploy build. The offline Linux/amd64 Lambda image
+also passed its raw/Parquet rebuild proof with no network and a 512 MiB limit.
+Publication revisions fingerprint both connector and direct-pool valuation
+configuration; conflicting archived source configurations require explicit
+reconciliation rather than being published under a new label. `publishedAt` is
+Unix milliseconds; query ranges and coverage timestamps are Unix seconds.
+
 ## Source references
 
 - [Uniswap V2 pair](https://github.com/Uniswap/v2-core/blob/master/contracts/UniswapV2Pair.sol)
 - [Slipstream events](https://github.com/aerodrome-finance/slipstream/blob/main/contracts/core/interfaces/pool/ICLPoolEvents.sol)
 - [eth_getLogs address/range semantics](https://www.alchemy.com/docs/chains/ethereum/ethereum-api-endpoints/eth-get-logs)
+- [Chainlink historical observations](https://docs.chain.link/data-feeds/historical-data)
+- [Base ETH/USD feed](https://data.chain.link/feeds/base/mainnet/eth-usd)
+- [Chainlink Base feed directory](https://reference-data-directory.vercel.app/feeds-ethereum-mainnet-base-1.json)
+- [DynamoDB transactional IAM](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/transaction-apis-iam.html)
 
 These source references are family-level context, not proof of deployed-bytecode
 equivalence for every pool.

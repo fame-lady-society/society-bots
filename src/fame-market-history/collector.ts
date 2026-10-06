@@ -1,5 +1,6 @@
 import { gzipSync } from "node:zlib";
 import { isCapacityError, WorkLimit } from "./limits.ts";
+import { validateSnapshots, type ValuationSnapshot } from "./valuation.ts";
 import {
   digest,
   SCHEMA,
@@ -26,6 +27,7 @@ export interface ChainReader {
     yieldReason?: "request-capacity" | "event-capacity";
   }>;
   headerAllowance?(): number;
+  valuation?(block: Header): Promise<ValuationSnapshot>;
 }
 export interface ArchiveStore {
   cursor(scopeId: string, startBlock: number): Promise<Cursor>;
@@ -167,6 +169,12 @@ export async function collect({
       }
     }
     const events = validateLogs(logs, scope, fromBlock, toBlock, headers);
+    const valuation: ValuationSnapshot[] = [];
+    if (chain.valuation) {
+      valuation.push(await chain.valuation(previous));
+      valuation.push(await chain.valuation(last));
+      validateSnapshots(valuation, scope);
+    }
     // Re-read the boundary immediately before publication. Do not mix changing chains.
     if ((await chain.header(toBlock)).hash !== last.hash)
       throw new Error("Range changed during collection");
@@ -179,6 +187,7 @@ export async function collect({
       headers: [...headers.values()],
       events,
       observations,
+      ...(chain.valuation ? { valuation } : {}),
     };
     const { events: _, ...metadata } = batch;
     const content =
