@@ -37,6 +37,10 @@ test("history deploy is retained, private, bounded, and independent of bot stack
     authorizerId: "existing-authorizer",
   });
   const template = Template.fromStack(stack);
+  const startOutput = Object.entries(template.toJSON().Outputs).find(([id]) =>
+    id.includes("StartBlock"),
+  )?.[1];
+  expect(startOutput).toEqual({ Value: "100" });
   template.hasResource("AWS::S3::Bucket", {
     DeletionPolicy: "Retain",
     Properties: {

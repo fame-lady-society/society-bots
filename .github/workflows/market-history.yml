@@ -17,11 +17,6 @@ on:
       - "deploy/yarn.lock"
       - ".github/workflows/market-history.yml"
   workflow_dispatch:
-    inputs:
-      start_block:
-        description: "Reviewed initial finalized block (keep the original value on updates)"
-        required: true
-        type: string
 
 permissions:
   contents: read
@@ -71,7 +66,7 @@ jobs:
           FAME_HISTORY_POOL_STATE_TABLE: validation-only
           FAME_HISTORY_API_ID: validation-only
           FAME_HISTORY_AUTHORIZER_ID: validation-only
-          FAME_HISTORY_START_BLOCK: ${{ inputs.start_block }}
+          FAME_HISTORY_START_BLOCK: "1"
         run: yarn cdk --app 'yarn history:app' synth --no-lookups --quiet
 
   deploy:
@@ -86,7 +81,6 @@ jobs:
       CDK_DEFAULT_ACCOUNT: "590183914614"
       CDK_DEFAULT_REGION: us-west-1
       FAME_HISTORY_RPC_PARAMETER: /society-bots/market-history/base-rpc
-      FAME_HISTORY_START_BLOCK: ${{ inputs.start_block }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -116,10 +110,10 @@ jobs:
           test "$(aws apigatewayv2 get-stage --api-id "$API_ID" --stage-name '$default' --query AutoDeploy --output text)" = True
           echo "FAME_HISTORY_API_ID=$API_ID" >> "$GITHUB_ENV"
           echo "FAME_HISTORY_AUTHORIZER_ID=$AUTHORIZER_ID" >> "$GITHUB_ENV"
-      - name: Synchronize existing indexer RPC secret to runtime SecureString
+      - name: Prepare RPC secret and persist the initial finalized start
         env:
           FAME_POOL_STATE_INDEXER_BASE_RPCS_JSON: ${{ secrets.FAME_POOL_STATE_INDEXER_BASE_RPCS_JSON }}
-        run: yarn nodets scripts/market-history/publish-ci-rpc.ts
+        run: yarn nodets scripts/market-history/prepare-ci.ts
       - name: Deploy history stack
         working-directory: deploy
         run: yarn cdk --app 'yarn history:app' deploy FameMarketHistory --require-approval never

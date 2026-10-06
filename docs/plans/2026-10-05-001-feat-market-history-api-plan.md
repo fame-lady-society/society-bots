@@ -9,6 +9,14 @@ date: 2026-10-05
 
 ## Implementation decisions (2026-10-05)
 
+Update (2026-10-06): the operator requested automatic start selection. Manual CI
+now chooses the finalized Base head on the first deployment and creates the
+durable `/society-bots/market-history/start` marker with block hash/time. Subsequent
+deployments and retries reuse it without requesting a newer head. A conditional
+create prevents concurrent initialization from changing the boundary. No
+`start_block` workflow input remains; selecting the start does not deploy anything
+until the operator runs the deployment workflow.
+
 The operator approved implementation and clarified that **both ETH and USD** are
 required. The implementation below supersedes the initial USD-first proposal:
 

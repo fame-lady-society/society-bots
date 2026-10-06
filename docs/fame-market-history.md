@@ -114,7 +114,8 @@ Initial inventory (generated identities, no copied pool address list):
 
 Historical creation blocks are deliberately not guessed. Token decimals are
 queried at a pinned block for local analysis, never assumed from token symbols.
-The live start block is an explicit deployment input; earlier history is missing.
+The first deployment automatically records a finalized Base block as the live
+start. Later deployments reuse it; earlier history remains missing until backfill.
 
 ## Layout and recovery
 
@@ -208,8 +209,18 @@ This is a fixed reproducible test range, not the proposed production start block
 
 Deployment runs through `.github/workflows/market-history.yml`. Pull requests
 run tests/type checks. After merge, explicitly dispatch `Market history` from
-`main` with the reviewed `start_block`. Keep the original
-start block on subsequent deployments; changing it is not a backfill mechanism.
+`main` without a starting-block input. Immediately before initial deployment, CI
+reads Base's finalized head and saves its block number, hash, timestamp and selection
+time in the standard SSM parameter `/society-bots/market-history/start` using a
+create-only write. The marker remains outside the stack and is reused after failed
+deployments, retries, updates and stack replacement. Concurrent initializers use
+the first successful marker. Access errors or malformed records fail rather than
+choosing a replacement. Retain this parameter with the archive; deleting it is not
+a supported reset or backfill mechanism. CI needs GetParameter/PutParameter on
+this exact path as well as the existing RPC parameter. The chosen boundary is
+printed in the Actions summary and exported by CloudFormation as `StartBlock`.
+Selection happens at deployment startup, so blocks produced while infrastructure
+is being created are included when the collector starts.
 The workflow uses the existing AWS Actions credentials, verifies account
 `590183914614`, discovers the pool-state table from `Bot-prod` in `us-west-1`,
 and synchronizes the first `FAME_POOL_STATE_INDEXER_BASE_RPCS_JSON` endpoint to
@@ -236,7 +247,8 @@ Required deploy inputs:
   RPC URL. Runtime fetches it with decryption; the URL is not in the CDK template.
   The initial policy assumes the AWS-managed SSM key; a customer-managed key needs
   an explicitly scoped KMS grant before deployment.
-- `FAME_HISTORY_START_BLOCK`: reviewed finalized starting block, integer >= 1.
+- `FAME_HISTORY_START_BLOCK`: injected by CI from the durable initial marker,
+  integer >= 1. Local rehearsals still supply their own explicit block.
 - `FAME_HISTORY_POOL_STATE_TABLE`: existing pool-state table for observations.
 
 The dedicated stack immediately schedules collection every five minutes and
@@ -624,8 +636,8 @@ coverage is complete. No future observation is used to fill an earlier trade.
 Raw snapshots (including oracle rounds and timestamps) survive Parquet rebuilds.
 
 Deployment order: merge/release the bot-stack API/authorizer outputs first, then
-manually dispatch **Market history** on main with the original reviewed start
-block. CI discovers `HistoryApiId` and `HistoryAuthorizerId` from `Bot-prod`, verifies
+manually dispatch **Market history** on main; CI selects or reuses the start marker.
+CI discovers `HistoryApiId` and `HistoryAuthorizerId` from `Bot-prod`, verifies
 the existing `$default` stage auto-deploys, and creates the authenticated route in
 `FameMarketHistory`. It adds no new service credential, default stage, dashboard,
 alarm, custom metric, or cost cutoff. API requests never invoke RPC, S3 or DuckDB.

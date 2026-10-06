@@ -268,6 +268,7 @@ export class FameMarketHistory extends Construct {
       }),
     });
     new cdk.CfnOutput(this, "ReaderName", { value: reader.functionName });
+    new cdk.CfnOutput(this,"StartBlock",{value:String(props.startBlock)});
     new cdk.CfnOutput(this, "BucketName", { value: bucket.bucketName });
     new cdk.CfnOutput(this, "TableName", { value: table.tableName });
     new cdk.CfnOutput(this, "CollectorName", { value: collector.functionName });
