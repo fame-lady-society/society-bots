@@ -2,6 +2,8 @@
  * adapter. This is not an AWS/IAM rehearsal and cannot target a remote database. */
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { once } from "node:events";
+import { localHistoryServer } from "./local-http.ts";
 import { Readable } from "node:stream";
 import {
   DynamoDBClient,
@@ -13,6 +15,9 @@ import {
   DynamoDBDocumentClient,
   GetCommand,
   TransactWriteCommand,
+  BatchWriteCommand,
+  UpdateCommand,
+  QueryCommand,
 } from "@aws-sdk/lib-dynamodb";
 import {
   S3Client,
@@ -20,12 +25,15 @@ import {
   PutObjectCommand,
   HeadObjectCommand,
 } from "@aws-sdk/client-s3";
+import { awsAggregation } from "../../src/fame-market-history/worker-storage.ts";
+import { historyReader } from "../../src/fame-market-history/api.ts";
+import { servingRevision } from "../../src/fame-market-history/revision.ts";
 import {
-  awsAggregation,
   candleKey,
   progressKey,
   rangeKey,
-} from "../../src/fame-market-history/worker-storage.ts";
+  marketKey,
+} from "../../src/fame-market-history/keys.ts";
 import {
   aggregateNext,
   LEASE_MS,
@@ -116,8 +124,8 @@ try {
     { TableName: table },
   );
   const ranges = [
-    await fixtureRange(100, 107, 106),
-    await fixtureRange(108, 114, 109, 3n),
+    await fixtureRange(100, 107, 106, 2n, 0, true),
+    await fixtureRange(108, 114, 109, 3n, 0, true),
   ];
   const archive = awsArchive({ table, bucket: "local-objects", db, s3 });
   await archive.reduceRange(scope.id, 100, 250);
@@ -222,6 +230,66 @@ try {
   assert.equal(candle.coverage, "complete");
   assert.equal(candle.baseVolumeAtoms, "2000000000000000000");
   assert.equal((await get(progressKey(scope.id)))?.nextBlock, 115);
+  const read = historyReader({
+    db,
+    table,
+    scope,
+    metadata,
+    metadataRevision: servingRevision(scope, metadata),
+  });
+  const response = await read({
+    view: "market",
+    from: epoch,
+    to: epoch + 900,
+    resolution: 300,
+  });
+  assert.equal(response.buckets.length, 3);
+  assert.equal(response.buckets[1].tradeCount, 2);
+  assert.equal(response.buckets[1].coverage, "complete");
+  assert.equal(
+    (response.buckets[1] as { prices: { volume: string }[] }).prices[1].volume,
+    "5.000000000000000000",
+  );
+  const poolResponse = await read({
+    view: "pool",
+    pool: pool.id,
+    from: epoch,
+    to: epoch + 900,
+    resolution: 300,
+  });
+  assert.equal(poolResponse.buckets[1].tradeCount, 2);
+  const token = randomUUID();
+  const server = localHistoryServer(read, scope, token);
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address !== "string");
+    const url = `http://127.0.0.1:${address.port}/fame/history?view=market&from=${epoch}&to=${epoch + 900}&resolution=300`;
+    assert.equal((await fetch(url)).status, 401);
+    const headers = { Authorization: `Bearer ${token}` };
+    const result = await fetch(url, { headers });
+    assert.equal(result.status, 200);
+    assert.deepEqual(await result.json(), response);
+    assert.equal(
+      (await fetch(`${url}&from=${epoch}`, { headers })).status,
+      400,
+    );
+    assert.equal(
+      (
+        await fetch(
+          url.replace(`to=${epoch + 900}`, `to=${epoch + 300 * 289}`),
+          { headers },
+        )
+      ).status,
+      400,
+    );
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve, reject) =>
+      server.close((e) => (e ? reject(e) : resolve())),
+    );
+  }
   for (const { manifest } of ranges) {
     assert.equal(
       (await get({ pk: `work:${scope.id}`, sk: rangeKey(manifest.fromBlock) }))
@@ -243,6 +311,71 @@ try {
     assert.equal(content.ranges.length, 1);
     assert.equal(content.ranges[0].fromBlock, manifest.fromBlock);
   }
+  // Exercise the full advertised range against real DynamoDB pagination. The
+  // market shape comes from the worker; timestamps repeat it solely as a load fixture.
+  const market = await get(marketKey(scope.id, epoch + 300));
+  assert.ok(market);
+  const dense = Array.from({ length: 288 }, (_, i) => {
+    const timestamp = epoch + i * 300;
+    return {
+      ...market,
+      ...marketKey(scope.id, timestamp),
+      timestamp,
+      pools: market.pools.map((p: Record<string, unknown>) => ({
+        ...p,
+        timestamp,
+      })),
+      quotes: market.quotes.map((q: Record<string, unknown>) => ({
+        ...q,
+        timestamp,
+      })),
+    };
+  });
+  for (let i = 0; i < dense.length; i += 25) {
+    const batch = await db.send(
+      new BatchWriteCommand({
+        RequestItems: {
+          [table]: dense
+            .slice(i, i + 25)
+            .map((Item) => ({ PutRequest: { Item } })),
+        },
+      }),
+    );
+    assert.equal(Object.keys(batch.UnprocessedItems ?? {}).length, 0);
+  }
+  await db.send(
+    new UpdateCommand({
+      TableName: table,
+      Key: progressKey(scope.id),
+      UpdateExpression: "SET publishedThroughTimestamp = :time",
+      ExpressionAttributeValues: { ":time": epoch + 288 * 300 - 1 },
+    }),
+  );
+  let queryPages = 0;
+  const counted = {
+    send: async (command: unknown, options: unknown) => {
+      if (command instanceof QueryCommand) queryPages++;
+      return db.send(command as never, options as never);
+    },
+  } as unknown as DynamoDBDocumentClient;
+  const full = await historyReader({
+    db: counted,
+    table,
+    scope,
+    metadata,
+    metadataRevision: servingRevision(scope, metadata),
+  })({ view: "market", from: epoch, to: epoch + 288 * 300, resolution: 300 });
+  assert.equal(full.buckets.length, 288);
+  assert.ok(queryPages <= 2);
+  console.log(
+    JSON.stringify({
+      event: "market-api-full-range-verified",
+      buckets: 288,
+      queryPages,
+      responseBytes: Buffer.byteLength(JSON.stringify(full)),
+      httpContractVerified: true,
+    }),
+  );
   console.log(
     JSON.stringify({
       event: "worker-local-transactions-verified",

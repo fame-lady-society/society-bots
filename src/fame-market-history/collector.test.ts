@@ -83,6 +83,16 @@ function fixture(logs: RawLog[] = [event()]) {
   };
 }
 
+test("valuation transport failure cannot advance raw coverage", async () => {
+  const f = fixture();
+  f.chain.valuation = async () => {
+    throw new Error("transport outage");
+  };
+  await expect(f.run()).rejects.toThrow("transport outage");
+  expect(f.operations).toEqual([]);
+  expect(f.cursor().nextBlock).toBe(100);
+});
+
 test("archives ordered lossless logs and coverage before advancing", async () => {
   const f = fixture([event({ logIndex: 2 }), event(), event()]);
   expect(await f.run()).toMatchObject({

@@ -6,7 +6,9 @@ import {
 } from "./worker.ts";
 import { digest } from "./model.ts";
 import { type Candle } from "./analytics.ts";
-import { buildHistory } from "./analytics.ts";
+import { buildHistory, rebuildParquet } from "./analytics.ts";
+import type { MarketCandle } from "./market.ts";
+import { servingRevision } from "./revision.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -18,6 +20,36 @@ import {
   fixtureRange,
 } from "./worker-fixture.ts";
 
+test.each(["uniswap-v3-usdc-weth-5bps", scope.pools[0].id])(
+  "valuation source drift (%s) changes the revision",
+  (id) => {
+    const changed = structuredClone(scope);
+    changed.registry.pools.find((p) => p.id === id)!.stable = true;
+    expect(servingRevision(changed, metadata)).not.toBe(
+      servingRevision(scope, metadata),
+    );
+  },
+);
+
+test("old raw conversion sources cannot be published as a new serving policy", async () => {
+  const store = new Store([await fixtureRange(100, 107, 106, 2n, 0, true)]);
+  const changed = structuredClone(scope);
+  changed.registry.pools.find(
+    (p) => p.id === "uniswap-v3-usdc-weth-5bps",
+  )!.poolAddress = "0x1111111111111111111111111111111111111111";
+  await expect(
+    aggregateNext({
+      scope: changed,
+      startBlock: 100,
+      metadata,
+      store,
+      now: () => 1000,
+    }),
+  ).rejects.toThrow("Archived valuation sources differ");
+  expect(store.partitions.size).toBe(0);
+  expect(store.objects.size).toBe(0);
+});
+
 class Store implements AggregationStore {
   nextBlock = 100;
   leaseUntil = 0;
@@ -28,6 +60,7 @@ class Store implements AggregationStore {
   completed = new Set<number>();
   objects = new Map<string, Uint8Array>();
   candles = new Map<string, Candle>();
+  market = new Map<number, MarketCandle>();
   partitions = new Map<number, Publication>();
   constructor(public ranges: Awaited<ReturnType<typeof fixtureRange>>[]) {}
   async acquire(
@@ -78,6 +111,7 @@ class Store implements AggregationStore {
       throw Error("fenced");
     for (const c of p.candles)
       this.candles.set(`${c.poolId}:${c.timestamp}`, c);
+    for (const c of p.market) this.market.set(c.timestamp, c);
     this.partitions.set(p.target.fromBlock, p);
     this.completed.add(p.target.fromBlock);
     this.nextBlock = p.target.toBlock + 1;
@@ -100,6 +134,43 @@ class Store implements AggregationStore {
     });
   }
 }
+
+test("archived valuation survives Parquet-only rebuild and boundary replacement", async () => {
+  const ranges = [
+    await fixtureRange(100, 107, 106, 2n, 0, true),
+    await fixtureRange(108, 114, 109, 3n, 0, true),
+  ];
+  const store = new Store(ranges);
+  await store.run();
+  await store.run();
+  const directory = await mkdtemp(path.join(tmpdir(), "valued-history-"));
+  try {
+    const full = await buildHistory(
+      ranges,
+      metadata,
+      path.join(directory, "full"),
+    );
+    const rebuilt = await rebuildParquet(
+      path.join(directory, "full"),
+      path.join(directory, "rebuilt"),
+    );
+    expect(rebuilt.dataset).toEqual(full.dataset);
+    for (const row of full.dataset.market)
+      expect(store.market.get(row.timestamp)).toEqual(row);
+    const active = full.dataset.market.find((c) => c.tradeCount === 2)!;
+    expect(active.prices[0]).toMatchObject({
+      status: "complete",
+      open: "0.001000000000000000",
+      close: "0.001500000000000000",
+      volume: "0.002500000000000000",
+      vwap: "0.001250000000000000",
+    });
+    expect(active.prices[1].volume).toBe("5.000000000000000000");
+    expect(active.liquidity.status).toBe("complete");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 test.each([0, 600])(
   "aligned boundary and timestamp jump (%s seconds) match a full rebuild",
@@ -124,6 +195,8 @@ test.each([0, 600])(
         expect(
           store.candles.get(`${candle.poolId}:${candle.timestamp}`),
         ).toEqual(candle);
+      for (const candle of full.dataset.market)
+        expect(store.market.get(candle.timestamp)).toEqual(candle);
       expect(store.candles.get(`${pool.id}:${epoch + 300}`)?.coverage).toBe(
         "complete",
       );

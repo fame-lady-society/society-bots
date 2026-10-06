@@ -22,26 +22,17 @@ import {
   type Publication,
 } from "./worker.ts";
 
-export const rangeKey = (block: number) =>
-  `range:${String(block).padStart(16, "0")}`;
-export const progressKey = (scopeId: string) => ({
-  pk: `scope:${scopeId}`,
-  sk: "aggregation",
-});
-export const candleKey = (
-  scopeId: string,
-  poolId: string,
-  timestamp: number,
-) => ({
-  pk: `candles:${scopeId}:${poolId}:300`,
-  sk: String(timestamp).padStart(16, "0"),
-});
+import { rangeKey, progressKey, candleKey, marketKey } from "./keys.ts";
 
 export function publicationInput(
   table: string,
   p: Publication,
 ): TransactWriteCommandInput {
-  if (!p.candles.length || p.candles.length > MAX_PUBLISHED_CANDLES)
+  if (
+    !p.candles.length ||
+    !p.market.length ||
+    p.candles.length + p.market.length > MAX_PUBLISHED_CANDLES
+  )
     throw new Error("Invalid atomic candle publication size");
   const put = (Item: Record<string, unknown>) => ({
     Put: { TableName: table, Item },
@@ -69,7 +60,7 @@ export function publicationInput(
           TableName: table,
           Key: progressKey(p.scopeId),
           UpdateExpression:
-            "SET nextBlock = :next, sourceRevision = :revision, leaseUntil = :zero REMOVE #owner",
+            "SET nextBlock = :next, sourceRevision = :revision, leaseUntil = :zero, firstPublishedBucket = if_not_exists(firstPublishedBucket, :first), coverageFromTimestamp = if_not_exists(coverageFromTimestamp, :from), publishedThroughTimestamp = :through, publishedAt = :now REMOVE #owner",
           ConditionExpression:
             "#owner = :owner AND leaseUntil > :now AND nextBlock = :expected AND metadataRevision = :metadata",
           ExpressionAttributeNames: { "#owner": "owner" },
@@ -81,6 +72,9 @@ export function publicationInput(
             ":now": p.now,
             ":expected": p.target.fromBlock,
             ":metadata": p.metadataRevision,
+            ":first": Math.min(...p.market.map((c) => c.timestamp)),
+            ":from": p.coverageFromTimestamp,
+            ":through": p.publishedThroughTimestamp,
           },
         },
       },
@@ -111,6 +105,15 @@ export function publicationInput(
       ...p.candles.map((c) =>
         put({
           ...candleKey(p.scopeId, c.poolId, c.timestamp),
+          ...c,
+          sourceRevision: p.sourceRevision,
+          throughBlock: p.target.toBlock,
+          metadataRevision: p.metadataRevision,
+        }),
+      ),
+      ...p.market.map((c) =>
+        put({
+          ...marketKey(p.scopeId, c.timestamp),
           ...c,
           sourceRevision: p.sourceRevision,
           throughBlock: p.target.toBlock,

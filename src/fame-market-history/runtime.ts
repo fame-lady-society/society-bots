@@ -4,6 +4,7 @@ import { historyScope, integer } from "./model.ts";
 import { boundedTransport, chainReader } from "./rpc.ts";
 import { awsArchive } from "./storage.ts";
 import { failureCode } from "./failure.ts";
+import { valuationReader } from "./valuation-rpc.ts";
 
 function required(env: NodeJS.ProcessEnv, key: string): string {
   const value = env[key]?.trim();
@@ -43,13 +44,13 @@ export async function runHistory(
     maxResponseBytes: config.maxResponseBytes,
     deadline,
   });
-  const chain = chainReader(
-    scope,
-    rpc.transport,
-    config.maxEvents,
-    rpc.capacity,
-  );
+  const chain = chainReader(scope, rpc.transport, config.maxEvents, {
+    remainingRequests: () => rpc.capacity.remainingRequests() - 2,
+    canScan: () =>
+      rpc.capacity.canScan() && rpc.capacity.remainingRequests() > 5,
+  });
   const store = awsArchive(config);
+  chain.valuation = valuationReader(scope, rpc.transport);
   // Rehearse before creating any history resources. Existing history can be read
   // explicitly, otherwise the supplied start block is the dry-run boundary.
   if (dryRun && !config.table)

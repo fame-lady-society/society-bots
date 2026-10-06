@@ -4,12 +4,10 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { buildHistory, type Candle } from "./analytics.ts";
 import { readArchive } from "./archive.ts";
-import {
-  DECODER_VERSION,
-  validateMetadata,
-  type TokenMetadata,
-} from "./decode.ts";
+import { validateMetadata, type TokenMetadata } from "./decode.ts";
 import { digest, type Manifest, type Scope } from "./model.ts";
+import type { MarketCandle } from "./market.ts";
+import { servingRevision } from "./revision.ts";
 
 export const LEASE_MS = 180_000;
 export const MAX_PUBLISHED_CANDLES = 90;
@@ -21,6 +19,9 @@ export interface Publication {
   target: Manifest;
   sourceRevision: string;
   candles: Candle[];
+  market: MarketCandle[];
+  coverageFromTimestamp: number;
+  publishedThroughTimestamp: number;
   artifacts: { key: string; sha256: string; bytes: number }[];
 }
 export interface AggregationStore {
@@ -57,9 +58,7 @@ export async function aggregateNext({
   owner?: string;
 }) {
   validateMetadata(scope, metadata);
-  const metadataRevision = digest(
-    JSON.stringify({ decoder: DECODER_VERSION, metadata }),
-  );
+  const metadataRevision = servingRevision(scope, metadata);
   const lease = await store.acquire(
     scope.id,
     startBlock,
@@ -77,6 +76,13 @@ export async function aggregateNext({
     throw new Error("Pending range does not match aggregation checkpoint");
   const inputs = [{ manifest: target, bytes: await store.read(target) }];
   const batch = readArchive(target, inputs[0].bytes);
+  const verifyServingScope = (archivedScope: Scope) => {
+    if (servingRevision(archivedScope, metadata) !== metadataRevision)
+      throw new Error(
+        "Archived valuation sources differ from serving policy; explicit reconciliation required",
+      );
+  };
+  verifyServingScope(batch.scope);
   const firstTime = batch.headers[0].timestamp;
   const lastTime = batch.headers.at(-1)!.timestamp;
   let firstBucket = Math.floor(firstTime / 300) * 300;
@@ -93,6 +99,7 @@ export async function aggregateNext({
       throw new Error("Missing adjacent committed candle input");
     const bytes = await store.read(previous);
     earliest = readArchive(previous, bytes);
+    verifyServingScope(earliest.scope);
     inputs.unshift({ manifest: previous, bytes });
   };
   if (target.fromBlock > startBlock) {
@@ -107,7 +114,8 @@ export async function aggregateNext({
   )
     await prependPrevious();
   const count =
-    (Math.floor(lastTime / 300) - firstBucket / 300 + 1) * scope.pools.length;
+    (Math.floor(lastTime / 300) - firstBucket / 300 + 1) *
+    (scope.pools.length + 1);
   if (count > MAX_PUBLISHED_CANDLES)
     throw new Error(
       "Range or timestamp gap exceeds atomic candle publication capacity; operator reconciliation required",
@@ -149,6 +157,11 @@ export async function aggregateNext({
       target,
       sourceRevision: combined.dataset.sourceRevision,
       candles,
+      market: combined.dataset.market.filter(
+        (c) => c.timestamp >= firstBucket && c.timestamp <= lastTime,
+      ),
+      coverageFromTimestamp: firstTime + 1,
+      publishedThroughTimestamp: lastTime,
       artifacts,
     });
     return {

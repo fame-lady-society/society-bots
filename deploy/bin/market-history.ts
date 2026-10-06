@@ -17,4 +17,6 @@ new FameMarketHistory(stack, "History", {
   rpcParameterName: required("FAME_HISTORY_RPC_PARAMETER"),
   startBlock: Number(required("FAME_HISTORY_START_BLOCK")),
   poolStateTableName: required("FAME_HISTORY_POOL_STATE_TABLE"),
+  apiId: required("FAME_HISTORY_API_ID"),
+  authorizerId: required("FAME_HISTORY_AUTHORIZER_ID"),
 });

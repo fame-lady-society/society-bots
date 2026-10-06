@@ -10,10 +10,17 @@ import { famePoolStateRegistry } from "../fame-swap-pool-state/registry/index.ts
 import { collect } from "./collector.ts";
 import { historyScope, FAME_ADDRESS, type Manifest } from "./model.ts";
 import { EVENT_ABIS, type TokenMetadata } from "./decode.ts";
+import {
+  VALUATION_VERSION,
+  ETH_USD_FEED,
+  ROUTES,
+  WETH,
+  type ValuationSnapshot,
+} from "./valuation.ts";
 
 export const scope = historyScope(famePoolStateRegistry);
 export const pool = scope.pools.find((p) => p.venueFamily === "Solidly")!;
-export const epoch = 1800000000;
+export const epoch = 1700000100;
 const h = (n: number): Hex => `0x${n.toString(16).padStart(64, "0")}`;
 const header = (n: number) => ({
   number: n,
@@ -40,6 +47,7 @@ export async function fixtureRange(
   tradeBlock?: number,
   price = 2n,
   timeShift = 0,
+  withValuation = false,
 ) {
   let bytes!: Uint8Array, manifest!: Manifest;
   const shiftedHeader = (n: number) => ({
@@ -54,6 +62,44 @@ export async function fixtureRange(
     maxBlocks: to - from + 1,
     maxEvents: 10,
     chain: {
+      ...(withValuation
+        ? {
+            valuation: async (
+              block: ValuationSnapshot["block"],
+            ): Promise<ValuationSnapshot> => ({
+              version: VALUATION_VERSION,
+              block,
+              ethUsd: {
+                feed: ETH_USD_FEED,
+                roundId: "1",
+                updatedAt: block.timestamp - 10,
+                priceX18: (2000n * 10n ** 18n).toString(),
+              },
+              quotes: Object.fromEntries(
+                Object.entries(ROUTES).map(([token, route]) => [
+                  token,
+                  {
+                    route,
+                    ethX18: (token === WETH
+                      ? 10n ** 18n
+                      : 5n * 10n ** 14n
+                    ).toString(),
+                  },
+                ]),
+              ),
+              pools: Object.fromEntries(
+                scope.pools.map((p) => [
+                  p.id,
+                  {
+                    balance0: (10n ** 18n).toString(),
+                    balance1: (10n ** 18n).toString(),
+                    quotePerFameX18: (2n * 10n ** 18n).toString(),
+                  },
+                ]),
+              ),
+            }),
+          }
+        : {}),
       finalized: async () => shiftedHeader(to),
       header: async (n) => shiftedHeader(n),
       logs: async () => ({

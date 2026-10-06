@@ -1,4 +1,6 @@
 import { DuckDBInstance, type DuckDBConnection } from "@duckdb/node-api";
+import { marketCandles, MARKET_VERSION, type MarketCandle } from "./market.ts";
+import { servingRevision } from "./revision.ts";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
@@ -38,6 +40,7 @@ export interface Candle {
   coverage: "complete" | "partial" | "missing";
 }
 export interface HistoryDataset {
+  market: MarketCandle[];
   version: typeof DECODER_VERSION;
   sourceRevision: string;
   scope: Scope;
@@ -220,6 +223,8 @@ async function buildVerifiedHistory(
   const revision = digest(
     JSON.stringify({
       decoder: DECODER_VERSION,
+      market: MARKET_VERSION,
+      serving: servingRevision(scope, metadata),
       sources: [...new Set(manifests.map((m) => m.sha256))].sort(),
       metadata,
     }),
@@ -292,6 +297,13 @@ async function buildVerifiedHistory(
       metadata,
       coverage,
       candles: rebuilt,
+      market: marketCandles(
+        scope,
+        metadata,
+        events,
+        rebuilt[300],
+        batches.flatMap((b) => b.valuation ?? []),
+      ),
       liquidity,
     };
     // Retain range/observation evidence alongside the columnar events. No RPCs are needed to rebuild.
@@ -331,61 +343,6 @@ async function buildVerifiedHistory(
     connection.closeSync();
     instance.closeSync();
   }
-}
-
-/** Serving is bounded and reads precomputed values; it never performs lazy ingestion. */
-export function historyResponse(
-  dataset: HistoryDataset,
-  query: { pool: string; resolution: number; from: number; to: number },
-) {
-  const pool = dataset.scope.pools.find((p) => p.id === query.pool);
-  if (!pool || !RESOLUTIONS.includes(query.resolution as Resolution))
-    throw new Error("Unsupported pool/resolution");
-  const from = integer(query.from, "from"),
-    to = integer(query.to, "to", from + 1);
-  if (
-    from % query.resolution ||
-    to % query.resolution ||
-    (to - from) / query.resolution > 1000
-  )
-    throw new Error("Expected aligned range of at most 1000 points");
-  const rows = new Map(
-    dataset.candles[query.resolution as Resolution]
-      .filter((c) => c.poolId === pool.id)
-      .map((c) => [c.timestamp, c]),
-  );
-  const points: Candle[] = [];
-  for (let timestamp = from; timestamp < to; timestamp += query.resolution)
-    points.push(
-      rows.get(timestamp) ?? {
-        poolId: pool.id,
-        timestamp,
-        open: null,
-        high: null,
-        low: null,
-        close: null,
-        baseVolumeAtoms: "0",
-        quoteVolumeAtoms: "0",
-        tradeCount: 0,
-        rejectedEvents: 0,
-        coverage: "missing",
-      },
-    );
-  const quoteToken = pool.token0 === FAME_ADDRESS ? pool.token1 : pool.token0;
-  return {
-    version: dataset.version,
-    sourceRevision: dataset.sourceRevision,
-    pool: pool.id,
-    baseToken: FAME_ADDRESS,
-    quoteToken,
-    baseDecimals: dataset.metadata.decimals[FAME_ADDRESS],
-    quoteDecimals: dataset.metadata.decimals[quoteToken],
-    priceDecimals: 18,
-    priceRounding: "floor",
-    decoderReview: dataset.metadata.decoderReview,
-    resolution: query.resolution,
-    points,
-  };
 }
 
 /** Rebuild using only saved Parquet + evidence; original gzip files and RPC are unnecessary. */

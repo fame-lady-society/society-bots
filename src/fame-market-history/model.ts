@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { isAddress, type Address, type Hex } from "viem";
 import type { FamePoolStateRegistryFile } from "../fame-swap-pool-state/types.ts";
+import type { ValuationSnapshot } from "./valuation.ts";
 
 export const FAME_ADDRESS = "0xf307e242bfe1ec1ff01a4cef2fdaa81b10a52418";
 export const CHAIN_ID = 8453;
@@ -152,6 +153,7 @@ export interface ArchiveBatch {
   headers: Header[];
   events: ArchivedLog[];
   observations: LiquidityObservation[];
+  valuation?: ValuationSnapshot[];
 }
 
 export interface LiquidityObservation {

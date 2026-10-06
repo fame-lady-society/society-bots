@@ -11,7 +11,7 @@ import {
 } from "viem";
 import { collect } from "./collector.ts";
 import { readArchive } from "./archive.ts";
-import { buildHistory, historyResponse, rebuildParquet } from "./analytics.ts";
+import { buildHistory, rebuildParquet } from "./analytics.ts";
 import { decode, EVENT_ABIS, type TokenMetadata } from "./decode.ts";
 import {
   historyScope,
@@ -145,12 +145,14 @@ test("collector → verified archive → native Parquet → same-SQL candles →
       .subarray(0, 4)
       .toString(),
   ).toBe("PAR1");
-  const api = historyResponse(result.dataset, {
-    pool: pool.id,
-    resolution: 300,
-    from: epoch + 300,
-    to: epoch + 900,
-  });
+  const api = {
+    points: result.dataset.candles[300].filter(
+      (c) =>
+        c.poolId === pool.id &&
+        c.timestamp >= epoch + 300 &&
+        c.timestamp < epoch + 900,
+    ),
+  };
   expect(api.points[0]).toMatchObject({
     open: "2.000000000000000000",
     close: "3.000000000000000000",
@@ -229,21 +231,24 @@ test("missing ranges and unknown/ambiguous events never become complete empty ca
     path.join(directory, "built"),
   );
   expect([unknownEvents, invalidTrades]).toEqual([1, 1]);
-  const response = historyResponse(dataset, {
-    pool: pool.id,
-    resolution: 300,
-    from: epoch + 300,
-    to: epoch + 1800,
-  });
+  const response = {
+    points: dataset.candles[300].filter(
+      (c) =>
+        c.poolId === pool.id &&
+        c.timestamp >= epoch + 300 &&
+        c.timestamp < epoch + 1800,
+    ),
+  };
   expect(response.points[0]).toMatchObject({
     rejectedEvents: 2,
     coverage: "partial",
     open: null,
   });
-  expect(response.points.at(-1)).toMatchObject({
-    coverage: "missing",
-    open: null,
-  });
+  expect(
+    dataset.market
+      .find((c) => c.timestamp === epoch + 300)
+      ?.prices.every((c) => c.status !== "complete"),
+  ).toBe(true);
 });
 
 test("gaps between source ranges stay missing and overlaps fail before publication", async () => {
@@ -271,40 +276,11 @@ test("gaps between source ranges stay missing and overlaps fail before publicati
   ).rejects.toThrow();
 });
 
-test("checksum corruption fails; unsupported queries fail rather than returning partial pages", async () => {
+test("checksum corruption fails", async () => {
   const source = await archive([]);
   expect(() =>
     readArchive({ ...source.manifest, sha256: "bad" }, source.bytes),
   ).toThrow("checksum");
-  const { dataset } = await buildHistory(
-    [source],
-    metadata,
-    path.join(directory, "built"),
-  );
-  expect(() =>
-    historyResponse(dataset, {
-      pool: pool.id,
-      resolution: 300,
-      from: 0,
-      to: 300 * 1001,
-    }),
-  ).toThrow("1000");
-  expect(() =>
-    historyResponse(dataset, {
-      pool: "other",
-      resolution: 300,
-      from: 0,
-      to: 300,
-    }),
-  ).toThrow("Unsupported");
-  expect(() =>
-    historyResponse(dataset, {
-      pool: pool.id,
-      resolution: 300,
-      from: 1,
-      to: 301,
-    }),
-  ).toThrow("aligned");
 });
 
 test("signed CL trades use execution amounts, token decimals, and FAME orientation", () => {

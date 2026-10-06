@@ -1,15 +1,21 @@
 import { createServer } from "node:http";
 import { timingSafeEqual } from "node:crypto";
 import {
-  historyResponse,
-  type HistoryDataset,
-} from "../../src/fame-market-history/analytics.ts";
+  HistoryError,
+  parseHistoryRequest,
+  type historyReader,
+} from "../../src/fame-market-history/api.ts";
+import type { Scope } from "../../src/fame-market-history/model.ts";
 
 /** Local verification adapter, bound to loopback by the caller. Not production auth. */
-export function localHistoryServer(dataset: HistoryDataset, token: string) {
+export function localHistoryServer(
+  read: ReturnType<typeof historyReader>,
+  scope: Scope,
+  token: string,
+) {
   if (token.length < 32)
     throw new Error("Local test token must have at least 32 characters");
-  return createServer((request, response) => {
+  return createServer(async (request, response) => {
     response.setHeader("Content-Type", "application/json");
     response.setHeader("Cache-Control", "no-store");
     const expected = Buffer.from(`Bearer ${token}`),
@@ -29,18 +35,23 @@ export function localHistoryServer(dataset: HistoryDataset, token: string) {
       return;
     }
     try {
-      for (const name of ["pool", "resolution", "from", "to"])
-        if (!url.searchParams.has(name)) throw new Error("Missing parameter");
-      const result = historyResponse(dataset, {
-        pool: url.searchParams.get("pool")!,
-        resolution: Number(url.searchParams.get("resolution")),
-        from: Number(url.searchParams.get("from")),
-        to: Number(url.searchParams.get("to")),
-      });
+      if (
+        request.headers["content-length"] ||
+        request.headers["transfer-encoding"]
+      )
+        throw new HistoryError(400, "invalid-request");
+      const result = await read(
+        parseHistoryRequest(url.search.slice(1), scope),
+      );
       response.end(JSON.stringify(result));
-    } catch {
-      response.writeHead(400);
-      response.end(JSON.stringify({ error: "Invalid history request" }));
+    } catch (error) {
+      response.writeHead(error instanceof HistoryError ? error.status : 503);
+      response.end(
+        JSON.stringify({
+          error:
+            error instanceof HistoryError ? error.code : "history-unavailable",
+        }),
+      );
     }
   });
 }
