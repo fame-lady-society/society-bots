@@ -74,6 +74,7 @@ export function referenceAt(
   timestamp: number,
   progress: ReferenceProgress | undefined,
   rows: Map<number, ReferencePoint>,
+  startTimestamp: number | undefined,
 ) {
   if (
     progress &&
@@ -85,7 +86,7 @@ export function referenceAt(
     return row;
   }
   return unavailableReference(
-    !progress || timestamp < progress.startTimestamp
+    startTimestamp === undefined || timestamp < startTimestamp
       ? "before-reference-start"
       : "not-yet-published",
   );

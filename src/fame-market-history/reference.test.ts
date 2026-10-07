@@ -284,12 +284,12 @@ test("reference reader distinguishes absent history and pending work, strips art
     t + 600,
     AbortSignal.timeout(1000),
   );
-  expect(referenceAt(t, progress, rows)).toEqual(p);
+  expect(referenceAt(t, progress, rows, t)).toEqual(p);
   expect(JSON.stringify([...rows.values()])).not.toContain("secret");
-  expect(referenceAt(t - 300, progress, rows).values.fameUsd.reason).toBe(
+  expect(referenceAt(t - 300, progress, rows, t).values.fameUsd.reason).toBe(
     "before-reference-start",
   );
-  expect(referenceAt(t + 300, progress, rows).values.fameUsd.reason).toBe(
+  expect(referenceAt(t + 300, progress, rows, t).values.fameUsd.reason).toBe(
     "not-yet-published",
   );
   await expect(
@@ -360,4 +360,26 @@ test("activation records the next full bucket and does not fill the partial one"
   expect(result.collected).toBe(0);
   expect(sample).not.toHaveBeenCalled();
   expect(commit).not.toHaveBeenCalled();
+});
+
+test("reference policy ignores cosmetic/routing metadata but detects pricing changes", () => {
+  const original = referenceFixture();
+  const changed = structuredClone(original.scope);
+  const pool = changed.registry.pools.find(
+    (p) => p.id === "scale-equalizer-weth-fame",
+  )!;
+  if (pool.fee.status !== "available") throw Error("fixture");
+  pool.fee.label = "1%";
+  pool.router = "0x0000000000000000000000000000000000000001";
+  expect(referencePolicy(changed)).toEqual(referencePolicy(original.scope));
+  expect(deriveReference(original.evidence, changed)).toEqual(
+    deriveReference(original.evidence, original.scope),
+  );
+  pool.stable = true;
+  expect(referencePolicy(changed).revision).not.toBe(
+    referencePolicy(original.scope).revision,
+  );
+  expect(() => deriveReference(original.evidence, changed)).toThrow(
+    "policy mismatch",
+  );
 });

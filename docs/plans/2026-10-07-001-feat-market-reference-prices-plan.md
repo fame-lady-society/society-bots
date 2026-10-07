@@ -341,3 +341,22 @@ retry behavior when only reference publication advances. An external Grok review
 was attempted but returned no findings/output after roughly eight minutes and was
 stopped. Do not count that attempt as completed independent review. Independent
 review remains a pre-deployment acceptance item.
+
+
+### Review fixes and existing-data treatment
+
+The reference-policy digest now includes only pool ID, chain ID, pool address,
+token identities, family/invariant, feed, freshness rule, and policy version.
+Cosmetic fee labels, router metadata, and capability labels cannot invalidate
+stored reference progress. API snapshots include the collected activation marker
+as well as publication progress, so startup buckets remain pending until their
+first publication rather than being mislabeled as outside coverage. A changed
+activation during a read triggers the existing consistency retry.
+
+Existing execution candles, raw archives, Parquet partitions, scope IDs and
+execution checkpoints are not changed or migrated. No reference values are invented
+for earlier history. Reference fields before activation remain unavailable. This
+PR is unmerged and has not been deployed by this task; any experimental reference
+records written with the previous unreleased digest must be explicitly rebuilt,
+not silently accepted under the new digest. Genuine future source-policy changes
+still require a reviewed rebuild design.

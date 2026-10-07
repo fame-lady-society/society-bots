@@ -130,14 +130,16 @@ export async function rehearseReferences(
     );
     assert.equal(Object.keys(result.UnprocessedItems ?? {}).length, 0);
   }
-  await db.send(
-    new UpdateCommand({
-      TableName: table,
-      Key: referenceProgressKey(scope.id, "published"),
-      UpdateExpression: "SET nextTimestamp = :next",
-      ExpressionAttributeValues: { ":next": epoch + 86400 },
-    }),
-  );
+  // The serving-only load fixture must retain publication <= collection.
+  for (const stage of ["collected", "published"] as const)
+    await db.send(
+      new UpdateCommand({
+        TableName: table,
+        Key: referenceProgressKey(scope.id, stage),
+        UpdateExpression: "SET nextTimestamp = :next",
+        ExpressionAttributeValues: { ":next": epoch + 86400 },
+      }),
+    );
   console.log(
     JSON.stringify({
       event: "reference-transactions-verified",

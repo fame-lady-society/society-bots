@@ -57,7 +57,15 @@ export function referencePolicy(scope: Scope): ReferencePolicy {
   const pools = [FAME_REFERENCE_POOL, ETH_REFERENCE_POOL].map((id) => {
     const pool = scope.registry.pools.find((p) => p.id === id);
     if (!pool?.poolAddress) throw new Error("Missing reference pool");
-    return pool;
+    return {
+      id: pool.id,
+      chainId: pool.chainId,
+      poolAddress: pool.poolAddress,
+      token0: pool.token0,
+      token1: pool.token1,
+      venueFamily: pool.venueFamily,
+      stable: pool.stable,
+    };
   });
   return {
     version: REFERENCE_VERSION,

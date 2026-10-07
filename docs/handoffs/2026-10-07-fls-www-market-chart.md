@@ -223,7 +223,9 @@ Separate, still planning-only work: [backfill plan](../plans/2026-10-06-001-feat
 
 Market responses now always include `referencePolicy` (revision, designated pool
 IDs/addresses, ETH/USD feed and maximum source age) and `referenceProgress` (null
-until publication, then `startTimestamp`, `publishedThroughTimestamp`, `revision`).
+until activation, then `startTimestamp`, `publishedThroughTimestamp`, `revision`).
+Before the first publication, the latter two fields are null; buckets at or after
+activation are `not-yet-published`, while older buckets are `before-reference-start`.
 Each market bucket has `reference` with method `designated-pool-spot-with-asof-fx`,
 policy revision, sampled block/hash/time, oracle round/time, and `values`:
 

@@ -268,7 +268,11 @@ export function historyReader({
     const keys = [activeScopeKey, progressKey(scope.id)];
     if (collector || marketView)
       keys.push({ pk: `scope:${scope.id}`, sk: "cursor" });
-    if (marketView) keys.push(referenceProgressKey(scope.id, "published"));
+    if (marketView)
+      keys.push(
+        referenceProgressKey(scope.id, "published"),
+        referenceProgressKey(scope.id, "collected"),
+      );
     const result = await db.send(
       new TransactGetCommand({
         TransactItems: keys.map((Key) => ({ Get: { TableName: table, Key } })),
@@ -283,6 +287,8 @@ export function historyReader({
       state[3]?.startTimestamp,
       state[3]?.nextTimestamp,
       state[3]?.policyRevision,
+      state[4]?.startTimestamp,
+      state[4]?.policyRevision,
       ...[
         "nextBlock",
         "sourceRevision",
@@ -321,6 +327,17 @@ export function historyReader({
         request.view === "market"
           ? referenceProgress(before[3], policy.revision)
           : undefined;
+      const referenceCollection =
+        request.view === "market"
+          ? referenceProgress(before[4], policy.revision)
+          : undefined;
+      if (
+        references &&
+        (!referenceCollection ||
+          references.startTimestamp !== referenceCollection.startTimestamp ||
+          references.nextTimestamp > referenceCollection.nextTimestamp)
+      )
+        fail("history-integrity");
       const referenceRows =
         request.view === "market"
           ? await readReferences(
@@ -470,11 +487,13 @@ export function historyReader({
         ...(request.view === "market"
           ? {
               referencePolicy: policy,
-              referenceProgress: references
+              referenceProgress: referenceCollection
                 ? {
-                    startTimestamp: references.startTimestamp,
-                    publishedThroughTimestamp: references.nextTimestamp - 1,
-                    revision: references.nextTimestamp,
+                    startTimestamp: referenceCollection.startTimestamp,
+                    publishedThroughTimestamp: references
+                      ? references.nextTimestamp - 1
+                      : null,
+                    revision: references?.nextTimestamp ?? null,
                   }
                 : null,
             }
@@ -483,7 +502,12 @@ export function historyReader({
           request.view === "market"
             ? buckets.map((b) => ({
                 ...b,
-                reference: referenceAt(b.timestamp, references, referenceRows),
+                reference: referenceAt(
+                  b.timestamp,
+                  references,
+                  referenceRows,
+                  referenceCollection?.startTimestamp,
+                ),
               }))
             : buckets,
       };

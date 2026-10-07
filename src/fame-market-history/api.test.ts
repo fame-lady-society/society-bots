@@ -199,6 +199,13 @@ test("market readers retry when only reference publication advances", async () =
           policyRevision: referencePolicy(scope).revision,
         },
       },
+      {
+        Item: {
+          startTimestamp: t,
+          nextTimestamp: t + 600,
+          policyRevision: referencePolicy(scope).revision,
+        },
+      },
     ],
   });
   const f = fixture([
@@ -225,4 +232,79 @@ test("market readers retry when only reference publication advances", async () =
       coverage: "missing",
       reference: { values: { fameUsd: { status: "available" } } },
     });
+});
+
+test("saved activation distinguishes pending buckets before first publication", async () => {
+  const t = epoch + 1200;
+  const state = {
+    Responses: [
+      ...snapshot().Responses,
+      {},
+      {
+        Item: {
+          startTimestamp: t,
+          nextTimestamp: t + 300,
+          policyRevision: referencePolicy(scope).revision,
+        },
+      },
+    ],
+  };
+  const f = fixture([state, { Items: [] }, state]);
+  const out = await f.read({
+    view: "market",
+    from: t - 300,
+    to: t + 600,
+    resolution: 300,
+  });
+  expect(out).toMatchObject({
+    referenceProgress: {
+      startTimestamp: t,
+      publishedThroughTimestamp: null,
+      revision: null,
+    },
+  });
+  expect(out.buckets[0]).toMatchObject({
+    reference: { values: { fameUsd: { reason: "before-reference-start" } } },
+  });
+  for (const bucket of out.buckets.slice(1))
+    expect(bucket).toMatchObject({
+      reference: { values: { fameUsd: { reason: "not-yet-published" } } },
+    });
+  expect(f.send).toHaveBeenCalledTimes(3);
+});
+
+test("read retries when activation appears during a request", async () => {
+  const t = epoch + 900;
+  const before = { Responses: [...snapshot().Responses, {}, {}] };
+  const after = {
+    Responses: [
+      ...snapshot().Responses,
+      {},
+      {
+        Item: {
+          startTimestamp: t,
+          nextTimestamp: t,
+          policyRevision: referencePolicy(scope).revision,
+        },
+      },
+    ],
+  };
+  const f = fixture([
+    before,
+    { Items: [] },
+    after,
+    after,
+    { Items: [] },
+    after,
+  ]);
+  const out = await f.read({
+    view: "market",
+    from: t,
+    to: t + 300,
+    resolution: 300,
+  });
+  expect(f.send).toHaveBeenCalledTimes(6);
+  expect(out.buckets[0]).toMatchObject({
+    reference: { values: { fameUsd: { reason: "not-yet-published" } } },
+  });
 });
