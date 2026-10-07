@@ -4,6 +4,9 @@ import { historyScope, integer } from "./model.ts";
 import { boundedTransport, chainReader } from "./rpc.ts";
 import { awsArchive } from "./storage.ts";
 import { failureCode } from "./failure.ts";
+import { collectReferences } from "./reference-collector.ts";
+import { referenceReader } from "./reference-rpc.ts";
+import { awsReferences } from "./reference-storage.ts";
 import { valuationReader } from "./valuation-rpc.ts";
 
 function required(env: NodeJS.ProcessEnv, key: string): string {
@@ -60,15 +63,47 @@ export async function runHistory(
       previousHash: null,
     });
   try {
-    const result = await collect({
-      chain,
-      store,
-      scope,
-      startBlock: config.startBlock,
-      maxBlocks: config.maxBlocks,
-      maxEvents: config.maxEvents,
-      dryRun,
+    const referenceRpc = boundedTransport({
+      url: config.rpcUrl,
+      maxRequests: 96,
+      maxResponseBytes: 256 * 1024,
+      deadline,
     });
+    const outcomes = await Promise.allSettled([
+      collect({
+        chain,
+        store,
+        scope,
+        startBlock: config.startBlock,
+        maxBlocks: config.maxBlocks,
+        maxEvents: config.maxEvents,
+        dryRun,
+      }),
+      dryRun
+        ? Promise.resolve(null)
+        : collectReferences({
+            scope,
+            store: awsReferences({ ...config, scope }),
+            chain: chainReader(scope, referenceRpc.transport, 1),
+            sample: referenceReader(scope, referenceRpc.transport),
+            canContinue: () =>
+              referenceRpc.capacity.remainingRequests() > 32 &&
+              Date.now() < deadline - 30000,
+          }),
+    ]);
+    console.log(
+      JSON.stringify({
+        event: "fame-reference-collection",
+        status: outcomes[1].status,
+        ...(outcomes[1].status === "fulfilled"
+          ? { result: outcomes[1].value }
+          : { code: failureCode(outcomes[1].reason) }),
+        metrics: referenceRpc.metrics,
+      }),
+    );
+    for (const outcome of outcomes)
+      if (outcome.status === "rejected") throw outcome.reason;
+    const result = outcomes[0].status === "fulfilled" ? outcomes[0].value : {};
     return {
       ...result,
       metrics: rpc.metrics,

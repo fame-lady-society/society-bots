@@ -8,4 +8,4 @@ await assert.rejects(
   handler({}, { getRemainingTimeInMillis: () => 120000 }),
   /Missing history storage configuration/,
 );
-await import("./e2e.mjs");
+await Promise.all([import("./e2e.mjs"), import("./reference-e2e.mjs")]);

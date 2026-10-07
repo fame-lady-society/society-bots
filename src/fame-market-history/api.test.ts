@@ -1,3 +1,6 @@
+import { referenceFixture } from "./reference-fixture.ts";
+import { deriveReference } from "./reference-rpc.ts";
+import { referenceKey, referencePolicy } from "./reference.ts";
 import { jest } from "@jest/globals";
 import {
   QueryCommand,
@@ -175,4 +178,51 @@ test("never serves a row beyond captured publication or wrong metadata", async (
     ]);
     await expect(f.read(request)).rejects.toThrow("history-integrity");
   }
+});
+
+test("market readers retry when only reference publication advances", async () => {
+  const t = epoch + 900;
+  const a = referenceFixture(t),
+    b = referenceFixture(t + 300);
+  const refRow = (f: typeof a) => ({
+    ...referenceKey(scope.id, f.evidence.timestamp),
+    timestamp: f.evidence.timestamp,
+    ...deriveReference(f.evidence, f.scope),
+  });
+  const state = (nextTimestamp: number) => ({
+    Responses: [
+      ...snapshot().Responses,
+      {
+        Item: {
+          startTimestamp: t,
+          nextTimestamp,
+          policyRevision: referencePolicy(scope).revision,
+        },
+      },
+    ],
+  });
+  const f = fixture([
+    state(t + 300),
+    { Items: [refRow(a)] },
+    { Items: [] },
+    state(t + 600),
+    state(t + 600),
+    { Items: [refRow(a), refRow(b)] },
+    { Items: [] },
+    state(t + 600),
+  ]);
+  const out = await f.read({
+    view: "market",
+    from: t,
+    to: t + 600,
+    resolution: 300,
+  });
+  expect(f.send).toHaveBeenCalledTimes(8);
+  expect(out).toMatchObject({ referenceProgress: { revision: t + 600 } });
+  expect(out.buckets).toHaveLength(2);
+  for (const bucket of out.buckets)
+    expect(bucket).toMatchObject({
+      coverage: "missing",
+      reference: { values: { fameUsd: { status: "available" } } },
+    });
 });
