@@ -245,3 +245,31 @@ export function publicReference(
   };
 }
 export { WETH };
+
+export const referenceRefillKey = (scopeId: string) => ({
+  pk: `reference:${scopeId}`,
+  sk: "refill",
+});
+export function referenceRefillBounds(value: unknown, revision: string) {
+  if (value === undefined) return undefined;
+  const r = record(value);
+  const targetFrom = integer(r.targetFrom, "reference refill target", 1);
+  const nextTimestamp = integer(
+    r.nextTimestamp,
+    "reference refill next",
+    targetFrom,
+  );
+  const toTimestamp = integer(
+    r.toTimestamp,
+    "reference refill end",
+    nextTimestamp,
+  );
+  if (
+    targetFrom % 300 ||
+    nextTimestamp % 300 ||
+    toTimestamp % 300 ||
+    r.policyRevision !== revision
+  )
+    throw Error("Reference refill progress mismatch");
+  return { targetFrom, nextTimestamp, toTimestamp, policyRevision: revision };
+}
