@@ -308,3 +308,120 @@ test("read retries when activation appears during a request", async () => {
     reference: { values: { fameUsd: { reason: "not-yet-published" } } },
   });
 });
+
+test("serves a backward refill before activation without changing execution buckets", async () => {
+  const t = epoch + 900;
+  const policyRevision = referencePolicy(scope).revision;
+  const state = {
+    Responses: [
+      ...snapshot().Responses,
+      {},
+      {
+        Item: {
+          startTimestamp: t + 600,
+          nextTimestamp: t + 600,
+          policyRevision,
+        },
+      },
+      {
+        Item: {
+          targetFrom: t,
+          nextTimestamp: t + 300,
+          toTimestamp: t + 600,
+          policyRevision,
+        },
+      },
+    ],
+  };
+  const evidence = referenceFixture(t + 300).evidence;
+  const f = fixture([
+    state,
+    {
+      Items: [
+        {
+          ...referenceKey(scope.id, t + 300),
+          timestamp: t + 300,
+          ...deriveReference(evidence, scope),
+        },
+      ],
+    },
+    { Items: [] },
+    state,
+  ]);
+  const out = await f.read({
+    view: "market",
+    from: t,
+    to: t + 900,
+    resolution: 300,
+  });
+  expect(out.referenceProgress).toMatchObject({
+    startTimestamp: t + 300,
+    publishedThroughTimestamp: t + 599,
+  });
+  expect(out.buckets[0]).toMatchObject({
+    reference: { values: { fameUsd: { reason: "before-reference-start" } } },
+  });
+  expect(out.buckets[1]).toMatchObject({
+    open: null,
+    tradeCount: null,
+    reference: {
+      values: {
+        fameUsd: { status: "available" },
+        fameEth: { status: "available" },
+      },
+    },
+  });
+  expect(out.buckets[2]).toMatchObject({
+    reference: { values: { fameUsd: { reason: "not-yet-published" } } },
+  });
+});
+
+test("a concurrent backward refill forces a consistent snapshot retry", async () => {
+  const t = epoch + 900,
+    policyRevision = referencePolicy(scope).revision;
+  const state = (nextTimestamp: number) => ({
+    Responses: [
+      ...snapshot().Responses,
+      {},
+      {
+        Item: {
+          startTimestamp: t + 600,
+          nextTimestamp: t + 600,
+          policyRevision,
+        },
+      },
+      {
+        Item: {
+          targetFrom: t,
+          nextTimestamp,
+          toTimestamp: t + 600,
+          policyRevision,
+        },
+      },
+    ],
+  });
+  const ref = (timestamp: number) => ({
+    ...referenceKey(scope.id, timestamp),
+    timestamp,
+    ...deriveReference(referenceFixture(timestamp).evidence, scope),
+  });
+  const f = fixture([
+    state(t + 300),
+    { Items: [ref(t + 300)] },
+    { Items: [] },
+    state(t),
+    state(t),
+    { Items: [ref(t), ref(t + 300)] },
+    { Items: [] },
+    state(t),
+  ]);
+  const out = await f.read({
+    view: "market",
+    from: t,
+    to: t + 600,
+    resolution: 300,
+  });
+  expect(f.send).toHaveBeenCalledTimes(8);
+  expect(out.referenceProgress?.startTimestamp).toBe(t);
+  expect(out.buckets).toHaveLength(2);
+});

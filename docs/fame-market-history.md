@@ -715,3 +715,48 @@ The command suppresses credential/provider errors and never prints the RPC URL.
 It compares designated reference sources with all tracked FAME pools at one pinned
 block. Provider billing must be checked separately. Existing CI also runs the
 reference transaction/API rehearsal and offline Linux Parquet proof.
+
+### Bucket-end reference refill
+
+`refill-references.ts` fills backward from the immutable live reference activation,
+using the same pinned historical Multicall sampler and as-of Chainlink round as
+live collection. It does not approximate historical prices from today's reserves,
+interpolate, carry a trade close forward, or assume USDC equals USD.
+
+```sh
+# Freeze an aligned --from timestamp once; repeat the exact command to resume.
+AWS_PROFILE=fls-power yarn nodets scripts/market-history/refill-references.ts \
+  --from 1791328800 --max-buckets 12
+# Add --apply to execute. Maximum 288 buckets per run and 24 hours before activation.
+```
+
+The command checks the production AWS account and discovers the existing stack's
+resources. It reads the RPC parameter in memory without logging its value.
+Its `reference:<scope>/refill` record stores the frozen target, live join timestamp,
+canonical anchor and backward publication frontier. Each bucket uploads immutable
+raw evidence and round-trip-verified Parquet, then atomically inserts the reference
+manifest/serving row and advances only that frontier. Live collection/publication
+cursors, execution candles, and execution volume are untouched. A concurrent writer
+loses the conditional transaction; an ambiguous successful response resumes from
+persisted progress. Completed buckets are never overwritten.
+
+A failed/reverted source or stale oracle produces explicit unavailable values.
+Transport failures retry three times and then stop without consuming the bucket;
+an RPC outage is not evidence that a historical price is unavailable. Malformed
+ABI results, chain disagreement, work limits and archive failures stop for operator
+investigation/resumption. Header bracketing/search is cached; all source calls for
+a bucket share one pinned Multicall. The run is sequential with bounded request,
+response-byte and time allowances. These do not change live collection limits.
+
+The market reader combines the independently published backward interval with
+live reference publication. It checks both frontiers before/after reading and
+retries if either changes. `referenceProgress.startTimestamp` reflects the earliest
+published reference bucket; its forward publication timestamp/revision retains the
+existing meaning. Buckets outside published coverage remain explicitly unavailable.
+No-trade buckets may have reference prices while their execution OHLC stays null
+and volume stays zero. No frontend change is required.
+
+Validation includes backward resume, source gaps, outage/integrity stopping,
+concurrent API snapshot changes, and real DynamoDB Local transactions with competing
+writers and a lost successful response. The same rehearsal round-trips native DuckDB
+Parquet and proves both live cursors remain unchanged.

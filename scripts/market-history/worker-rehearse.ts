@@ -1,3 +1,4 @@
+import { rehearseRefill } from "./refill-rehearse.ts";
 import {
   publicReference,
   referencePolicy,
@@ -317,6 +318,7 @@ try {
     assert.equal(content.ranges[0].fromBlock, manifest.fromBlock);
   }
   await rehearseReferences(db, s3, table);
+  await rehearseRefill(db, s3, table);
   // Exercise the full advertised range against real DynamoDB pagination. The
   // market shape comes from the worker; timestamps repeat it solely as a load fixture.
   const market = await get(marketKey(scope.id, epoch + 300));

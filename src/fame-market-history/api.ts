@@ -2,6 +2,8 @@ import {
   referencePolicy,
   referenceProgress,
   referenceProgressKey,
+  referenceRefillKey,
+  referenceRefillBounds,
 } from "./reference.ts";
 import { readReferences, referenceAt } from "./reference-api.ts";
 import {
@@ -272,6 +274,7 @@ export function historyReader({
       keys.push(
         referenceProgressKey(scope.id, "published"),
         referenceProgressKey(scope.id, "collected"),
+        referenceRefillKey(scope.id),
       );
     const result = await db.send(
       new TransactGetCommand({
@@ -289,6 +292,10 @@ export function historyReader({
       state[3]?.policyRevision,
       state[4]?.startTimestamp,
       state[4]?.policyRevision,
+      state[5]?.targetFrom,
+      state[5]?.toTimestamp,
+      state[5]?.nextTimestamp,
+      state[5]?.policyRevision,
       ...[
         "nextBlock",
         "sourceRevision",
@@ -323,7 +330,7 @@ export function historyReader({
         !natural(progress.publishedAt)
       )
         fail("history-integrity");
-      const references =
+      const liveReferences =
         request.view === "market"
           ? referenceProgress(before[3], policy.revision)
           : undefined;
@@ -332,12 +339,37 @@ export function historyReader({
           ? referenceProgress(before[4], policy.revision)
           : undefined;
       if (
-        references &&
+        liveReferences &&
         (!referenceCollection ||
-          references.startTimestamp !== referenceCollection.startTimestamp ||
-          references.nextTimestamp > referenceCollection.nextTimestamp)
+          liveReferences.startTimestamp !==
+            referenceCollection.startTimestamp ||
+          liveReferences.nextTimestamp > referenceCollection.nextTimestamp)
       )
         fail("history-integrity");
+      const refill =
+        request.view === "market"
+          ? referenceRefillBounds(before[5], policy.revision)
+          : undefined;
+      if (
+        refill &&
+        (!referenceCollection ||
+          refill.toTimestamp !== referenceCollection.startTimestamp)
+      )
+        fail("history-integrity");
+      const referenceStart =
+        refill?.nextTimestamp ?? referenceCollection?.startTimestamp;
+      const referenceEnd =
+        liveReferences?.nextTimestamp ?? referenceCollection?.startTimestamp;
+      const references =
+        referenceStart !== undefined &&
+        referenceEnd !== undefined &&
+        referenceEnd > referenceStart
+          ? {
+              startTimestamp: referenceStart,
+              nextTimestamp: referenceEnd,
+              policyRevision: policy.revision,
+            }
+          : undefined;
       const referenceRows =
         request.view === "market"
           ? await readReferences(
@@ -489,7 +521,7 @@ export function historyReader({
               referencePolicy: policy,
               referenceProgress: referenceCollection
                 ? {
-                    startTimestamp: referenceCollection.startTimestamp,
+                    startTimestamp: referenceStart!,
                     publishedThroughTimestamp: references
                       ? references.nextTimestamp - 1
                       : null,
@@ -506,7 +538,7 @@ export function historyReader({
                   b.timestamp,
                   references,
                   referenceRows,
-                  referenceCollection?.startTimestamp,
+                  referenceStart,
                 ),
               }))
             : buckets,
