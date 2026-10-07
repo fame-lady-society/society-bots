@@ -50,6 +50,16 @@ await build({
   format: "esm",
   external: ["@duckdb/node-api"],
 });
+await build({
+  entryPoints: [path.join(root, "scripts/market-history/reference-e2e.ts")],
+  outfile: path.join(target, "reference-e2e.mjs"),
+  bundle: true,
+  platform: "node",
+  target: "node24",
+  format: "esm",
+  inject: [path.join(root, "deploy/lib/esbuild/cjs-shim.ts")],
+  external: ["@duckdb/node-api"],
+});
 for (const name of [
   "Dockerfile",
   "package.json",

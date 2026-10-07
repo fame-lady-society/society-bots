@@ -682,3 +682,36 @@ Unix milliseconds; query ranges and coverage timestamps are Unix seconds.
 
 These source references are family-level context, not proof of deployed-bytecode
 equivalence for every pool.
+
+
+## Five-minute reference prices
+
+The market view always includes independent finalized reference points for FAME/ETH,
+ETH/USD, ETH/USDC, FAME/USD and FAME/USDC. See the [consumer contract](handoffs/2026-10-07-fls-www-market-chart.md#bucket-reference-prices-implemented-pending-backend-deployment)
+and [implementation receipt](plans/2026-10-07-001-feat-market-reference-prices-plan.md#implementation-receipt-2026-10-07).
+
+The first collector invocation persists its own activation bucket in
+`reference:<scope>/collected`; publication advances `reference:<scope>/published`.
+Both run independently of trade history, process at most four buckets per invocation,
+and resume after failures. Old buckets are explicitly unavailable. There is no
+automatic historical refill. Source-policy changes require an explicit reviewed
+rebuild design; editing the policy does not silently rewrite existing prices.
+
+Archives use `raw/reference/<scope>/...` and `derived/reference/<scope>/...` in the
+existing bucket. Structured log events `fame-reference-collection` and
+`fame-reference-publication` report results, lag and sanitized failure codes;
+collection also reports request counts by method and response bytes. The API reads
+DynamoDB only. Existing bearer authentication, 288-bucket range, and 2 MiB response
+limits apply.
+
+Read-only source qualification using the existing RPC parameter (no AWS writes):
+
+```sh
+AWS_PROFILE=fls-power AWS_REGION=us-west-1 \
+  yarn nodets scripts/market-history/reference-probe.ts
+```
+
+The command suppresses credential/provider errors and never prints the RPC URL.
+It compares designated reference sources with all tracked FAME pools at one pinned
+block. Provider billing must be checked separately. Existing CI also runs the
+reference transaction/API rehearsal and offline Linux Parquet proof.

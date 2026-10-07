@@ -1,3 +1,8 @@
+import {
+  publicReference,
+  referencePolicy,
+} from "../../src/fame-market-history/reference.ts";
+import { rehearseReferences } from "./reference-rehearse.ts";
 /** Real DynamoDB Local transactions + real DuckDB; S3 is an in-memory object
  * adapter. This is not an AWS/IAM rehearsal and cannot target a remote database. */
 import assert from "node:assert/strict";
@@ -311,6 +316,7 @@ try {
     assert.equal(content.ranges.length, 1);
     assert.equal(content.ranges[0].fromBlock, manifest.fromBlock);
   }
+  await rehearseReferences(db, s3, table);
   // Exercise the full advertised range against real DynamoDB pagination. The
   // market shape comes from the worker; timestamps repeat it solely as a load fixture.
   const market = await get(marketKey(scope.id, epoch + 300));
@@ -366,7 +372,15 @@ try {
     metadataRevision: servingRevision(scope, metadata),
   })({ view: "market", from: epoch, to: epoch + 288 * 300, resolution: 300 });
   assert.equal(full.buckets.length, 288);
-  assert.ok(queryPages <= 2);
+  assert.ok(queryPages <= 4);
+  assert.ok(
+    full.buckets.every(
+      (b) =>
+        "reference" in b &&
+        publicReference(b.reference, referencePolicy(scope).revision).values
+          .fameEth.status === "available",
+    ),
+  );
   console.log(
     JSON.stringify({
       event: "market-api-full-range-verified",

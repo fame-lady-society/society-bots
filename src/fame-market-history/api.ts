@@ -1,4 +1,10 @@
 import {
+  referencePolicy,
+  referenceProgress,
+  referenceProgressKey,
+} from "./reference.ts";
+import { readReferences, referenceAt } from "./reference-api.ts";
+import {
   QueryCommand,
   TransactGetCommand,
   type DynamoDBDocumentClient,
@@ -253,9 +259,20 @@ export function historyReader({
   metadata: TokenMetadata;
   metadataRevision: string;
 }) {
-  const snapshot = async (collector: boolean, signal: AbortSignal) => {
+  const policy = referencePolicy(scope);
+  const snapshot = async (
+    collector: boolean,
+    signal: AbortSignal,
+    marketView = false,
+  ) => {
     const keys = [activeScopeKey, progressKey(scope.id)];
-    if (collector) keys.push({ pk: `scope:${scope.id}`, sk: "cursor" });
+    if (collector || marketView)
+      keys.push({ pk: `scope:${scope.id}`, sk: "cursor" });
+    if (marketView)
+      keys.push(
+        referenceProgressKey(scope.id, "published"),
+        referenceProgressKey(scope.id, "collected"),
+      );
     const result = await db.send(
       new TransactGetCommand({
         TransactItems: keys.map((Key) => ({ Get: { TableName: table, Key } })),
@@ -267,6 +284,11 @@ export function historyReader({
   const marker = (state: (Item | undefined)[]) =>
     JSON.stringify([
       state[0]?.scopeId,
+      state[3]?.startTimestamp,
+      state[3]?.nextTimestamp,
+      state[3]?.policyRevision,
+      state[4]?.startTimestamp,
+      state[4]?.policyRevision,
       ...[
         "nextBlock",
         "sourceRevision",
@@ -280,7 +302,7 @@ export function historyReader({
   return async (request: HistoryRequest) => {
     const signal = AbortSignal.timeout(7000);
     for (let attempt = 0; attempt < 2; attempt++) {
-      const before = await snapshot(true, signal),
+      const before = await snapshot(true, signal, request.view === "market"),
         [active, progress, collector] = before;
       if (!active || !progress?.sourceRevision) fail("history-not-ready");
       if (
@@ -301,6 +323,33 @@ export function historyReader({
         !natural(progress.publishedAt)
       )
         fail("history-integrity");
+      const references =
+        request.view === "market"
+          ? referenceProgress(before[3], policy.revision)
+          : undefined;
+      const referenceCollection =
+        request.view === "market"
+          ? referenceProgress(before[4], policy.revision)
+          : undefined;
+      if (
+        references &&
+        (!referenceCollection ||
+          references.startTimestamp !== referenceCollection.startTimestamp ||
+          references.nextTimestamp > referenceCollection.nextTimestamp)
+      )
+        fail("history-integrity");
+      const referenceRows =
+        request.view === "market"
+          ? await readReferences(
+              db,
+              table,
+              scope.id,
+              references,
+              request.from,
+              request.to,
+              signal,
+            )
+          : new Map();
       const key =
         request.view === "market"
           ? marketKey(scope.id, request.from)
@@ -327,7 +376,7 @@ export function historyReader({
         cursor = result.LastEvaluatedKey;
         if (!cursor || rows.length >= 288) break;
       }
-      const after = await snapshot(false, signal);
+      const after = await snapshot(false, signal, request.view === "market");
       if (marker(before) !== marker(after)) continue;
       if (cursor || rows.length > 288) fail("history-read-limit");
       const map = new Map<number, Item>();
@@ -435,7 +484,32 @@ export function historyReader({
           collectedThroughBlock: collector.nextBlock - 1,
           publishedAt: progress.publishedAt,
         },
-        buckets,
+        ...(request.view === "market"
+          ? {
+              referencePolicy: policy,
+              referenceProgress: referenceCollection
+                ? {
+                    startTimestamp: referenceCollection.startTimestamp,
+                    publishedThroughTimestamp: references
+                      ? references.nextTimestamp - 1
+                      : null,
+                    revision: references?.nextTimestamp ?? null,
+                  }
+                : null,
+            }
+          : {}),
+        buckets:
+          request.view === "market"
+            ? buckets.map((b) => ({
+                ...b,
+                reference: referenceAt(
+                  b.timestamp,
+                  references,
+                  referenceRows,
+                  referenceCollection?.startTimestamp,
+                ),
+              }))
+            : buckets,
       };
       if (Buffer.byteLength(JSON.stringify(response)) > 2 * 1024 * 1024)
         fail("history-read-limit");
