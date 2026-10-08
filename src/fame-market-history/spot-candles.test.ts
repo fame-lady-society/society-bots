@@ -127,3 +127,64 @@ test("stable reserves use the invariant's marginal price", () => {
   const rate = fraction(4n * (3n + 16n), 1n + 48n);
   expect(r).toEqual(pool.token0 === FAME_ADDRESS ? rate : invert(rate));
 });
+
+test("market publication uses opening FAME inventory, preserves pool totals, and excludes replay internals", () => {
+  const current = deriveSampledObservation(scope, sampledFixture()),
+    previous = deriveSampledObservation(scope, sampledFixture(epoch - 300));
+  const activities: PoolActivity[] = scope.pools.map((p) => ({
+    poolId: p.id,
+    coverage: "complete",
+    baseVolumeAtoms: "0",
+    quoteVolumeAtoms: "0",
+    tradeCount: 0,
+    transactionHashes: [],
+  }));
+  for (const [i, p] of scope.pools.entries()) {
+    previous.balances[p.id] =
+      p.token0 === FAME_ADDRESS
+        ? { balance0: String(i + 1), balance1: "900" }
+        : { balance0: "900", balance1: String(i + 1) };
+    current.balances[p.id] = { balance0: "1000", balance1: "1000" };
+  }
+  for (const currency of ["ETH", "USDC"] as const) {
+    const result = sampledMarketBucket(
+      scope,
+      currency,
+      epoch,
+      current,
+      activities,
+      previous,
+    );
+    expect(result.market.weights.map((p) => p.fameBalanceAtoms)).toEqual([
+      "1",
+      "2",
+      "3",
+      "4",
+      "5",
+    ]);
+    const expectedAtoms =
+      result.series.reduce(
+        (n, p, i) => n + BigInt(p.price!.replace(".", "")) * BigInt(i + 1),
+        0n,
+      ) / 15n;
+    const difference =
+      BigInt(result.market.price!.replace(".", "")) - expectedAtoms;
+    // Public pool prices were already rounded: their weighted average can lose one atom.
+    expect(difference >= 0n && difference <= 1n).toBe(true);
+    expect(result.market.candle?.coverage).toBe("reference-only");
+    expect(result.totals.tradeCount).toBe(0);
+    expect(JSON.stringify(result)).not.toMatch(
+      /spotEvents|blendInput|transactionHashes/,
+    );
+    const absentOpening = sampledMarketBucket(
+      scope,
+      currency,
+      epoch,
+      current,
+      activities,
+    );
+    expect(absentOpening.market.coverage).toBe("unavailable");
+    expect(absentOpening.series).toEqual(result.series);
+    expect(absentOpening.totals).toEqual(result.totals);
+  }
+});

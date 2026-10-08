@@ -1,6 +1,6 @@
 import type { DecodedEvent, TokenMetadata } from "./decode.ts";
 import { FAME_ADDRESS, type Pool, type Scope } from "./model.ts";
-import { fraction, invert, type Fraction } from "./sampled-market.ts";
+import { fraction, invert, type Fraction } from "./price-math.ts";
 export interface SpotRange {
   open: Fraction;
   high: Fraction;
