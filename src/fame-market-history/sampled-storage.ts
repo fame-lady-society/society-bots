@@ -20,10 +20,12 @@ import {
 } from "./sampled-rpc.ts";
 import {
   nextSampledPublication,
+  prependSampledPublication,
   validateSampledPublication,
   type SampledStore,
   type SampledCursor,
   type SampledPublication,
+  type SampledBucket,
 } from "./sampled-live.ts";
 import { rangeKey, sampledKey, sampledPageKey } from "./keys.ts";
 import { readArchive } from "./archive.ts";
@@ -71,7 +73,14 @@ export function awsSampled({
   canContinue?: () => boolean;
   db?: DynamoDBDocumentClient;
   s3?: S3Client;
-}): SampledStore {
+}): SampledStore & {
+  importPrevious(
+    previous: SampledPublication,
+    evidence: SampledEvidence,
+    buckets: SampledBucket[],
+    jobId: string,
+  ): Promise<void>;
+} {
   const revision = sampledPolicy(scope).revision;
   const rawCache = new Map<string, Buffer>();
   const get = async (Key: Record<string, string>) =>
@@ -107,6 +116,44 @@ export function awsSampled({
       throw new Error("Sampled archive checksum mismatch");
     return bytes;
   };
+  const archiveEvidence = async (e: SampledEvidence) => {
+    sampledMarketBucket(
+      scope,
+      "ETH",
+      e.timestamp,
+      deriveSampledObservation(scope, e),
+      [],
+    );
+    const bytes = Buffer.from(JSON.stringify(e)),
+      sha = digest(bytes),
+      key = `raw/sampled/${revision}/${e.timestamp}/${sha}.json`;
+    if (bytes.length > 65536) throw new Error("Sampled evidence exceeds limit");
+    const checksum = Buffer.from(sha, "hex").toString("base64");
+    try {
+      await s3.send(
+        new PutObjectCommand({
+          Bucket: bucket,
+          Key: key,
+          Body: bytes,
+          IfNoneMatch: "*",
+          ChecksumSHA256: checksum,
+        }),
+      );
+    } catch (error) {
+      if (!(error instanceof Error) || error.name !== "PreconditionFailed")
+        throw error;
+    }
+    const head = await s3.send(
+      new HeadObjectCommand({
+        Bucket: bucket,
+        Key: key,
+        ChecksumMode: "ENABLED",
+      }),
+    );
+    if (head.ContentLength !== bytes.length || head.ChecksumSHA256 !== checksum)
+      throw new Error("Sampled archive verification failed");
+    return { key, sha, bytes };
+  };
   return {
     collected,
     cursor: async (initial) => {
@@ -132,45 +179,7 @@ export function awsSampled({
     commit: async (cursor, e) => {
       if (e.timestamp !== cursor.nextTimestamp || e.policyRevision !== revision)
         throw new Error("Sampled commit skips bucket");
-      sampledMarketBucket(
-        scope,
-        "ETH",
-        e.timestamp,
-        deriveSampledObservation(scope, e),
-        [],
-      );
-      const bytes = Buffer.from(JSON.stringify(e)),
-        sha = digest(bytes),
-        key = `raw/sampled/${revision}/${e.timestamp}/${sha}.json`;
-      if (bytes.length > 65536)
-        throw new Error("Sampled evidence exceeds limit");
-      const checksum = Buffer.from(sha, "hex").toString("base64");
-      try {
-        await s3.send(
-          new PutObjectCommand({
-            Bucket: bucket,
-            Key: key,
-            Body: bytes,
-            IfNoneMatch: "*",
-            ChecksumSHA256: checksum,
-          }),
-        );
-      } catch (error) {
-        if (!(error instanceof Error) || error.name !== "PreconditionFailed")
-          throw error;
-      }
-      const head = await s3.send(
-        new HeadObjectCommand({
-          Bucket: bucket,
-          Key: key,
-          ChecksumMode: "ENABLED",
-        }),
-      );
-      if (
-        head.ContentLength !== bytes.length ||
-        head.ChecksumSHA256 !== checksum
-      )
-        throw new Error("Sampled archive verification failed");
+      const { key, sha, bytes } = await archiveEvidence(e);
       await db.send(
         new TransactWriteCommand({
           TransactItems: [
@@ -307,6 +316,81 @@ export function awsSampled({
       return newest.headers.at(-1)!.timestamp >= e.timestamp + 300
         ? rows
         : null;
+    },
+    importPrevious: async (previous, e, buckets, jobId) => {
+      if (!/^[a-f0-9]{64}$/.test(jobId))
+        throw new Error("Invalid import job identity");
+      const next = prependSampledPublication(previous, e, buckets);
+      const { key, sha, bytes } = await archiveEvidence(e);
+      const ref = next.pages[0];
+      await db.send(
+        new TransactWriteCommand({
+          TransactItems: [
+            // Historical work can never claim a live collector's bucket.
+            {
+              ConditionCheck: {
+                TableName: table,
+                Key: sampledKey(revision, "collected"),
+                ConditionExpression:
+                  "startTimestamp > :t AND policyRevision = :revision",
+                ExpressionAttributeValues: {
+                  ":t": e.timestamp,
+                  ":revision": revision,
+                },
+              },
+            },
+            {
+              Put: {
+                TableName: table,
+                Item: {
+                  ...sampledKey(revision, `observation:${e.timestamp}`),
+                  timestamp: e.timestamp,
+                  key,
+                  sha256: sha,
+                  bytes: bytes.length,
+                },
+                ConditionExpression: "attribute_not_exists(pk)",
+              },
+            },
+            ...buckets.map((b) => ({
+              Put: {
+                TableName: table,
+                Item: {
+                  ...sampledPageKey(
+                    revision,
+                    b.currency,
+                    e.timestamp,
+                    ref[b.currency],
+                  ),
+                  body: JSON.stringify(b),
+                },
+                ConditionExpression: "attribute_not_exists(pk)",
+              },
+            })),
+            {
+              Put: {
+                TableName: table,
+                Item: { ...sampledKey(revision, "published"), ...next },
+                ConditionExpression: "generation = :previous",
+                ExpressionAttributeValues: { ":previous": previous.generation },
+              },
+            },
+            // Separate progress receipt; no live cursor or execution records are mutated.
+            {
+              Put: {
+                TableName: table,
+                Item: {
+                  ...sampledKey(revision, `import:${jobId}`),
+                  jobId,
+                  importedFromTimestamp: e.timestamp,
+                  publicationNextTimestamp: previous.nextTimestamp,
+                  generation: next.generation,
+                },
+              },
+            },
+          ],
+        }),
+      );
     },
     publish: async (previous, e, buckets) => {
       const next = nextSampledPublication(previous, e, buckets);

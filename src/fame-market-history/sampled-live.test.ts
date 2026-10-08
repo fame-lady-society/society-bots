@@ -2,6 +2,7 @@ import { scope, epoch } from "./worker-fixture.ts";
 import { sampledFixture, sampledHeader } from "./sampled-fixture.ts";
 import {
   collectSampled,
+  prependSampledPublication,
   nextSampledPublication,
   validateSampledPublication,
   type SampledCursor,
@@ -131,4 +132,46 @@ test("a fresh deployment returns explicit gaps around available publication", as
   ]);
   expect(r.buckets[0].totals.tradeCount).toBeNull();
   expect(r.buckets[2].series.every((p) => p.price === null)).toBe(true);
+});
+
+test("historical prepend retains live pages and rejects skipped, overlapping and full windows", () => {
+  const make = (t: number) => {
+    const e = sampledFixture(t);
+    return {
+      e,
+      buckets: (["ETH", "USDC"] as const).map((c) =>
+        sampledMarketBucket(
+          scope,
+          c,
+          t,
+          deriveSampledObservation(scope, e),
+          [],
+        ),
+      ),
+    };
+  };
+  const live = make(epoch + 300),
+    past = make(epoch);
+  const initial = nextSampledPublication(null, live.e, live.buckets);
+  const joined = prependSampledPublication(initial, past.e, past.buckets);
+  expect(joined.nextTimestamp).toBe(initial.nextTimestamp);
+  expect(joined.pages[1]).toEqual(initial.pages[0]);
+  expect(validateSampledPublication(joined, joined.policyRevision)).toEqual(
+    joined,
+  );
+  expect(() =>
+    prependSampledPublication(initial, live.e, live.buckets),
+  ).toThrow();
+  const skipped = make(epoch - 300);
+  expect(() =>
+    prependSampledPublication(initial, skipped.e, skipped.buckets),
+  ).toThrow();
+  let full = joined;
+  for (let i = 2; i < 288; i++) {
+    const entry = make(epoch + i * 300);
+    full = nextSampledPublication(full, entry.e, entry.buckets);
+  }
+  expect(() =>
+    prependSampledPublication(full, skipped.e, skipped.buckets),
+  ).toThrow();
 });

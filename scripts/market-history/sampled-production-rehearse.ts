@@ -25,6 +25,7 @@ import {
 import {
   publishSampled,
   nextSampledPublication,
+  prependSampledPublication,
 } from "../../src/fame-market-history/sampled-live.ts";
 import {
   parseSampledRequest,
@@ -123,6 +124,80 @@ export async function rehearseSampled(
   await assert.rejects(() =>
     store.publish(null, old, [ethBucket, result.buckets[0]]),
   );
+  // Independent backwards imports race safely with each other and live publication.
+  const beforeImport = (await store.publication())!;
+  const savedCursor = await store.collected();
+  const historical = sampledFixture(epoch);
+  const historicalRows = (["ETH", "USDC"] as const).map((c) =>
+    sampledMarketBucket(
+      scope,
+      c,
+      epoch,
+      deriveSampledObservation(scope, historical),
+      [],
+    ),
+  );
+  const jobId = "a".repeat(64);
+  const imports = await Promise.allSettled([
+    store.importPrevious(beforeImport, historical, historicalRows, jobId),
+    store.importPrevious(beforeImport, historical, historicalRows, jobId),
+  ]);
+  assert.equal(imports.filter((r) => r.status === "fulfilled").length, 1);
+  assert.deepEqual(await store.collected(), savedCursor);
+  assert.equal(
+    (await store.publication())!.nextTimestamp,
+    beforeImport.nextTimestamp,
+  );
+  assert.equal((await store.publication())!.startTimestamp, epoch);
+  assert.deepEqual(await store.read(epoch), historical);
+  const nextEvidence = sampledFixture(start + 300);
+  await store.commit(savedCursor!, nextEvidence);
+  const nextRows = (["ETH", "USDC"] as const).map((c) =>
+    sampledMarketBucket(
+      scope,
+      c,
+      nextEvidence.timestamp,
+      deriveSampledObservation(scope, nextEvidence),
+      [],
+    ),
+  );
+  // A publisher holding the pre-import generation loses, then resumes normally.
+  await assert.rejects(() =>
+    store.publish(beforeImport, nextEvidence, nextRows),
+  );
+  await store.publish(await store.publication(), nextEvidence, nextRows);
+  // The converse race: live publication wins before an importer commits.
+  // Use the actual valid pre-append generation, not a fabricated manifest.
+  const previousJoined = prependSampledPublication(
+    beforeImport,
+    historical,
+    historicalRows,
+  );
+  const earlier = sampledFixture(epoch - 300);
+  const earlierRows = (["ETH", "USDC"] as const).map((c) =>
+    sampledMarketBucket(
+      scope,
+      c,
+      earlier.timestamp,
+      deriveSampledObservation(scope, earlier),
+      [],
+    ),
+  );
+  await assert.rejects(() =>
+    store.importPrevious(previousJoined, earlier, earlierRows, jobId),
+  );
+  await assert.rejects(() => store.read(epoch - 300)); // Failed transaction exposed no observation.
+  const importedView = await readSampledMarket(db, table, scope, {
+    currency: "ETH",
+    from: epoch,
+    to: start + 600,
+  });
+  assert.equal(importedView.buckets.length, 3);
+  assert.equal(importedView.buckets[1].totals.tradeCount, 2);
+  assert.ok(importedView.buckets[0].series.every((p) => p.price !== null));
+  await assert.rejects(() =>
+    store.importPrevious(beforeImport, historical, historicalRows, jobId),
+  );
   const rows = await db.send(
     new QueryCommand({
       TableName: table,
@@ -148,7 +223,7 @@ export async function rehearseSampled(
     assert.equal(Object.keys(r.UnprocessedItems ?? {}).length, 0);
     writes = [];
   };
-  for (let i = 1; i < 288; i++) {
+  for (let i = 2; i < 288; i++) {
     const evidence = sampledFixture(start + i * 300),
       observation = deriveSampledObservation(scope, evidence);
     const buckets = (["ETH", "USDC"] as const).map((c) =>
@@ -196,6 +271,8 @@ export async function rehearseSampled(
       currencies: 2,
       loadBuckets: 288,
       tradeCount: 2,
+      historicalImport:
+        "concurrent-safe; live cursor preserved; stale publisher resumed",
     }),
   );
 }

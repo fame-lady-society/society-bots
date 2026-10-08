@@ -84,6 +84,17 @@ try {
     manifests: Manifest[];
     metadataRevision: string;
   };
+  const requestedTo =
+    process.env.FAME_HISTORY_TO === undefined
+      ? undefined
+      : Number(process.env.FAME_HISTORY_TO);
+  if (
+    requestedTo !== undefined &&
+    (!Number.isSafeInteger(requestedTo) ||
+      requestedTo < 86400 ||
+      requestedTo % 300)
+  )
+    throw new Error("FAME_HISTORY_TO must be an aligned exclusive timestamp");
   let job = await readJson<Job>(path.join(output, "job.json"));
   const getRaw = async (m: Manifest) => {
     if (
@@ -142,7 +153,11 @@ try {
         const m = item as Manifest,
           batch = readArchive(m, await getRaw(m));
         if (!to) {
-          to = Math.floor(batch.headers.at(-1)!.timestamp / 300) * 300;
+          const availableTo =
+            Math.floor(batch.headers.at(-1)!.timestamp / 300) * 300;
+          to = requestedTo ?? availableTo;
+          if (to > availableTo)
+            throw new Error("Requested range is not archived yet");
           from = to - 86400;
         }
         manifests.push(m);
@@ -173,6 +188,7 @@ try {
     );
   }
   if (
+    (requestedTo !== undefined && job.to !== requestedTo) ||
     job.version !== "sampled-local-job-v1" ||
     job.scopeId !== scope.id ||
     job.policyRevision !== policy.revision ||
