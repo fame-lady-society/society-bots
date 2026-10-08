@@ -117,6 +117,30 @@ export function nextSampledPublication(
   };
   return { ...body, generation: digest(JSON.stringify(body)) };
 }
+/** Extend the visible window backwards without advancing the live publisher. */
+export function prependSampledPublication(
+  previous: SampledPublication,
+  evidence: SampledEvidence,
+  buckets: SampledBucket[],
+): SampledPublication {
+  previous = validateSampledPublication(previous, evidence.policyRevision);
+  if (
+    previous.pages.length >= 288 ||
+    evidence.timestamp !== previous.startTimestamp - 300
+  )
+    throw new Error(
+      "Historical import must immediately precede a non-full window",
+    );
+  const first = nextSampledPublication(null, evidence, buckets);
+  const body = {
+    version: previous.version,
+    policyRevision: previous.policyRevision,
+    startTimestamp: evidence.timestamp,
+    nextTimestamp: previous.nextTimestamp,
+    pages: [...first.pages, ...previous.pages],
+  };
+  return { ...body, generation: digest(JSON.stringify(body)) };
+}
 export async function collectSampled(
   scope: Scope,
   store: Pick<SampledStore, "cursor" | "commit">,
