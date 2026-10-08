@@ -1,5 +1,9 @@
 # Sampled market: local 24-hour rebuild receipt
 
+Subsequent production wiring and current activation instructions are documented in
+[the rollout guide](2026-10-08-sampled-production-wiring.md). The release-boundary
+section below describes the earlier local-only commit, not the updated PR head.
+
 Read-only production access; no S3/DynamoDB writes, deployment, start-marker change,
 or API cutover. Local artifacts are in `.market-history-local/sampled-day-v1/`
 (ignored by Git). They include a frozen job manifest, original compressed archives,

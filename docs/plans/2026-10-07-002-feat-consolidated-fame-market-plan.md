@@ -428,8 +428,10 @@ shared pinned reader and a four-bucket live read-only probe. See the
 for proof and limitations. Milestone 1 remains in progress: full source qualification,
 production serving proof remains incomplete. A contiguous day has now passed local
 archive import, snapshot collection, Parquet valuation replay, native-volume comparison
-and loopback HTTP checks: see the [rebuild receipt](../research/2026-10-08-sampled-market-backfill.md). No production
-collector, API or publication cutover has occurred.
+and loopback HTTP checks: see the [rebuild receipt](../research/2026-10-08-sampled-market-backfill.md). Production collector/publisher wiring and a separate `view=sampled-market` read path
+are implemented and tested locally; see the [rollout guide](../research/2026-10-08-sampled-production-wiring.md).
+No deployment or consumer cutover has occurred. Historical production import and
+stable membership expansion remain follow-up work.
 
 ## Reviewable milestones
 

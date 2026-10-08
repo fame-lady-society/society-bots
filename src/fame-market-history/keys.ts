@@ -18,3 +18,17 @@ export const marketKey = (scopeId: string, timestamp: number) => ({
   pk: `market:${scopeId}:300`,
   sk: String(timestamp).padStart(16, "0"),
 });
+
+export const sampledKey = (revision: string, sk: string) => ({
+  pk: `sampled:${revision}`,
+  sk,
+});
+export const sampledPageKey = (
+  revision: string,
+  currency: string,
+  timestamp: number,
+  sha: string,
+) => ({
+  pk: `sampled-page:${revision}:${currency}`,
+  sk: `${timestamp}:${sha}`,
+});
