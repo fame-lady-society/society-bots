@@ -1,3 +1,4 @@
+import { parseActivityRequest, readActivity } from "./activity-api.ts";
 import { digest } from "./model.ts";
 import { sampledPolicy } from "./sampled-market.ts";
 import { sampledReader } from "./sampled-reader.ts";
@@ -34,6 +35,11 @@ export async function handler(event: APIGatewayProxyEventV2) {
   try {
     if (event.requestContext.http.method !== "GET" || event.body)
       throw new HistoryError(400, "invalid-request");
+    const activity =
+      new URLSearchParams(event.rawQueryString).get("view") === "activity";
+    const activityRequest = activity
+      ? parseActivityRequest(event.rawQueryString, scope)
+      : null;
     const chart =
       new URLSearchParams(event.rawQueryString).get("view") === "chart";
     const chartRequest = chart
@@ -46,7 +52,7 @@ export async function handler(event: APIGatewayProxyEventV2) {
       ? parseSampledRequest(event.rawQueryString)
       : null;
     const request =
-      sampled || chart
+      sampled || chart || activity
         ? null
         : parseHistoryRequest(event.rawQueryString, scope);
     const table = process.env.FAME_HISTORY_TABLE;
@@ -75,17 +81,26 @@ export async function handler(event: APIGatewayProxyEventV2) {
         .includes(etag)
     )
       return { statusCode: 304, headers: chartHeaders, body: "" };
-    const body = chart
-      ? await readChart(db, table, scope, chartRequest!, Date.now, publication)
-      : sampled
-        ? await readSampledMarket(db, table, scope, sampledRequest!)
-        : await historyReader({
+    const body = activity
+      ? await readActivity(db, table, scope, activityRequest!)
+      : chart
+        ? await readChart(
             db,
             table,
             scope,
-            metadata,
-            metadataRevision,
-          })(request!);
+            chartRequest!,
+            Date.now,
+            publication,
+          )
+        : sampled
+          ? await readSampledMarket(db, table, scope, sampledRequest!)
+          : await historyReader({
+              db,
+              table,
+              scope,
+              metadata,
+              metadataRevision,
+            })(request!);
     const json = JSON.stringify(body);
     // API Gateway HTTP API decodes this binary envelope for the client.
     const gzip = (event.headers?.["accept-encoding"] ?? "")
@@ -95,7 +110,7 @@ export async function handler(event: APIGatewayProxyEventV2) {
         const q = params.find((p) => p.trim().startsWith("q="));
         return coding === "gzip" && (!q || Number(q.trim().slice(2)) > 0);
       });
-    if (chart && gzip)
+    if ((chart || activity) && gzip)
       return {
         statusCode: 200,
         headers: { ...chartHeaders, "content-encoding": "gzip" },
@@ -104,7 +119,7 @@ export async function handler(event: APIGatewayProxyEventV2) {
       };
     return {
       statusCode: 200,
-      headers: chart ? chartHeaders : headers,
+      headers: chart || activity ? chartHeaders : headers,
       body: json,
     };
   } catch (error) {

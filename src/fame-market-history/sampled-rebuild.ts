@@ -1,3 +1,4 @@
+import { activityEvent } from "./activity-events.ts";
 import { eventSpot, extend } from "./spot-candles.ts";
 import { readArchive, validateBatchSequence } from "./archive.ts";
 import { decode, validateMetadata, type TokenMetadata } from "./decode.ts";
@@ -79,6 +80,11 @@ export function rebuildActivity(
         event.classification === "unknown"
       )
         rejected.add(`${t}:${raw.poolId}`);
+      const action = activityEvent(
+        event,
+        scope.pools.find((p) => p.id === raw.poolId)!,
+      );
+      if (action) (row.activityEvents ??= []).push(action);
       const spot = eventSpot(
         scope,
         scope.pools.find((p) => p.id === raw.poolId)!,
