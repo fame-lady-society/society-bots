@@ -214,3 +214,6 @@ node_modules
 .aws-sam
 .env.worktrees
 .worktrees
+
+# Local read-only market-history rebuild evidence and serving rehearsals
+.market-history-local/

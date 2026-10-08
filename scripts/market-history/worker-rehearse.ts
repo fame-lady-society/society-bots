@@ -1,3 +1,4 @@
+import { rehearseSampled } from "./sampled-production-rehearse.ts";
 import { rehearseRefill } from "./refill-rehearse.ts";
 import {
   publicReference,
@@ -317,6 +318,7 @@ try {
     assert.equal(content.ranges.length, 1);
     assert.equal(content.ranges[0].fromBlock, manifest.fromBlock);
   }
+  await rehearseSampled(db, s3, table);
   await rehearseReferences(db, s3, table);
   await rehearseRefill(db, s3, table);
   // Exercise the full advertised range against real DynamoDB pagination. The

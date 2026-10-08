@@ -9,6 +9,9 @@ import { publishReferences } from "./reference-worker.ts";
 import { awsReferences } from "./reference-storage.ts";
 import { failureCode } from "./failure.ts";
 
+import { publishSampled } from "./sampled-live.ts";
+import { awsSampled } from "./sampled-storage.ts";
+
 export const tokenMetadata: TokenMetadata = JSON.parse(
   readFileSync(new URL("./token-metadata.json", import.meta.url), "utf8"),
 );
@@ -49,6 +52,21 @@ export async function handler(_event: unknown, context: Context) {
           ? { result: outcomes[1].value }
           : { code: failureCode(outcomes[1].reason) }),
       }),
+    );
+    const sampled = await publishSampled(
+      scope,
+      awsSampled({
+        scope,
+        table,
+        bucket,
+        metadata: tokenMetadata,
+        canContinue: () => context.getRemainingTimeInMillis() > 25000,
+      }),
+      () => context.getRemainingTimeInMillis() > 30000,
+      2,
+    );
+    console.log(
+      JSON.stringify({ event: "fame-sampled-publication", ...sampled }),
     );
     for (const outcome of outcomes)
       if (outcome.status === "rejected") throw outcome.reason;

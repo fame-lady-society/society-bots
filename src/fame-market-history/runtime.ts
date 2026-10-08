@@ -9,6 +9,10 @@ import { referenceReader } from "./reference-rpc.ts";
 import { awsReferences } from "./reference-storage.ts";
 import { valuationReader } from "./valuation-rpc.ts";
 
+import { collectSampled } from "./sampled-live.ts";
+import { awsSampled } from "./sampled-storage.ts";
+import { sampledReader } from "./sampled-rpc.ts";
+
 function required(env: NodeJS.ProcessEnv, key: string): string {
   const value = env[key]?.trim();
   if (!value) throw new Error(`Missing ${key}`);
@@ -69,6 +73,12 @@ export async function runHistory(
       maxResponseBytes: 256 * 1024,
       deadline,
     });
+    const sampledRpc = boundedTransport({
+      url: config.rpcUrl,
+      maxRequests: 160,
+      maxResponseBytes: 256 * 1024,
+      deadline,
+    });
     const outcomes = await Promise.allSettled([
       collect({
         chain,
@@ -90,6 +100,17 @@ export async function runHistory(
               referenceRpc.capacity.remainingRequests() > 32 &&
               Date.now() < deadline - 30000,
           }),
+      dryRun
+        ? Promise.resolve(null)
+        : collectSampled(
+            scope,
+            awsSampled({ ...config, scope }),
+            chainReader(scope, sampledRpc.transport, 1),
+            sampledReader(scope, sampledRpc.transport),
+            () =>
+              sampledRpc.capacity.remainingRequests() > 32 &&
+              Date.now() < deadline - 30000,
+          ),
     ]);
     console.log(
       JSON.stringify({
@@ -99,6 +120,16 @@ export async function runHistory(
           ? { result: outcomes[1].value }
           : { code: failureCode(outcomes[1].reason) }),
         metrics: referenceRpc.metrics,
+      }),
+    );
+    console.log(
+      JSON.stringify({
+        event: "fame-sampled-collection",
+        status: outcomes[2].status,
+        ...(outcomes[2].status === "fulfilled"
+          ? { result: outcomes[2].value }
+          : { code: failureCode(outcomes[2].reason) }),
+        metrics: sampledRpc.metrics,
       }),
     );
     for (const outcome of outcomes)
