@@ -74,6 +74,11 @@ export function awsSampled({
   db?: DynamoDBDocumentClient;
   s3?: S3Client;
 }): SampledStore & {
+  revise(
+    previous: SampledPublication,
+    evidence: SampledEvidence,
+    buckets: SampledBucket[],
+  ): Promise<void>;
   importPrevious(
     previous: SampledPublication,
     evidence: SampledEvidence,
@@ -83,6 +88,7 @@ export function awsSampled({
 } {
   const revision = sampledPolicy(scope).revision;
   const rawCache = new Map<string, Buffer>();
+  const evidenceCache = new Map<number, SampledEvidence>();
   const get = async (Key: Record<string, string>) =>
     (
       await db.send(
@@ -154,6 +160,32 @@ export function awsSampled({
       throw new Error("Sampled archive verification failed");
     return { key, sha, bytes };
   };
+  const read = async (timestamp: number) => {
+    const cached = evidenceCache.get(timestamp);
+    if (cached) return cached;
+    const m = await get(sampledKey(revision, `observation:${timestamp}`));
+    if (
+      !m ||
+      m.timestamp !== timestamp ||
+      m.bytes > 65536 ||
+      m.key !== `raw/sampled/${revision}/${timestamp}/${m.sha256}.json`
+    )
+      throw new Error("Invalid sampled manifest");
+    const e = JSON.parse(
+      (await download(m.key, m.bytes, m.sha256)).toString(),
+    ) as SampledEvidence;
+    if (e.timestamp !== timestamp)
+      throw new Error("Sampled timestamp mismatch");
+    sampledMarketBucket(
+      scope,
+      "ETH",
+      timestamp,
+      deriveSampledObservation(scope, e),
+      [],
+    );
+    evidenceCache.set(timestamp, e);
+    return e;
+  };
   return {
     collected,
     cursor: async (initial) => {
@@ -217,29 +249,12 @@ export function awsSampled({
         }),
       );
     },
-    read: async (timestamp) => {
-      const m = await get(sampledKey(revision, `observation:${timestamp}`));
-      if (
-        !m ||
-        m.timestamp !== timestamp ||
-        m.bytes > 65536 ||
-        m.key !== `raw/sampled/${revision}/${timestamp}/${m.sha256}.json`
-      )
-        throw new Error("Invalid sampled manifest");
-      const e = JSON.parse(
-        (await download(m.key, m.bytes, m.sha256)).toString(),
-      ) as SampledEvidence;
-      if (e.timestamp !== timestamp)
-        throw new Error("Sampled timestamp mismatch");
-      sampledMarketBucket(
-        scope,
-        "ETH",
-        timestamp,
-        deriveSampledObservation(scope, e),
-        [],
-      );
-      return e;
-    },
+    read,
+    previous: async (timestamp) =>
+      evidenceCache.has(timestamp - 300) ||
+      (await get(sampledKey(revision, `observation:${timestamp - 300}`)))
+        ? read(timestamp - 300)
+        : null,
     publication: async () => {
       const row = await get(sampledKey(revision, "published"));
       if (!row) return null;
@@ -316,6 +331,63 @@ export function awsSampled({
       return newest.headers.at(-1)!.timestamp >= e.timestamp + 300
         ? rows
         : null;
+    },
+    revise: async (previous, e, buckets) => {
+      previous = validateSampledPublication(previous, revision);
+      const replacement = nextSampledPublication(null, e, buckets).pages[0];
+      if (!previous.pages.some((p) => p.timestamp === e.timestamp))
+        throw new Error("Revision outside published window");
+      const pages = previous.pages.map((p) =>
+        p.timestamp === e.timestamp ? replacement : p,
+      );
+      const { generation: _, ...body } = previous;
+      const next = { ...body, pages };
+      const generation = digest(JSON.stringify(next));
+      if (generation === previous.generation) return;
+      await db.send(
+        new TransactWriteCommand({
+          TransactItems: [
+            {
+              ConditionCheck: {
+                TableName: table,
+                Key: sampledKey(revision, `observation:${e.timestamp}`),
+                ConditionExpression: "sha256 = :sha",
+                ExpressionAttributeValues: {
+                  ":sha": digest(JSON.stringify(e)),
+                },
+              },
+            },
+            ...buckets.map((b) => ({
+              Put: {
+                TableName: table,
+                Item: {
+                  ...sampledPageKey(
+                    revision,
+                    b.currency,
+                    e.timestamp,
+                    replacement[b.currency],
+                  ),
+                  body: JSON.stringify(b),
+                },
+                ConditionExpression: "attribute_not_exists(pk) OR body = :body",
+                ExpressionAttributeValues: { ":body": JSON.stringify(b) },
+              },
+            })),
+            {
+              Put: {
+                TableName: table,
+                Item: {
+                  ...sampledKey(revision, "published"),
+                  ...next,
+                  generation,
+                },
+                ConditionExpression: "generation = :old",
+                ExpressionAttributeValues: { ":old": previous.generation },
+              },
+            },
+          ],
+        }),
+      );
     },
     importPrevious: async (previous, e, buckets, jobId) => {
       if (!/^[a-f0-9]{64}$/.test(jobId))

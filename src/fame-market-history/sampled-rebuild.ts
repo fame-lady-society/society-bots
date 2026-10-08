@@ -1,3 +1,4 @@
+import { eventSpot, extend } from "./spot-candles.ts";
 import { readArchive, validateBatchSequence } from "./archive.ts";
 import { decode, validateMetadata, type TokenMetadata } from "./decode.ts";
 import {
@@ -78,6 +79,14 @@ export function rebuildActivity(
         event.classification === "unknown"
       )
         rejected.add(`${t}:${raw.poolId}`);
+      const spot = eventSpot(
+        scope,
+        scope.pools.find((p) => p.id === raw.poolId)!,
+        event,
+        metadata,
+      );
+      if (spot === null) row.spotInvalid = true;
+      else if (spot) row.spot = extend(row.spot, spot);
       if (event.classification !== "trade") continue;
       row.baseVolumeAtoms = String(
         BigInt(row.baseVolumeAtoms) + BigInt(event.baseAtoms!),
@@ -121,7 +130,14 @@ export function sampledPages(
   const pages: { key: string; sha256: string; bytes: Buffer }[] = [];
   for (const currency of ["ETH", "USDC"] as const) {
     const buckets = [...activity.buckets].map(([t, a]) =>
-      sampledMarketBucket(scope, currency, t, observations.get(t) ?? null, a),
+      sampledMarketBucket(
+        scope,
+        currency,
+        t,
+        observations.get(t) ?? null,
+        a,
+        observations.get(t - 300) ?? null,
+      ),
     );
     if (Buffer.byteLength(JSON.stringify({ buckets })) > 2 * 1024 * 1024)
       throw new Error("Sampled response exceeds API cap");
