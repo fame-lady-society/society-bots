@@ -16,3 +16,24 @@ test("failure labels cannot leak provider messages or credentials", () => {
     ),
   ).toBe("canonical-conflict");
 });
+
+test("wrapped capacity failures have actionable fixed labels", async () => {
+  const { RangeLimit, WorkLimit } = await import("./limits.ts");
+  expect(
+    failureCode(new WorkLimit("Single block exceeds event capacity")),
+  ).toBe("single-block-capacity");
+  expect(
+    failureCode(
+      new Error("provider wrapper", {
+        cause: new RangeLimit("RPC response byte limit exceeded"),
+      }),
+    ),
+  ).toBe("rpc-response-limit");
+  expect(
+    failureCode(
+      new Error("provider wrapper", {
+        cause: new WorkLimit("Total RPC response allowance exhausted"),
+      }),
+    ),
+  ).toBe("work-limit");
+});

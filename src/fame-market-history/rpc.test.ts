@@ -115,3 +115,45 @@ test("total response allowance also bounds many individually small responses", a
   await expect(client.getChainId()).rejects.toThrow();
   expect(rpc.metrics.requests).toBe(2);
 });
+
+test("busy block hash lists have a bounded header allowance independent of call/log limits", async () => {
+  const make = (size: number, total = 8 * 1024 * 1024) => {
+    const rpc = boundedTransport({
+      url: "https://example.test/private-key",
+      maxRequests: 4,
+      maxResponseBytes: 256 * 1024,
+      maxTotalResponseBytes: total,
+      deadline: Date.now() + 60000,
+      fetcher: async (_input, init) =>
+        response(JSON.parse(String(init?.body)), "x".repeat(size)),
+    });
+    return createPublicClient({ transport: rpc.transport });
+  };
+  for (const method of [
+    "eth_getBlockByNumber",
+    "eth_getBlockByHash",
+  ] as const) {
+    const client = make(326359);
+    expect(
+      await client.request({ method, params: ["0x1", false] } as never),
+    ).toHaveLength(326359);
+    await expect(
+      make(4 * 1024 * 1024).request({
+        method,
+        params: ["0x1", false],
+      } as never),
+    ).rejects.toThrow();
+  }
+  for (const method of ["eth_getLogs", "eth_call"]) {
+    await expect(
+      make(326359).request({ method, params: [] } as never),
+    ).rejects.toThrow();
+  }
+  // Raising a per-header cap never bypasses the cumulative invocation allowance.
+  await expect(
+    make(326359, 300000).request({
+      method: "eth_getBlockByNumber",
+      params: ["0x1", false],
+    }),
+  ).rejects.toThrow();
+});
