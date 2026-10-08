@@ -73,6 +73,7 @@ export interface SampledStore {
   collected(): Promise<SampledCursor | null>;
   commit(cursor: SampledCursor, evidence: SampledEvidence): Promise<void>;
   read(timestamp: number): Promise<SampledEvidence>;
+  previous(timestamp: number): Promise<SampledEvidence | null>;
   publication(): Promise<SampledPublication | null>;
   activity(evidence: SampledEvidence): Promise<PoolActivity[] | null>;
   publish(
@@ -235,9 +236,13 @@ export async function publishSampled(
         nextTimestamp: next,
         waitingFor: "execution-archive",
       };
+    const priorEvidence = await store.previous(next);
+    const opening = priorEvidence
+      ? deriveSampledObservation(scope, priorEvidence)
+      : null;
     const o = deriveSampledObservation(scope, e),
       buckets = (["ETH", "USDC"] as const).map((c) =>
-        sampledMarketBucket(scope, c, next, o, activity),
+        sampledMarketBucket(scope, c, next, o, activity, opening),
       );
     await store.publish(prior, e, buckets);
     prior = nextSampledPublication(prior, e, buckets);

@@ -208,6 +208,47 @@ export async function rehearseSampled(
     }),
   );
   assert.ok(rows.Items?.length);
+  // Rebuild changes only immutable page references, not the live frontier or collector.
+  const revisionBefore = (await store.publication())!;
+  const revisionCursor = await store.collected();
+  const revisedActivity = (await store.activity(first))!;
+  const active = revisedActivity.find((a) => a.tradeCount > 0)!;
+  active.spot = {
+    open: { numerator: "1", denominator: "1" },
+    high: { numerator: "2", denominator: "1" },
+    low: { numerator: "1", denominator: "1" },
+    close: { numerator: "2", denominator: "1" },
+    count: active.tradeCount,
+  };
+  const revisedBuckets = (["ETH", "USDC"] as const).map((c) =>
+    sampledMarketBucket(
+      scope,
+      c,
+      start,
+      deriveSampledObservation(scope, first),
+      revisedActivity,
+    ),
+  );
+  await store.revise(revisionBefore, first, revisedBuckets);
+  assert.equal(
+    (await store.publication())!.nextTimestamp,
+    revisionBefore.nextTimestamp,
+  );
+  assert.deepEqual(await store.collected(), revisionCursor);
+  await assert.rejects(() =>
+    store.revise(revisionBefore, first, revisedBuckets),
+  );
+  await store.revise((await store.publication())!, first, revisedBuckets); // idempotent
+  const revisedRead = await readSampledMarket(db, table, scope, {
+    currency: "ETH",
+    from: start,
+    to: start + 300,
+  });
+  assert.equal(revisedRead.buckets[0].totals.tradeCount, 2);
+  assert.ok(
+    revisedRead.buckets[0].series.find((p) => p.poolId === active.poolId)!
+      .candle,
+  );
   // Synthetic 24-hour load uses real DynamoDB page records and transaction reads.
   let publication = (await store.publication())!;
   let writes: Record<string, unknown>[] = [];

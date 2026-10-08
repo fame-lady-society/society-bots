@@ -1,3 +1,4 @@
+import { extend, type SpotRange } from "./spot-candles.ts";
 import type { Scope, Header } from "./model.ts";
 import { FAME_ADDRESS, digest, integer, hash } from "./model.ts";
 import { ROUTES, WETH } from "./valuation.ts";
@@ -119,6 +120,8 @@ export interface PoolActivity {
   quoteVolumeAtoms: string;
   tradeCount: number;
   transactionHashes: string[];
+  spot?: SpotRange;
+  spotInvalid?: boolean;
 }
 function atoms(value: string, decimals: number) {
   if (!/^(0|[1-9][0-9]*)$/.test(value))
@@ -133,6 +136,7 @@ export function sampledMarketBucket(
   timestamp: number,
   observation: SampledObservation | null,
   activities: PoolActivity[],
+  previous: SampledObservation | null = null,
 ) {
   if (currency !== "ETH" && currency !== "USDC")
     throw new Error("Invalid currency");
@@ -160,6 +164,15 @@ export function sampledMarketBucket(
     for (const r of Object.values(o.rates))
       if (r && parse(r)[0] === 0n) throw new Error("Nonpositive sampled price");
   }
+  if (
+    previous &&
+    (previous.policyRevision !== policy.revision ||
+      previous.timestamp !== timestamp - 300 ||
+      previous.block.timestamp >= timestamp ||
+      previous.after.timestamp < timestamp ||
+      (observation && previous.block.number > observation.block.number))
+  )
+    throw new Error("Invalid candle opening observation");
   if (
     new Set(activities.map((a) => a.poolId)).size !== activities.length ||
     activities.some((a) => !scope.pools.some((p) => p.id === a.poolId))
@@ -228,6 +241,48 @@ export function sampledMarketBucket(
       amount && conversion && quoteDecimals !== undefined
         ? multiply(atoms(amount.quoteVolumeAtoms, quoteDecimals), conversion)
         : null;
+    let candle: {
+      open: string;
+      high: string;
+      low: string;
+      close: string;
+      coverage: "complete" | "partial" | "reference-only";
+    } | null = null;
+    if (a?.coverage === "complete" && !a.spotInvalid && mark && conversion) {
+      if (!a.spot && a.tradeCount === 0) {
+        const value = decimal(multiply(mark, conversion));
+        candle = {
+          open: value,
+          high: value,
+          low: value,
+          close: value,
+          coverage: "reference-only",
+        };
+      } else if (a.spot && a.spot.count >= a.tradeCount) {
+        const before = previous?.rates[pool.id];
+        const opening = before
+          ? pool.token0 === FAME_ADDRESS
+            ? before
+            : invert(before)
+          : null;
+        let range = a.spot;
+        if (opening) {
+          range = extend(
+            extend(extend(extend(undefined, opening), a.spot.high), a.spot.low),
+            a.spot.close,
+          );
+          range.open = opening;
+        }
+        range = extend(range, mark);
+        candle = {
+          open: decimal(multiply(range.open, conversion)),
+          high: decimal(multiply(range.high, conversion)),
+          low: decimal(multiply(range.low, conversion)),
+          close: decimal(multiply(range.close, conversion)),
+          coverage: opening ? "complete" : "partial",
+        };
+      }
+    }
     const b = observation?.balances[pool.id];
     const fd = observation?.decimals[FAME_ADDRESS];
     const inventory =
@@ -254,6 +309,7 @@ export function sampledMarketBucket(
       poolId: pool.id,
       route: policy.routes[pool.id][currency],
       eventCoverage: a?.coverage ?? "missing",
+      candle,
       price,
       volume,
       inventory,
@@ -271,6 +327,7 @@ export function sampledMarketBucket(
     resolution: 300,
     policyRevision: policy.revision,
     priceMethod: "bucket-end-spot" as const,
+    candleMethod: "pool-spot-events-at-bucket-end-rate" as const,
     conversionMethod: "bucket-end-spot" as const,
     samplingIntervalSeconds: 300,
     observation: observation
