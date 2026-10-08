@@ -64,6 +64,12 @@ export function boundedTransport({
           metrics.requests++;
           metrics.methods[method] = (metrics.methods[method] ?? 0) + 1;
           const id = metrics.requests;
+          // eth_getBlockByNumber(false) still includes every transaction hash.
+          // Busy Base blocks can exceed the small contract-call response allowance.
+          const responseLimit =
+            method === "eth_getBlockByNumber" || method === "eth_getBlockByHash"
+              ? Math.max(maxResponseBytes, 4 * 1024 * 1024)
+              : maxResponseBytes;
           const controller = new AbortController();
           const timeout = setTimeout(
             () => controller.abort(),
@@ -98,7 +104,7 @@ export function boundedTransport({
                 await reader.cancel();
                 throw new WorkLimit("Total RPC response allowance exhausted");
               }
-              if (size > maxResponseBytes) {
+              if (size > responseLimit) {
                 await reader.cancel();
                 throw new RangeLimit("RPC response byte limit exceeded");
               }

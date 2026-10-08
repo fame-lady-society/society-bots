@@ -1,11 +1,14 @@
+import { RangeLimit, WorkLimit } from "./limits.ts";
 /** Return only fixed labels, never an SDK message, URL, or request body. */
 export function failureCode(error: unknown): string {
   const seen = new Set<unknown>();
   let current = error;
   while (current instanceof Error && !seen.has(current)) {
     seen.add(current);
+    if (current instanceof RangeLimit) return "rpc-response-limit";
     if (current.message.includes("Single block"))
       return "single-block-capacity";
+    if (current instanceof WorkLimit) return "work-limit";
     if (
       current.message.includes("allowance") ||
       current.message.includes("deadline")
