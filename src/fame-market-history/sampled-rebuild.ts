@@ -86,7 +86,14 @@ export function rebuildActivity(
         metadata,
       );
       if (spot === null) row.spotInvalid = true;
-      else if (spot) row.spot = extend(row.spot, spot);
+      else if (spot) {
+        row.spot = extend(row.spot, spot);
+        (row.spotEvents ??= []).push({
+          blockNumber: raw.blockNumber,
+          logIndex: raw.logIndex,
+          price: spot,
+        });
+      }
       if (event.classification !== "trade") continue;
       row.baseVolumeAtoms = String(
         BigInt(row.baseVolumeAtoms) + BigInt(event.baseAtoms!),

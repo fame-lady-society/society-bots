@@ -1,3 +1,13 @@
+import {
+  parse,
+  fraction,
+  multiply,
+  invert,
+  decimal,
+  add,
+  type Fraction,
+} from "./price-math.ts";
+import { blendedMarket } from "./market-blend.ts";
 import { extend, type SpotRange } from "./spot-candles.ts";
 import type { Scope, Header } from "./model.ts";
 import { FAME_ADDRESS, digest, integer, hash } from "./model.ts";
@@ -5,44 +15,15 @@ import { ROUTES, WETH } from "./valuation.ts";
 import { USDC } from "./reference.ts";
 
 export type Currency = "ETH" | "USDC";
-export type Fraction = { numerator: string; denominator: string };
 export type Availability = "complete" | "partial" | "unavailable";
+export {
+  fraction,
+  multiply,
+  invert,
+  decimal,
+  type Fraction,
+} from "./price-math.ts";
 const one: Fraction = { numerator: "1", denominator: "1" };
-export function fraction(n: bigint, d: bigint): Fraction {
-  if (n < 0n || d <= 0n) throw new Error("Invalid nonnegative fraction");
-  let a = n,
-    b = d;
-  while (b) [a, b] = [b, a % b];
-  return { numerator: String(n / a), denominator: String(d / a) };
-}
-function parse(r: Fraction): [bigint, bigint] {
-  if (
-    !/^(0|[1-9][0-9]*)$/.test(r.numerator) ||
-    !/^[1-9][0-9]*$/.test(r.denominator)
-  )
-    throw new Error("Invalid fraction encoding");
-  return [BigInt(r.numerator), BigInt(r.denominator)];
-}
-export function multiply(a: Fraction, b: Fraction): Fraction {
-  const [an, ad] = parse(a),
-    [bn, bd] = parse(b);
-  return fraction(an * bn, ad * bd);
-}
-function add(a: Fraction, b: Fraction): Fraction {
-  const [an, ad] = parse(a),
-    [bn, bd] = parse(b);
-  return fraction(an * bd + bn * ad, ad * bd);
-}
-export function invert(a: Fraction): Fraction {
-  const [n, d] = parse(a);
-  return fraction(d, n);
-}
-/** Round only at the public decimal boundary, never between conversion hops. */
-export function decimal(a: Fraction): string {
-  const [n, d] = parse(a);
-  const s = ((n * 10n ** 18n) / d).toString().padStart(19, "0");
-  return `${s.slice(0, -18)}.${s.slice(-18)}`;
-}
 const ethUsdcPool = "uniswap-v3-usdc-weth-5bps";
 export function sampledPolicy(scope: Scope) {
   const routes: Record<string, Record<Currency, string[]>> = {};
@@ -122,6 +103,7 @@ export interface PoolActivity {
   transactionHashes: string[];
   spot?: SpotRange;
   spotInvalid?: boolean;
+  spotEvents?: { blockNumber: number; logIndex: number; price: Fraction }[];
 }
 function atoms(value: string, decimals: number) {
   if (!/^(0|[1-9][0-9]*)$/.test(value))
@@ -317,6 +299,24 @@ export function sampledMarketBucket(
       quoteVolumeAtoms: amount?.quoteVolumeAtoms ?? null,
       tradeCount: amount?.tradeCount ?? null,
       transactionHashes: amount?.transactionHashes ?? [],
+      blendInput: {
+        poolId: pool.id,
+        weight: previous?.balances[pool.id]
+          ? BigInt(
+              pool.token0 === FAME_ADDRESS
+                ? previous.balances[pool.id]!.balance0
+                : previous.balances[pool.id]!.balance1,
+            )
+          : null,
+        opening: previous?.rates[pool.id]
+          ? pool.token0 === FAME_ADDRESS
+            ? previous.rates[pool.id]!
+            : invert(previous.rates[pool.id]!)
+          : null,
+        closing: mark,
+        conversion,
+        activity: a,
+      },
     };
   });
   const complete = rows.every((r) => r.eventCoverage === "complete");
@@ -333,12 +333,18 @@ export function sampledMarketBucket(
     observation: observation
       ? { block: observation.block, after: observation.after }
       : null,
-    series: rows.map(({ transactionHashes: _transactions, ...r }) => ({
-      ...r,
-      price: r.price ? decimal(r.price) : null,
-      volume: r.volume ? decimal(r.volume) : null,
-      inventory: r.inventory ? decimal(r.inventory) : null,
-    })),
+    market: blendedMarket(
+      rows.map((r) => r.blendInput),
+      timestamp,
+    ),
+    series: rows.map(
+      ({ transactionHashes: _transactions, blendInput: _blend, ...r }) => ({
+        ...r,
+        price: r.price ? decimal(r.price) : null,
+        volume: r.volume ? decimal(r.volume) : null,
+        inventory: r.inventory ? decimal(r.inventory) : null,
+      }),
+    ),
     totals: {
       eventCoverage: complete
         ? "complete"

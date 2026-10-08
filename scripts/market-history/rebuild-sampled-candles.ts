@@ -46,7 +46,7 @@ try {
   );
   const prepared = [];
   const withoutCandles = (b: Record<string, any>) => {
-    const { candleMethod, publicationStatus, ...rest } = b;
+    const { candleMethod, publicationStatus, market, ...rest } = b;
     return {
       ...rest,
       series: rest.series.map(({ candle, ...p }: Record<string, unknown>) => p),
@@ -140,6 +140,15 @@ try {
       buckets: prepared.length,
       revised,
       conflicts,
+      marketNonFlat: prepared
+        .flatMap((p) => p.buckets)
+        .filter(
+          (b) =>
+            b.market.candle && b.market.candle.high !== b.market.candle.low,
+        ).length,
+      marketUnavailable: prepared
+        .flatMap((p) => p.buckets)
+        .filter((b) => b.market.price === null).length,
       nonFlat: candles.filter((c) => c && c.high !== c.low).length,
       partial: candles.filter((c) => c?.coverage === "partial").length,
       referenceOnly: candles.filter((c) => c?.coverage === "reference-only")
