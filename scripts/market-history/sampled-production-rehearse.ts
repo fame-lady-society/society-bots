@@ -1,3 +1,4 @@
+import { readActivity } from "../../src/fame-market-history/activity-api.ts";
 import { readChart } from "../../src/fame-market-history/chart-api.ts";
 /** Invoked by loopback-only DynamoDB rehearsal; S3 uses its checksummed object adapter. */
 import assert from "node:assert/strict";
@@ -117,6 +118,30 @@ export async function rehearseSampled(
     ).buckets.length,
     1,
   );
+  const feedRequest = { ...request, type: "all" as const, limit: 1 };
+  const feed = await readActivity(readOnlyDb, table, scope, feedRequest);
+  assert.equal(feed.rows.length, 1);
+  assert.ok(feed.nextCursor);
+  const rest = await readActivity(readOnlyDb, table, scope, {
+    ...feedRequest,
+    cursor: feed.nextCursor!,
+  });
+  assert.equal(rest.rows.length, 1);
+  assert.notEqual(feed.rows[0].id, rest.rows[0].id);
+  assert.equal(rest.nextCursor, null);
+  const chartBefore = await store.publication(),
+    collectorBefore = await store.collected();
+  // Sidecar indexing is idempotent and never changes either production cursor.
+  const ethPublished = (
+    await readSampledMarket(db, table, scope, { ...request, currency: "ETH" })
+  ).buckets[0];
+  const strip = ({ publicationStatus, ...b }: typeof ethPublished) => b;
+  await store.indexActivity(first, [
+    strip(ethPublished),
+    strip(result.buckets[0]),
+  ]);
+  assert.deepEqual(await store.publication(), chartBefore);
+  assert.deepEqual(await store.collected(), collectorBefore);
   // A stale writer must not roll the generation back, even if its row body matches.
   const old = await store.read(start);
   const ethBucket = (

@@ -1,3 +1,5 @@
+import { valuedActivity } from "./activity-events.ts";
+import { activityIndexed, writeActivity } from "./activity-storage.ts";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import {
   DynamoDBDocumentClient,
@@ -74,6 +76,10 @@ export function awsSampled({
   db?: DynamoDBDocumentClient;
   s3?: S3Client;
 }): SampledStore & {
+  indexActivity(
+    evidence: SampledEvidence,
+    buckets: SampledBucket[],
+  ): Promise<void>;
   revise(
     previous: SampledPublication,
     evidence: SampledEvidence,
@@ -203,6 +209,100 @@ export function awsSampled({
     evidenceCache.set(timestamp, e);
     return e;
   };
+  let lastActivity:
+    | {
+        sha: string;
+        rows: NonNullable<Awaited<ReturnType<SampledStore["activity"]>>>;
+      }
+    | undefined;
+  const activity = async (e: SampledEvidence) => {
+    const sha = digest(JSON.stringify(e));
+    if (lastActivity?.sha === sha) return structuredClone(lastActivity.rows);
+    if (!metadata) throw new Error("Missing publisher token metadata");
+    const result = await db.send(
+      new QueryCommand({
+        TableName: table,
+        ConsistentRead: true,
+        KeyConditionExpression: "pk = :pk AND sk BETWEEN :lo AND :hi",
+        ExpressionAttributeValues: {
+          ":pk": `scope:${scope.id}`,
+          ":lo": rangeKey(1),
+          ":hi": rangeKey(e.after.number),
+        },
+        ScanIndexForward: false,
+        Limit: 16,
+      }),
+    );
+    const inputs: { manifest: Manifest; bytes: Uint8Array }[] = [];
+    let size = 0,
+      bracketed = false;
+    for (const row of result.Items ?? []) {
+      const m = row as Manifest;
+      if (!m.key.startsWith(`raw/${m.schema}/chain=8453/scope=${scope.id}/`))
+        throw new Error("Unexpected execution archive");
+      size += m.bytes;
+      if (size > 8 * 1024 * 1024)
+        throw new Error("Sampled execution read allowance exceeded");
+      if (!canContinue()) return null;
+      let bytes = rawCache.get(m.sha256);
+      if (!bytes) {
+        bytes = await download(m.key, m.bytes, m.sha256);
+        rawCache.set(m.sha256, bytes);
+      }
+      const batch = readArchive(m, bytes);
+      for (const h of batch.headers)
+        for (const boundary of [e.block, e.after])
+          if (
+            h.number === boundary.number &&
+            (h.hash !== boundary.hash || h.timestamp !== boundary.timestamp)
+          )
+            throw new Error(
+              "Sampled and execution canonical boundary mismatch",
+            );
+      inputs.push({ manifest: m, bytes });
+      if (batch.headers[0].timestamp < e.timestamp) {
+        bracketed = true;
+        break;
+      }
+    }
+    if (!bracketed && result.LastEvaluatedKey)
+      throw new Error("Sampled execution range allowance exceeded");
+    if (!inputs.length) return null;
+    const rows = rebuildActivity(
+      scope,
+      metadata,
+      inputs,
+      e.timestamp,
+      e.timestamp + 300,
+    ).buckets.get(e.timestamp)!;
+    // Never freeze pending/partial native counts into an immutable live generation.
+    const newest = readArchive(inputs[0].manifest, inputs[0].bytes);
+    if (newest.headers.at(-1)!.timestamp < e.timestamp + 300) return null;
+    lastActivity = { sha, rows: structuredClone(rows) };
+    return rows;
+  };
+  const indexActivity = async (
+    e: SampledEvidence,
+    buckets: SampledBucket[],
+  ) => {
+    const ref = nextSampledPublication(null, e, buckets).pages[0];
+    if (await activityIndexed(db, table, revision, ref)) return;
+    const rows = await activity(e);
+    if (!rows) throw new Error("Activity archive not ready");
+    const coverage = rows.every((r) => r.coverage === "complete")
+      ? "complete"
+      : rows.some((r) => r.coverage !== "missing")
+        ? "partial"
+        : "missing";
+    await writeActivity(
+      db,
+      table,
+      revision,
+      ref,
+      valuedActivity(scope, deriveSampledObservation(scope, e), rows),
+      coverage,
+    );
+  };
   return {
     collected,
     cursor: async (initial) => {
@@ -285,70 +385,8 @@ export function awsSampled({
         throw new Error("Invalid sampled publication");
       return validateSampledPublication(p as SampledPublication, revision);
     },
-    activity: async (e) => {
-      if (!metadata) throw new Error("Missing publisher token metadata");
-      const result = await db.send(
-        new QueryCommand({
-          TableName: table,
-          ConsistentRead: true,
-          KeyConditionExpression: "pk = :pk AND sk BETWEEN :lo AND :hi",
-          ExpressionAttributeValues: {
-            ":pk": `scope:${scope.id}`,
-            ":lo": rangeKey(1),
-            ":hi": rangeKey(e.after.number),
-          },
-          ScanIndexForward: false,
-          Limit: 16,
-        }),
-      );
-      const inputs: { manifest: Manifest; bytes: Uint8Array }[] = [];
-      let size = 0,
-        bracketed = false;
-      for (const row of result.Items ?? []) {
-        const m = row as Manifest;
-        if (!m.key.startsWith(`raw/${m.schema}/chain=8453/scope=${scope.id}/`))
-          throw new Error("Unexpected execution archive");
-        size += m.bytes;
-        if (size > 8 * 1024 * 1024)
-          throw new Error("Sampled execution read allowance exceeded");
-        if (!canContinue()) return null;
-        let bytes = rawCache.get(m.sha256);
-        if (!bytes) {
-          bytes = await download(m.key, m.bytes, m.sha256);
-          rawCache.set(m.sha256, bytes);
-        }
-        const batch = readArchive(m, bytes);
-        for (const h of batch.headers)
-          for (const boundary of [e.block, e.after])
-            if (
-              h.number === boundary.number &&
-              (h.hash !== boundary.hash || h.timestamp !== boundary.timestamp)
-            )
-              throw new Error(
-                "Sampled and execution canonical boundary mismatch",
-              );
-        inputs.push({ manifest: m, bytes });
-        if (batch.headers[0].timestamp < e.timestamp) {
-          bracketed = true;
-          break;
-        }
-      }
-      if (!bracketed && result.LastEvaluatedKey)
-        throw new Error("Sampled execution range allowance exceeded");
-      if (!inputs.length) return null;
-      const rows = rebuildActivity(
-        scope,
-        metadata,
-        inputs,
-        e.timestamp,
-        e.timestamp + 300,
-      ).buckets.get(e.timestamp)!;
-      // Never freeze pending/partial native counts into an immutable live generation.
-      const newest = readArchive(inputs[0].manifest, inputs[0].bytes);
-      return newest.headers.at(-1)!.timestamp >= e.timestamp + 300
-        ? rows
-        : null;
-    },
+    activity,
+    indexActivity,
     revise: async (previous, e, buckets) => {
       previous = validateSampledPublication(previous, revision);
       const replacement = nextSampledPublication(null, e, buckets).pages[0];
@@ -361,6 +399,7 @@ export function awsSampled({
       const next = { ...body, pages };
       const generation = digest(JSON.stringify(next));
       if (generation === previous.generation) return;
+      await indexActivity(e, buckets);
       await db.send(
         new TransactWriteCommand({
           TransactItems: [
@@ -411,6 +450,7 @@ export function awsSampled({
       if (!/^[a-f0-9]{64}$/.test(jobId))
         throw new Error("Invalid import job identity");
       const next = prependSampledPublication(previous, e, buckets);
+      await indexActivity(e, buckets);
       const { key, sha, bytes } = await archiveEvidence(e);
       const ref = next.pages[0];
       await db.send(
@@ -485,6 +525,7 @@ export function awsSampled({
     },
     publish: async (previous, e, buckets) => {
       const next = nextSampledPublication(previous, e, buckets);
+      await indexActivity(e, buckets);
       const ref = next.pages.at(-1)!;
       await db.send(
         new TransactWriteCommand({

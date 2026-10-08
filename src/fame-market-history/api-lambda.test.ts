@@ -143,3 +143,53 @@ test("chart HTTP negotiates gzip, snapshots revalidate before page reads, and de
   });
   expect(identity).not.toHaveProperty("isBase64Encoded");
 });
+
+test("activity HTTP serves gzip and explicit gaps through the existing read-only route", async () => {
+  const { gunzipSync } = await import("node:zlib");
+  const { scope, epoch } = await import("./worker-fixture.ts");
+  const { sampledFixture } = await import("./sampled-fixture.ts");
+  const { sampledMarketBucket } = await import("./sampled-market.ts");
+  const { deriveSampledObservation } = await import("./sampled-rpc.ts");
+  const { nextSampledPublication } = await import("./sampled-live.ts");
+  const e = sampledFixture(),
+    o = deriveSampledObservation(scope, e);
+  const p = nextSampledPublication(
+    null,
+    e,
+    (["ETH", "USDC"] as const).map((c) =>
+      sampledMarketBucket(scope, c, epoch, o, []),
+    ),
+  );
+  process.env.FAME_HISTORY_TABLE = "test";
+  const send = jest
+    .spyOn(DynamoDBDocumentClient.prototype, "send")
+    .mockImplementation(async (command: any) =>
+      command.input.Key ? { Item: p } : ({ Responses: { test: [] } } as never),
+    );
+  const request = event(
+    `view=activity&currency=ETH&resolution=300&from=${epoch}&to=${epoch + 300}`,
+  );
+  request.headers = { "accept-encoding": "gzip" };
+  const r = await handler(request);
+  expect(r.statusCode).toBe(200);
+  expect(r.headers).toMatchObject({
+    "content-encoding": "gzip",
+    "cache-control": "private, no-store",
+  });
+  expect(
+    JSON.parse(gunzipSync(Buffer.from(r.body, "base64")).toString()),
+  ).toMatchObject({
+    version: "fame-activity-v1",
+    rows: [],
+    coverage: {
+      unavailableBuckets: [
+        { timestamp: epoch, reason: "activity-not-indexed" },
+      ],
+    },
+  });
+  send.mockClear();
+  expect(
+    (await handler(event(request.rawQueryString + "&min=-1"))).statusCode,
+  ).toBe(400);
+  expect(send).not.toHaveBeenCalled();
+});

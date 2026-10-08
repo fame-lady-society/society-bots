@@ -1,3 +1,4 @@
+import type { NativeActivityEvent } from "./activity-events.ts";
 import {
   parse,
   fraction,
@@ -94,6 +95,27 @@ export interface SampledObservation {
   balances: Record<string, { balance0: string; balance1: string } | null>;
   decimals: Record<string, number>;
 }
+export function conversionFor(
+  policy: ReturnType<typeof sampledPolicy>,
+  pool: Scope["pools"][number],
+  currency: Currency,
+  observation: SampledObservation | null,
+): Fraction | null {
+  const quote = pool.token0 === FAME_ADDRESS ? pool.token1 : pool.token0;
+  let current: string = quote;
+  let conversion: Fraction | null = one;
+  for (const id of policy.routes[pool.id][currency]) {
+    const p = policy.sources.find((p) => p.id === id)!;
+    const r = observation?.rates[id];
+    if (!r) {
+      conversion = null;
+      break;
+    }
+    conversion = multiply(conversion, p.token0 === current ? r : invert(r));
+    current = p.token0 === current ? p.token1 : p.token0;
+  }
+  return conversion;
+}
 export interface PoolActivity {
   poolId: string;
   coverage: "complete" | "partial" | "missing";
@@ -103,6 +125,7 @@ export interface PoolActivity {
   transactionHashes: string[];
   spot?: SpotRange;
   spotInvalid?: boolean;
+  activityEvents?: NativeActivityEvent[];
   spotEvents?: { blockNumber: number; logIndex: number; price: Fraction }[];
 }
 function atoms(value: string, decimals: number) {
@@ -199,18 +222,7 @@ export function sampledMarketBucket(
         throw new Error("Missing coverage cannot contain activity");
     }
     const quote = pool.token0 === FAME_ADDRESS ? pool.token1 : pool.token0;
-    let current: string = quote;
-    let conversion: Fraction | null = one;
-    for (const id of policy.routes[pool.id][currency]) {
-      const p = policy.sources.find((p) => p.id === id)!;
-      const r = observation?.rates[id];
-      if (!r) {
-        conversion = null;
-        break;
-      }
-      conversion = multiply(conversion, p.token0 === current ? r : invert(r));
-      current = p.token0 === current ? p.token1 : p.token0;
-    }
+    const conversion = conversionFor(policy, pool, currency, observation);
     const r = observation?.rates[pool.id];
     const mark = r ? (pool.token0 === FAME_ADDRESS ? r : invert(r)) : null;
     const price = mark && conversion ? multiply(mark, conversion) : null;

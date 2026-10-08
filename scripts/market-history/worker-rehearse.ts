@@ -318,6 +318,18 @@ try {
     assert.equal(content.ranges.length, 1);
     assert.equal(content.ranges[0].fromBlock, manifest.fromBlock);
   }
+  // Activity publication needs the native archive to reach the final bucket boundary.
+  const closing = await fixtureRange(115, 115);
+  objects.set(closing.manifest.key, closing.bytes);
+  await db.send(
+    new TransactWriteCommand(
+      commitInput(table, closing.manifest, {
+        startBlock: 100,
+        nextBlock: 115,
+        previousHash: ranges.at(-1)!.manifest.lastHash,
+      }),
+    ),
+  );
   await rehearseSampled(db, s3, table);
   await rehearseReferences(db, s3, table);
   await rehearseRefill(db, s3, table);
