@@ -68,22 +68,17 @@ test("publication survives map reordering and reader detects corrupted content",
   expect(validateSampledPublication(shuffled, p.policyRevision)).toEqual(p);
   let corrupt = false;
   const db = {
-    send: async (command: any) => ({
-      Responses: command.input.TransactItems.map(({ Get }: any) => ({
-        Item:
-          Get.Key.sk === "published"
-            ? shuffled
-            : {
-                ...sampledPageKey(
-                  p.policyRevision,
-                  "ETH",
-                  epoch,
-                  p.pages[0].ETH,
-                ),
+    send: async (command: any) =>
+      command.input.Key
+        ? { Item: shuffled }
+        : {
+            Responses: {
+              table: command.input.RequestItems.table.Keys.map((Key: any) => ({
+                ...Key,
                 body: corrupt ? "{}" : JSON.stringify(buckets[0]),
-              },
-      })),
-    }),
+              })),
+            },
+          },
   } as unknown as DynamoDBDocumentClient;
   const request = { currency: "ETH" as const, from: epoch, to: epoch + 300 };
   expect(
@@ -113,12 +108,17 @@ test("a fresh deployment returns explicit gaps around available publication", as
     );
   const p = nextSampledPublication(null, e, rows);
   const db = {
-    send: async (command: any) => ({
-      Responses: command.input.TransactItems.map(({ Get }: any) => ({
-        Item:
-          Get.Key.sk === "published" ? p : { body: JSON.stringify(rows[0]) },
-      })),
-    }),
+    send: async (command: any) =>
+      command.input.Key
+        ? { Item: p }
+        : {
+            Responses: {
+              table: command.input.RequestItems.table.Keys.map((Key: any) => ({
+                ...Key,
+                body: JSON.stringify(rows[0]),
+              })),
+            },
+          },
   } as unknown as DynamoDBDocumentClient;
   const r = await readSampledMarket(db, "table", scope, {
     currency: "ETH",

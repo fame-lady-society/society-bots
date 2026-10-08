@@ -1,3 +1,4 @@
+import { readChart } from "../../src/fame-market-history/chart-api.ts";
 /** Invoked by loopback-only DynamoDB rehearsal; S3 uses its checksummed object adapter. */
 import assert from "node:assert/strict";
 import {
@@ -229,7 +230,29 @@ export async function rehearseSampled(
       revisedActivity,
     ),
   );
+  const chartRequest = {
+    currency: "ETH" as const,
+    series: active.poolId,
+    from: start,
+    to: start + 300,
+  };
+  const beforeChart = await readChart(db, table, scope, chartRequest);
   await store.revise(revisionBefore, first, revisedBuckets);
+  const deltaChart = await readChart(db, table, scope, {
+    ...chartRequest,
+    cursor: beforeChart.cursor,
+  });
+  assert.equal(deltaChart.upserts.length, 1);
+  assert.ok(deltaChart.upserts[0].candle);
+  assert.equal(
+    (
+      await readChart(db, table, scope, {
+        ...chartRequest,
+        cursor: deltaChart.cursor,
+      })
+    ).upserts.length,
+    0,
+  );
   assert.equal(
     (await store.publication())!.nextTimestamp,
     revisionBefore.nextTimestamp,

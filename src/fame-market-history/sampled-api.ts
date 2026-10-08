@@ -1,20 +1,12 @@
-import {
-  TransactGetCommand,
-  type DynamoDBDocumentClient,
-} from "@aws-sdk/lib-dynamodb";
-import { digest, type Scope } from "./model.ts";
+import type { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
+import type { Scope } from "./model.ts";
 import {
   sampledPolicy,
   sampledMarketBucket,
   type Currency,
 } from "./sampled-market.ts";
-import { sampledKey, sampledPageKey } from "./keys.ts";
-import {
-  validateSampledPublication,
-  type SampledPublication,
-  type SampledBucket,
-} from "./sampled-live.ts";
 import { HistoryError } from "./api.ts";
+import { sampledReader } from "./sampled-reader.ts";
 export function parseSampledRequest(raw: string, now = Date.now()) {
   const q = new URLSearchParams(raw),
     allowed = new Set(["view", "currency", "from", "to", "resolution"]);
@@ -47,64 +39,15 @@ export async function readSampledMarket(
   request: ReturnType<typeof parseSampledRequest>,
   now = Date.now,
 ) {
-  const started = now(),
-    revision = sampledPolicy(scope).revision;
-  const get = async (keys: Record<string, string>[]) => {
-    if (now() - started > 6500)
-      throw new HistoryError(503, "history-read-budget-exceeded");
-    const result = await db.send(
-      new TransactGetCommand({
-        TransactItems: keys.map((Key) => ({ Get: { TableName: table, Key } })),
-      }),
-    );
-    return result.Responses?.map((r) => r.Item) ?? [];
-  };
-  const item = (await get([sampledKey(revision, "published")]))[0];
-  if (!item) throw new HistoryError(503, "sampled-history-not-ready");
-  const { pk: _, sk: __, ...value } = item;
-  const p = validateSampledPublication(
-    value as unknown as SampledPublication,
-    revision,
-  );
+  const reader = sampledReader(db, table, sampledPolicy(scope).revision, now);
+  const p = await reader.publication();
   const generation = p.generation;
-  const refs = p.pages.filter(
+  const buckets = await reader.pages(
+    p.pages.filter(
       (r) => r.timestamp >= request.from && r.timestamp < request.to,
     ),
-    buckets: SampledBucket[] = [];
-  let bytes = 0;
-  for (let i = 0; i < refs.length; i += 64) {
-    const part = refs.slice(i, i + 64);
-    const rows = await get(
-      part.map((r) =>
-        sampledPageKey(
-          revision,
-          request.currency,
-          r.timestamp,
-          r[request.currency],
-        ),
-      ),
-    );
-    if (rows.length !== part.length) throw new Error("Missing sampled page");
-    rows.forEach((row, j) => {
-      if (
-        typeof row?.body !== "string" ||
-        digest(row.body) !== part[j][request.currency]
-      )
-        throw new Error("Sampled page checksum mismatch");
-      bytes += Buffer.byteLength(row.body);
-      if (bytes > 2 * 1024 * 1024)
-        throw new Error("Sampled response too large");
-      const bucket = JSON.parse(row.body) as SampledBucket;
-      if (
-        bucket.currency !== request.currency ||
-        bucket.timestamp !== part[j].timestamp ||
-        bucket.policyRevision !== revision ||
-        bucket.version !== "fame-market-api-v2"
-      )
-        throw new Error("Sampled page identity mismatch");
-      buckets.push(bucket);
-    });
-  }
+    request.currency,
+  );
   const response = {
     version: "fame-market-api-v2",
     ...request,
@@ -115,7 +58,7 @@ export async function readSampledMarket(
       { length: (request.to - request.from) / 300 },
       (_, i) => {
         const timestamp = request.from + i * 300;
-        const published = buckets.find((b) => b.timestamp === timestamp);
+        const published = buckets.get(timestamp);
         if (
           !published &&
           timestamp >= p.startTimestamp &&

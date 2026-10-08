@@ -95,6 +95,23 @@ export function awsSampled({
         new GetCommand({ TableName: table, Key, ConsistentRead: true }),
       )
     ).Item;
+  // Retain both sides atomically with every publication switch. Refresh the old
+  // generation's expiry on supersession, so even long-idle clients can catch up.
+  const manifests = (...publications: (SampledPublication | null)[]) =>
+    publications
+      .filter((p): p is SampledPublication => p !== null)
+      .map((p) => ({
+        Put: {
+          TableName: table,
+          Item: {
+            ...sampledKey(revision, `manifest:${p.generation}`),
+            body: JSON.stringify(p),
+            expiresAt: Math.floor(Date.now() / 1000) + 86400,
+          },
+          ConditionExpression: "attribute_not_exists(pk) OR body = :body",
+          ExpressionAttributeValues: { ":body": JSON.stringify(p) },
+        },
+      }));
   const collected = async () =>
     cursorValue(await get(sampledKey(revision, "collected")), revision);
   const download = async (key: string, length: number, sha: string) => {
@@ -347,6 +364,7 @@ export function awsSampled({
       await db.send(
         new TransactWriteCommand({
           TransactItems: [
+            ...manifests(previous, { ...next, generation }),
             {
               ConditionCheck: {
                 TableName: table,
@@ -398,6 +416,7 @@ export function awsSampled({
       await db.send(
         new TransactWriteCommand({
           TransactItems: [
+            ...manifests(previous, next),
             // Historical work can never claim a live collector's bucket.
             {
               ConditionCheck: {
@@ -470,6 +489,7 @@ export function awsSampled({
       await db.send(
         new TransactWriteCommand({
           TransactItems: [
+            ...manifests(previous, next),
             {
               ConditionCheck: {
                 TableName: table,
