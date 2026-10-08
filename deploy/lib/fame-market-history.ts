@@ -139,6 +139,7 @@ export class FameMarketHistory extends Construct {
       versioned: true,
     });
     const table = new dynamodb.Table(this, "History", {
+      timeToLiveAttribute: "expiresAt",
       partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
       sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
@@ -237,11 +238,8 @@ export class FameMarketHistory extends Construct {
     );
     reader.addToRolePolicy(
       new iam.PolicyStatement({
-        actions: ["dynamodb:GetItem"],
+        actions: ["dynamodb:GetItem", "dynamodb:BatchGetItem"],
         resources: [table.tableArn],
-        conditions: {
-          StringEquals: { "dynamodb:EnclosingOperation": "TransactGetItems" },
-        },
       }),
     );
     const integration = new apigw.CfnIntegration(this, "ReadIntegration", {
@@ -268,7 +266,7 @@ export class FameMarketHistory extends Construct {
       }),
     });
     new cdk.CfnOutput(this, "ReaderName", { value: reader.functionName });
-    new cdk.CfnOutput(this,"StartBlock",{value:String(props.startBlock)});
+    new cdk.CfnOutput(this, "StartBlock", { value: String(props.startBlock) });
     new cdk.CfnOutput(this, "BucketName", { value: bucket.bucketName });
     new cdk.CfnOutput(this, "TableName", { value: table.tableName });
     new cdk.CfnOutput(this, "CollectorName", { value: collector.functionName });

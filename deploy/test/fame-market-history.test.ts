@@ -116,12 +116,9 @@ test("history deploy is retained, private, bounded, and independent of bot stack
       Resource: { "Fn::GetAtt": [tableId, "Arn"] },
     },
     {
-      Action: "dynamodb:GetItem",
+      Action: ["dynamodb:GetItem", "dynamodb:BatchGetItem"],
       Effect: "Allow",
       Resource: { "Fn::GetAtt": [tableId, "Arn"] },
-      Condition: {
-        StringEquals: { "dynamodb:EnclosingOperation": "TransactGetItems" },
-      },
     },
   ]);
   expect(
@@ -155,10 +152,7 @@ test("history deploy is retained, private, bounded, and independent of bot stack
     PolicyDocument: {
       Statement: Match.arrayWith([
         Match.objectLike({
-          Action: "dynamodb:GetItem",
-          Condition: {
-            StringEquals: { "dynamodb:EnclosingOperation": "TransactGetItems" },
-          },
+          Action: ["dynamodb:GetItem", "dynamodb:BatchGetItem"],
         }),
       ]),
     },

@@ -60,12 +60,18 @@ test("sampled view routes to published DynamoDB pages without changing the old m
   process.env.FAME_HISTORY_TABLE = "test";
   const send = jest
     .spyOn(DynamoDBDocumentClient.prototype, "send")
-    .mockResolvedValueOnce({
-      Responses: [{ Item: nextSampledPublication(null, e, buckets) }],
-    } as never)
-    .mockResolvedValueOnce({
-      Responses: [{ Item: { body: JSON.stringify(buckets[1]) } }],
-    } as never);
+    .mockImplementation(async (command: any) =>
+      command.input.Key
+        ? { Item: nextSampledPublication(null, e, buckets) }
+        : ({
+            Responses: {
+              test: command.input.RequestItems.test.Keys.map((Key: any) => ({
+                ...Key,
+                body: JSON.stringify(buckets[1]),
+              })),
+            },
+          } as never),
+    );
   const r = await handler(
     event(
       `view=sampled-market&currency=USDC&resolution=300&from=${epoch}&to=${epoch + 300}`,
@@ -77,4 +83,63 @@ test("sampled view routes to published DynamoDB pages without changing the old m
     currency: "USDC",
   });
   expect(send).toHaveBeenCalledTimes(2);
+});
+
+test("chart HTTP negotiates gzip, snapshots revalidate before page reads, and deltas remain explicit", async () => {
+  const { gunzipSync } = await import("node:zlib");
+  const { scope, epoch } = await import("./worker-fixture.ts");
+  const { sampledFixture } = await import("./sampled-fixture.ts");
+  const { sampledMarketBucket } = await import("./sampled-market.ts");
+  const { deriveSampledObservation } = await import("./sampled-rpc.ts");
+  const { nextSampledPublication } = await import("./sampled-live.ts");
+  const e = sampledFixture(),
+    o = deriveSampledObservation(scope, e);
+  const rows = (["ETH", "USDC"] as const).map((c) =>
+    sampledMarketBucket(scope, c, epoch, o, []),
+  );
+  const p = nextSampledPublication(null, e, rows);
+  process.env.FAME_HISTORY_TABLE = "test";
+  let pageReads = 0;
+  jest
+    .spyOn(DynamoDBDocumentClient.prototype, "send")
+    .mockImplementation(async (command: any) => {
+      if (command.input.Key) return { Item: p } as never;
+      pageReads++;
+      return {
+        Responses: {
+          test: command.input.RequestItems.test.Keys.map((Key: any) => ({
+            ...Key,
+            body: JSON.stringify(rows[1]),
+          })),
+        },
+      } as never;
+    });
+  const q = `view=chart&currency=USDC&series=market&resolution=300&from=${epoch}&to=${epoch + 300}`;
+  const request = { ...event(q), headers: { "accept-encoding": "gzip" } };
+  const r = await handler(request);
+  expect(r.statusCode).toBe(200);
+  expect(r).toHaveProperty("isBase64Encoded", true);
+  const body = JSON.parse(gunzipSync(Buffer.from(r.body, "base64")).toString());
+  expect(body.mode).toBe("snapshot");
+  expect(pageReads).toBe(1);
+  const etag = (r.headers as Record<string, string>).etag;
+  const cached = await handler({
+    ...request,
+    headers: { "if-none-match": etag },
+  });
+  expect(cached.statusCode).toBe(304);
+  expect(cached.body).toBe("");
+  expect(pageReads).toBe(1);
+  const delta = await handler({
+    ...event(q + `&cursor=${body.cursor}`),
+    headers: { "if-none-match": etag },
+  });
+  expect(delta.statusCode).toBe(200);
+  expect(JSON.parse(delta.body).upserts).toEqual([]);
+  expect(pageReads).toBe(1);
+  const identity = await handler({
+    ...request,
+    headers: { "accept-encoding": "gzip;q=0" },
+  });
+  expect(identity).not.toHaveProperty("isBase64Encoded");
 });
