@@ -1,7 +1,7 @@
 /** Defaults to read-only preparation. --apply <planId> explicitly authorizes AWS writes. */
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { famePoolStateRegistry } from "../../src/fame-swap-pool-state/registry/index.ts";
+import { fameHistoryRegistry } from "../../src/fame-market-history/registry.ts";
 import { historyScope, digest } from "../../src/fame-market-history/model.ts";
 import {
   sampledPolicy,
@@ -26,7 +26,7 @@ try {
     throw new Error("Expected directory [--apply planId]");
   const root = path.resolve(directory);
   const job = JSON.parse(await readFile(path.join(root, "job.json"), "utf8"));
-  const scope = historyScope(famePoolStateRegistry),
+  const scope = historyScope(fameHistoryRegistry),
     revision = sampledPolicy(scope).revision;
   const metadata = JSON.parse(
     await readFile(

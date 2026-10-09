@@ -50,7 +50,7 @@ export function eventSpot(
       ? fraction(y * (3n * x * x + y * y), x * (x * x + 3n * y * y))
       : fraction(y, x);
   } else if (
-    pool.venueFamily === "Slipstream" &&
+    ["Slipstream", "UniswapV3"].includes(pool.venueFamily) &&
     ["Swap", "Initialize"].includes(event.eventName ?? "")
   ) {
     const sqrt = BigInt(a.sqrtPriceX96);

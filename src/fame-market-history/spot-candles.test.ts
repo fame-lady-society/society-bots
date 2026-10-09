@@ -15,18 +15,18 @@ const event = (eventName: string, args: Record<string, string>) =>
   ({ eventName, args }) as DecodedEvent;
 test("reserve and square-root state prices respect orientation and decimals, not execution amounts", () => {
   for (const pool of scope.pools) {
-    const e =
-      pool.venueFamily === "Slipstream"
-        ? event("Swap", {
-            sqrtPriceX96: String(2n ** 96n),
-            liquidity: "10",
-            amount0: "999",
-            amount1: "1",
-          })
-        : event("Sync", { reserve0: "100", reserve1: "400" });
+    const e = ["Slipstream", "UniswapV3"].includes(pool.venueFamily)
+      ? event("Swap", {
+          sqrtPriceX96: String(2n ** 96n),
+          liquidity: "10",
+          amount0: "999",
+          amount1: "1",
+        })
+      : event("Sync", { reserve0: "100", reserve1: "400" });
     const actual = eventSpot(scope, pool, e, metadata)!;
-    const rate =
-      pool.venueFamily === "Slipstream" ? fraction(1n, 1n) : fraction(4n, 1n);
+    const rate = ["Slipstream", "UniswapV3"].includes(pool.venueFamily)
+      ? fraction(1n, 1n)
+      : fraction(4n, 1n);
     expect(actual).toEqual(pool.token0 === FAME_ADDRESS ? rate : invert(rate));
   }
   const p = scope.pools.find((p) => p.venueFamily === "UniswapV2")!;
@@ -161,12 +161,13 @@ test("market publication uses opening FAME inventory, preserves pool totals, and
       "3",
       "4",
       "5",
+      "6",
     ]);
     const expectedAtoms =
       result.series.reduce(
         (n, p, i) => n + BigInt(p.price!.replace(".", "")) * BigInt(i + 1),
         0n,
-      ) / 15n;
+      ) / 21n;
     const difference =
       BigInt(result.market.price!.replace(".", "")) - expectedAtoms;
     // Public pool prices were already rounded: their weighted average can lose one atom.

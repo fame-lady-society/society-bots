@@ -35,6 +35,10 @@ export function bundleHistoryCollector(): string {
     path.join(root, "src/fame-swap-pool-state/registry/base-v1-pools.json"),
     path.join(bundle, "base-v1-pools.json"),
   );
+  copyFileSync(
+    path.join(root, "src/fame-market-history/additional-pools.json"),
+    path.join(bundle, "additional-pools.json"),
+  );
   return bundle;
 }
 
@@ -65,6 +69,10 @@ export function bundleHistoryReader(): string {
   copyFileSync(
     path.join(root, "src/fame-swap-pool-state/registry/base-v1-pools.json"),
     path.join(bundle, "base-v1-pools.json"),
+  );
+  copyFileSync(
+    path.join(root, "src/fame-market-history/additional-pools.json"),
+    path.join(bundle, "additional-pools.json"),
   );
   return bundle;
 }
@@ -105,6 +113,10 @@ export function bundleHistoryWorker(): string {
   copyFileSync(
     path.join(root, "src/fame-swap-pool-state/registry/base-v1-pools.json"),
     path.join(bundle, "base-v1-pools.json"),
+  );
+  copyFileSync(
+    path.join(root, "src/fame-market-history/additional-pools.json"),
+    path.join(bundle, "additional-pools.json"),
   );
   return bundle;
 }

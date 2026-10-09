@@ -1,3 +1,4 @@
+import { rehearseTransition } from "./transition-rehearse.ts";
 import { rehearseSampled } from "./sampled-production-rehearse.ts";
 import { rehearseRefill } from "./refill-rehearse.ts";
 import {
@@ -330,6 +331,7 @@ try {
       }),
     ),
   );
+  await rehearseTransition(client, db, s3);
   await rehearseSampled(db, s3, table);
   await rehearseReferences(db, s3, table);
   await rehearseRefill(db, s3, table);
