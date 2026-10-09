@@ -188,3 +188,31 @@ query of dated directories, with no table scan or page-body reads. It uses the
 same authentication and `private, no-store` response policy. Existing ten-digit
 Unix-second directory keys sort chronologically for Base history (through 2286);
 an unexpected key fails closed instead of returning a misleading stop signal.
+
+### Retain the pre-deployment live window once
+
+New live buckets are retained automatically, but buckets already in the rolling
+window at deployment may have no dated reference. Retain those existing references
+once, so they cannot create new gaps as the window advances:
+
+```sh
+yarn nodets scripts/market-history/materialize-history.ts /tmp/live-retention --retain-live
+yarn nodets scripts/market-history/materialize-history.ts /tmp/live-retention --retain-live --apply
+```
+
+This mode verifies both currency pages and activity indexes using bounded batch
+reads. It adds only missing dated references in one transaction guarded by the
+live publication generation and each day directory's prior body. It refuses a
+conflicting reference, missing index or corrupt page. A concurrent live advance
+aborts the transaction; rerun after inspecting the failure. No quotes, activity,
+chart bodies, live pointers, or raw archives are rewritten. Repeating a completed
+retention is a no-op. No runtime deployment is needed to run this operator mode.
+
+During the October 9 production materialization, 502 older buckets passed
+read-only validation and were published; two more were validated and published
+at the advancing window boundary. Another 283 already-live buckets needed only
+reference retention. October 7 public ETH and USDC requests each returned 243
+published buckets, 242 priced candles and 21 events (11 buys, 10 sells); 45 buckets
+before 03:45 UTC remained explicit gaps. The active dataset was unchanged and live
+checkpoints advanced rather than being reset. The current earliest published
+boundary is `1791344700` (2026-10-07 03:45 UTC), not chain genesis.
