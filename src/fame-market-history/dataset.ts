@@ -48,6 +48,7 @@ const definitions = new WeakMap<
 export async function activeDataset(
   table: string,
   db = DynamoDBDocumentClient.from(new DynamoDBClient({ maxAttempts: 2 })),
+  signal?: AbortSignal,
 ) {
   const { Item } = await db.send(
     new GetCommand({
@@ -55,6 +56,7 @@ export async function activeDataset(
       Key: activeScopeKey,
       ConsistentRead: true,
     }),
+    { abortSignal: signal },
   );
   if (!Item) throw new Error("History active dataset is not prepared");
   if (typeof Item.scopeId !== "string" || !/^[a-f0-9]{64}$/.test(Item.scopeId))
@@ -70,6 +72,7 @@ export async function activeDataset(
       Key: datasetKey(Item.scopeId),
       ConsistentRead: true,
     }),
+    { abortSignal: signal },
   );
   if (definition.Item?.scopeId !== Item.scopeId)
     throw new Error("Active dataset definition mismatch");

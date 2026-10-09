@@ -15,19 +15,22 @@ test("warm definition cache never caches the active pointer or prevents a scope 
     ),
   });
   let active = prior;
-  const send = jest
-    .spyOn(db, "send")
-    .mockImplementation(
-      async (c: any) =>
-        ({
-          Item:
-            c.input.Key.sk === "active-scope"
-              ? { scopeId: active.id }
-              : dataset(active, metadata),
-        }) as never,
-    );
-  expect((await activeDataset("test", db)).scope.id).toBe(prior.id);
+  const send = jest.spyOn(db, "send").mockImplementation(
+    async (c: any) =>
+      ({
+        Item:
+          c.input.Key.sk === "active-scope"
+            ? { scopeId: active.id }
+            : dataset(active, metadata),
+      }) as never,
+  );
+  const signal = AbortSignal.timeout(1500);
+  expect((await activeDataset("test", db, signal)).scope.id).toBe(prior.id);
   expect(send).toHaveBeenCalledTimes(2);
+  expect(send.mock.calls.slice(0, 2).map((call) => call[1])).toEqual([
+    { abortSignal: signal },
+    { abortSignal: signal },
+  ]);
   expect((await activeDataset("test", db)).scope.id).toBe(prior.id);
   expect(send).toHaveBeenCalledTimes(3);
   active = scope;

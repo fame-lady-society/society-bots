@@ -55,7 +55,8 @@ export async function handler(event: APIGatewayProxyEventV2) {
         : parseHistoryRequest(event.rawQueryString, scope);
     const table = process.env.FAME_HISTORY_TABLE;
     if (!table) throw new Error("Missing history table");
-    const selected = await activeDataset(table, db);
+    // Leave room for the existing 6.5s page-read budget inside the 10s Lambda.
+    const selected = await activeDataset(table, db, AbortSignal.timeout(1500));
     scope = selected.scope;
     const metadata = selected.metadata;
     const metadataRevision = servingRevision(scope, metadata);
