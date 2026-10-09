@@ -1,6 +1,6 @@
 /** Read-only first-milestone probe. Writes a local evidence/response artifact only. */
 import { writeFile } from "node:fs/promises";
-import { fameHistoryRegistry } from "../../src/fame-market-history/registry.ts";
+import { famePoolStateRegistry } from "../../src/fame-swap-pool-state/registry/index.ts";
 import { historyScope } from "../../src/fame-market-history/model.ts";
 import {
   boundedTransport,
@@ -25,7 +25,7 @@ try {
     throw new Error("Usage: sampled-rehearse.ts output.json [1..4]");
   const url = process.env.FAME_HISTORY_RPC_URL;
   if (!url) throw new Error("Missing RPC configuration");
-  const scope = historyScope(fameHistoryRegistry);
+  const scope = historyScope(famePoolStateRegistry);
   const rpc = boundedTransport({
     url,
     maxRequests: 160,

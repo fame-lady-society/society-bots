@@ -3,7 +3,7 @@ import { GetParameterCommand, SSMClient } from "@aws-sdk/client-ssm";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand } from "@aws-sdk/lib-dynamodb";
 import { historyScope } from "../../src/fame-market-history/model.ts";
-import { fameHistoryRegistry } from "../../src/fame-market-history/registry.ts";
+import { famePoolStateRegistry } from "../../src/fame-swap-pool-state/registry/index.ts";
 import { sampledPolicy } from "../../src/fame-market-history/sampled-market.ts";
 import {
   boundedTransport,
@@ -16,7 +16,7 @@ import {
   sampledReader,
   deriveSampledObservation,
 } from "../../src/fame-market-history/sampled-rpc.ts";
-const scope = historyScope(fameHistoryRegistry);
+const scope = historyScope(famePoolStateRegistry);
 let stage = "configuration",
   requestedBlock: number | string | null = null;
 try {

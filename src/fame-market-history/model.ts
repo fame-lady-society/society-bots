@@ -143,14 +143,6 @@ export interface Manifest {
   contentSha256: string;
   bytes: number;
   eventIdentityDigest: string;
-  /** Checksummed source evidence reused by an additive scope expansion. */
-  sourceArchive?: {
-    scopeId: string;
-    key: string;
-    sha256: string;
-    fromBlock: number;
-    toBlock: number;
-  };
 }
 
 export interface ArchiveBatch {

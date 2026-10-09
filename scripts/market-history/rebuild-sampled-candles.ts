@@ -5,7 +5,7 @@ import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
-import { fameHistoryRegistry } from "../../src/fame-market-history/registry.ts";
+import { famePoolStateRegistry } from "../../src/fame-swap-pool-state/registry/index.ts";
 import { historyScope } from "../../src/fame-market-history/model.ts";
 import { awsSampled } from "../../src/fame-market-history/sampled-storage.ts";
 import { readSampledMarket } from "../../src/fame-market-history/sampled-api.ts";
@@ -19,7 +19,7 @@ try {
   const table = process.env.FAME_HISTORY_TABLE,
     bucket = process.env.FAME_HISTORY_BUCKET;
   if (!table || !bucket) throw new Error("Missing storage target");
-  const scope = historyScope(fameHistoryRegistry),
+  const scope = historyScope(famePoolStateRegistry),
     metadata = JSON.parse(
       await readFile(
         new URL(

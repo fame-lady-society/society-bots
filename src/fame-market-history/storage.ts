@@ -98,15 +98,12 @@ export function awsArchive({
   table,
   bucket,
   poolStateTable,
-  staging,
   db = DynamoDBDocumentClient.from(new DynamoDBClient({ maxAttempts: 2 })),
   s3 = new S3Client({ maxAttempts: 2 }),
 }: {
   table: string;
   bucket: string;
   poolStateTable?: string;
-  /** Explicit scope expansion only. Normal collectors never pass this. */
-  staging?: { sourceScopeId: string; targetScopeId: string };
   db?: DynamoDBDocumentClient;
   s3?: S3Client;
 }): ArchiveStore {
@@ -119,17 +116,7 @@ export function awsArchive({
           ConsistentRead: true,
         }),
       );
-      if (
-        staging &&
-        (scopeId !== staging.targetScopeId || staging.sourceScopeId === scopeId)
-      )
-        throw new Error("Invalid staging scope");
-      if (staging && !active.Item)
-        throw new Error("Staging requires an active source");
-      if (
-        active.Item &&
-        active.Item.scopeId !== (staging?.sourceScopeId ?? scopeId)
-      )
+      if (active.Item && active.Item.scopeId !== scopeId)
         throw new Error(
           "History scope changed; reviewed coverage transition required",
         );
@@ -228,33 +215,9 @@ export function awsArchive({
         throw new Error("S3 archive verification failed");
     },
     commit: async (manifest, cursor) => {
-      const input = commitInput(table, manifest, cursor);
-      if (staging) {
-        if (
-          manifest.scopeId !== staging.targetScopeId ||
-          staging.sourceScopeId === manifest.scopeId
-        )
-          throw new Error("Invalid staging manifest");
-        // Guard the old active dataset without changing it. Cursor, manifest and
-        // work item still commit together using the normal compare-and-swap.
-        await db.send(
-          new TransactWriteCommand({
-            TransactItems: [
-              {
-                ConditionCheck: {
-                  TableName: table,
-                  Key: { pk: "history:8453", sk: "active-scope" },
-                  ConditionExpression: "scopeId = :source",
-                  ExpressionAttributeValues: {
-                    ":source": staging.sourceScopeId,
-                  },
-                },
-              },
-              ...input.TransactItems.slice(1),
-            ],
-          }),
-        );
-      } else await db.send(new TransactWriteCommand(input));
+      await db.send(
+        new TransactWriteCommand(commitInput(table, manifest, cursor)),
+      );
     },
     observations: async (scope) => {
       if (!poolStateTable) return [];

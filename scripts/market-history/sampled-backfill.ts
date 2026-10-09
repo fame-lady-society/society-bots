@@ -5,7 +5,7 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
 import { DuckDBInstance } from "@duckdb/node-api";
-import { fameHistoryRegistry } from "../../src/fame-market-history/registry.ts";
+import { famePoolStateRegistry } from "../../src/fame-swap-pool-state/registry/index.ts";
 import {
   historyScope,
   digest,
@@ -58,7 +58,7 @@ try {
   await handle.close();
   for (const dir of ["raw", "observations", "pages"])
     await mkdir(path.join(output, dir), { recursive: true });
-  const scope = historyScope(fameHistoryRegistry),
+  const scope = historyScope(famePoolStateRegistry),
     policy = sampledPolicy(scope);
   const db = DynamoDBDocumentClient.from(
       new DynamoDBClient({ maxAttempts: 2 }),

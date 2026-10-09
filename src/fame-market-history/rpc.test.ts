@@ -1,9 +1,9 @@
 import { boundedTransport, chainReader } from "./rpc.ts";
 import { historyScope } from "./model.ts";
-import { fameHistoryRegistry } from "./registry.ts";
+import { famePoolStateRegistry } from "../fame-swap-pool-state/registry/index.ts";
 import { createPublicClient } from "viem";
 
-const scope = historyScope(fameHistoryRegistry);
+const scope = historyScope(famePoolStateRegistry);
 function fixture(respond: (body: Record<string, unknown>) => Response) {
   const requests: Record<string, unknown>[] = [];
   const fetcher: typeof fetch = async (_input, init) => {

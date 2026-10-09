@@ -4,7 +4,7 @@ import path from "node:path";
 import { DuckDBInstance } from "@duckdb/node-api";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, BatchGetCommand } from "@aws-sdk/lib-dynamodb";
-import { fameHistoryRegistry } from "../../src/fame-market-history/registry.ts";
+import { famePoolStateRegistry } from "../../src/fame-swap-pool-state/registry/index.ts";
 import { historyScope, digest } from "../../src/fame-market-history/model.ts";
 import {
   deriveSampledObservation,
@@ -22,7 +22,7 @@ try {
   );
   if (digest(JSON.stringify(job)) !== manifest.jobRevision)
     throw new Error("Job changed");
-  const scope = historyScope(fameHistoryRegistry);
+  const scope = historyScope(famePoolStateRegistry);
   if (scope.id !== job.scopeId) throw new Error("Scope changed");
   const buckets: ReturnType<typeof sampledMarketBucket>[] = [];
   for (const page of manifest.pages) {

@@ -41,10 +41,6 @@ await copyFile(
   path.join(root, "src/fame-swap-pool-state/registry/base-v1-pools.json"),
   path.join(target, "base-v1-pools.json"),
 );
-await copyFile(
-  path.join(root, "src/fame-market-history/additional-pools.json"),
-  path.join(target, "additional-pools.json"),
-);
 await build({
   entryPoints: [path.join(root, "scripts/market-history/e2e.ts")],
   outfile: path.join(target, "e2e.mjs"),

@@ -16,14 +16,6 @@ const v2 = [
   "event Transfer(address indexed from,address indexed to,uint256 value)",
   "event Approval(address indexed owner,address indexed spender,uint256 value)",
 ] as const;
-// Uniswap V3 and Slipstream share these event layouts (not their slot0 ABI).
-const concentrated = parseAbi([
-  "event Swap(address indexed sender,address indexed recipient,int256 amount0,int256 amount1,uint160 sqrtPriceX96,uint128 liquidity,int24 tick)",
-  "event Initialize(uint160 sqrtPriceX96,int24 tick)",
-  "event Mint(address sender,address indexed owner,int24 indexed tickLower,int24 indexed tickUpper,uint128 amount,uint256 amount0,uint256 amount1)",
-  "event Burn(address indexed owner,int24 indexed tickLower,int24 indexed tickUpper,uint128 amount,uint256 amount0,uint256 amount1)",
-  "event Collect(address indexed owner,address recipient,int24 indexed tickLower,int24 indexed tickUpper,uint128 amount0,uint128 amount1)",
-]);
 export const EVENT_ABIS = {
   UniswapV2: parseAbi([...v2, "event Sync(uint112 reserve0,uint112 reserve1)"]),
   Solidly: parseAbi([
@@ -32,16 +24,13 @@ export const EVENT_ABIS = {
     "event Fees(address indexed sender,uint256 amount0,uint256 amount1)",
     "event Claim(address indexed sender,address indexed recipient,uint256 amount0,uint256 amount1)",
   ]),
-  Slipstream: concentrated,
-  UniswapV3: [
-    ...concentrated,
-    ...parseAbi([
-      "event CollectProtocol(address indexed sender,address indexed recipient,uint128 amount0,uint128 amount1)",
-      "event Flash(address indexed sender,address indexed recipient,uint256 amount0,uint256 amount1,uint256 paid0,uint256 paid1)",
-      "event IncreaseObservationCardinalityNext(uint16 observationCardinalityNextOld,uint16 observationCardinalityNextNew)",
-      "event SetFeeProtocol(uint8 feeProtocol0Old,uint8 feeProtocol1Old,uint8 feeProtocol0New,uint8 feeProtocol1New)",
-    ]),
-  ],
+  Slipstream: parseAbi([
+    "event Swap(address indexed sender,address indexed recipient,int256 amount0,int256 amount1,uint160 sqrtPriceX96,uint128 liquidity,int24 tick)",
+    "event Initialize(uint160 sqrtPriceX96,int24 tick)",
+    "event Mint(address sender,address indexed owner,int24 indexed tickLower,int24 indexed tickUpper,uint128 amount,uint256 amount0,uint256 amount1)",
+    "event Burn(address indexed owner,int24 indexed tickLower,int24 indexed tickUpper,uint128 amount,uint256 amount0,uint256 amount1)",
+    "event Collect(address indexed owner,address recipient,int24 indexed tickLower,int24 indexed tickUpper,uint128 amount0,uint128 amount1)",
+  ]),
 };
 export interface TokenMetadata {
   chainId: 8453;
@@ -133,23 +122,16 @@ export function decode(
     ]),
   );
   if (event.name !== "Swap") {
-    result.classification = [
-      "Transfer",
-      "Approval",
-      "Claim",
-      "Fees",
-      "CollectProtocol",
-      "Flash",
-      "IncreaseObservationCardinalityNext",
-      "SetFeeProtocol",
-    ].includes(event.name)
+    result.classification = ["Transfer", "Approval", "Claim", "Fees"].includes(
+      event.name,
+    )
       ? "auxiliary"
       : "liquidity";
     return result;
   }
   const a = result.args;
   let amount0: bigint, amount1: bigint;
-  if (["Slipstream", "UniswapV3"].includes(pool.venueFamily)) {
+  if (pool.venueFamily === "Slipstream") {
     amount0 = BigInt(a.amount0);
     amount1 = BigInt(a.amount1);
   } else {
