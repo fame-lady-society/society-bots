@@ -1,7 +1,7 @@
 import { mkdir, writeFile, readFile } from "node:fs/promises";
 import path from "node:path";
 import { createPublicClient, parseAbi } from "viem";
-import { famePoolStateRegistry } from "../../src/fame-swap-pool-state/registry/index.ts";
+import { fameHistoryRegistry } from "../../src/fame-market-history/registry.ts";
 import { collect } from "../../src/fame-market-history/collector.ts";
 import {
   historyScope,
@@ -23,7 +23,7 @@ try {
     throw new Error("Expected new output directory");
   const output = path.resolve(process.argv[2]);
   const config = configuration(process.env, true);
-  const scope = historyScope(famePoolStateRegistry);
+  const scope = historyScope(fameHistoryRegistry);
   const rpc = boundedTransport({
     url: config.rpcUrl,
     maxRequests: config.maxRequests,

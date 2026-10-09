@@ -1,3 +1,14 @@
+import { dataset, datasetKey } from "./dataset.ts";
+import {
+  scope as fixtureScope,
+  metadata as fixtureMetadata,
+} from "./worker-fixture.ts";
+const activeItem = (command: any) =>
+  command.input.Key?.sk === "active-scope"
+    ? { scopeId: fixtureScope.id }
+    : command.input.Key?.pk === datasetKey(fixtureScope.id).pk
+      ? dataset(fixtureScope, fixtureMetadata)
+      : undefined;
 import { jest, afterEach } from "@jest/globals";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import type { APIGatewayProxyEventV2 } from "aws-lambda";
@@ -62,7 +73,10 @@ test("sampled view routes to published DynamoDB pages without changing the old m
     .spyOn(DynamoDBDocumentClient.prototype, "send")
     .mockImplementation(async (command: any) =>
       command.input.Key
-        ? { Item: nextSampledPublication(null, e, buckets) }
+        ? {
+            Item:
+              activeItem(command) ?? nextSampledPublication(null, e, buckets),
+          }
         : ({
             Responses: {
               test: command.input.RequestItems.test.Keys.map((Key: any) => ({
@@ -82,7 +96,7 @@ test("sampled view routes to published DynamoDB pages without changing the old m
     version: "fame-market-api-v2",
     currency: "USDC",
   });
-  expect(send).toHaveBeenCalledTimes(2);
+  expect(send).toHaveBeenCalledTimes(4);
 });
 
 test("chart HTTP negotiates gzip, snapshots revalidate before page reads, and deltas remain explicit", async () => {
@@ -103,7 +117,7 @@ test("chart HTTP negotiates gzip, snapshots revalidate before page reads, and de
   jest
     .spyOn(DynamoDBDocumentClient.prototype, "send")
     .mockImplementation(async (command: any) => {
-      if (command.input.Key) return { Item: p } as never;
+      if (command.input.Key) return { Item: activeItem(command) ?? p } as never;
       pageReads++;
       return {
         Responses: {
@@ -164,7 +178,9 @@ test("activity HTTP serves gzip and explicit gaps through the existing read-only
   const send = jest
     .spyOn(DynamoDBDocumentClient.prototype, "send")
     .mockImplementation(async (command: any) =>
-      command.input.Key ? { Item: p } : ({ Responses: { test: [] } } as never),
+      command.input.Key
+        ? { Item: activeItem(command) ?? p }
+        : ({ Responses: { test: [] } } as never),
     );
   const request = event(
     `view=activity&currency=ETH&resolution=300&from=${epoch}&to=${epoch + 300}`,
@@ -192,4 +208,68 @@ test("activity HTTP serves gzip and explicit gaps through the existing read-only
     (await handler(event(request.rawQueryString + "&min=-1"))).statusCode,
   ).toBe(400);
   expect(send).not.toHaveBeenCalled();
+});
+
+test("deployed six-pool code keeps serving the active five-pool definition", async () => {
+  const { historyScope } = await import("./model.ts");
+  const { sampledFixture } = await import("./sampled-fixture.ts");
+  const { epoch } = await import("./worker-fixture.ts");
+  const { sampledPolicy, sampledMarketBucket } = await import(
+    "./sampled-market.ts"
+  );
+  const { sampledCalls, deriveSampledObservation } = await import(
+    "./sampled-rpc.ts"
+  );
+  const { nextSampledPublication } = await import("./sampled-live.ts");
+  const oldScope = historyScope({
+    ...fixtureScope.registry,
+    pools: fixtureScope.registry.pools.filter(
+      (p) => p.id !== "uniswap-v3-weth-fame-30bps",
+    ),
+  });
+  const evidence = sampledFixture();
+  evidence.policyRevision = sampledPolicy(oldScope).revision;
+  const allCalls = sampledCalls(fixtureScope);
+  evidence.results = sampledCalls(oldScope).map(
+    (c) => evidence.results[allCalls.findIndex((all) => all.key === c.key)],
+  );
+  const observation = deriveSampledObservation(oldScope, evidence);
+  const buckets = (["ETH", "USDC"] as const).map((c) =>
+    sampledMarketBucket(oldScope, c, epoch, observation, []),
+  );
+  process.env.FAME_HISTORY_TABLE = "test";
+  jest
+    .spyOn(DynamoDBDocumentClient.prototype, "send")
+    .mockImplementation(async (command: any) => {
+      const key = command.input.Key;
+      if (key?.sk === "active-scope")
+        return { Item: { scopeId: oldScope.id } } as never;
+      if (key?.sk === "definition")
+        return { Item: dataset(oldScope, fixtureMetadata) } as never;
+      if (key)
+        return {
+          Item: nextSampledPublication(null, evidence, buckets),
+        } as never;
+      return {
+        Responses: {
+          test: command.input.RequestItems.test.Keys.map((Key: any) => ({
+            ...Key,
+            body: JSON.stringify(buckets[1]),
+          })),
+        },
+      } as never;
+    });
+  const query = `view=chart&currency=USDC&series=market&resolution=300&from=${epoch}&to=${epoch + 300}`;
+  const response = await handler(event(query));
+  expect(response.statusCode).toBe(200);
+  expect(JSON.parse(response.body).pools).toHaveLength(5);
+  expect(
+    (
+      await handler(
+        event(
+          query.replace("series=market", "series=uniswap-v3-weth-fame-30bps"),
+        ),
+      )
+    ).statusCode,
+  ).toBe(400);
 });

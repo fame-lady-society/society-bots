@@ -2,14 +2,14 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { gzipSync } from "node:zlib";
 import type { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
-import { famePoolStateRegistry } from "../../src/fame-swap-pool-state/registry/index.ts";
+import { fameHistoryRegistry } from "../../src/fame-market-history/registry.ts";
 import { historyScope, digest } from "../../src/fame-market-history/model.ts";
 import { sampledPageKey } from "../../src/fame-market-history/keys.ts";
 import { readChart } from "../../src/fame-market-history/chart-api.ts";
 const [directory, out] = process.argv.slice(2);
 if (!directory || !out)
   throw new Error("Expected input and output directories");
-const scope = historyScope(famePoolStateRegistry);
+const scope = historyScope(fameHistoryRegistry);
 await mkdir(out, { recursive: true });
 const inputs = await Promise.all(
   ["ETH", "USDC"].map((c) =>
