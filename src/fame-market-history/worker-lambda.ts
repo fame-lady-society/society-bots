@@ -1,6 +1,6 @@
 import type { Context } from "aws-lambda";
 import { readFileSync } from "node:fs";
-import { famePoolStateRegistry } from "../fame-swap-pool-state/registry/index.ts";
+import { fameHistoryRegistry } from "./registry.ts";
 import { historyScope, integer } from "./model.ts";
 import { aggregateNext } from "./worker.ts";
 import { awsAggregation } from "./worker-storage.ts";
@@ -29,7 +29,7 @@ export async function handler(_event: unknown, context: Context) {
     1,
   );
   try {
-    const scope = historyScope(famePoolStateRegistry);
+    const scope = historyScope(fameHistoryRegistry);
     const outcomes = await Promise.allSettled([
       aggregateNext({
         scope,

@@ -15,8 +15,8 @@ collection. Preserve native economic events and historical price evidence so
 derived data can be repaired without repeating the chain ingest.
 
 The verified earliest direct-pool creation is **Base block 17,019,741,
-2024-07-13 00:00:29 UTC**, Uniswap V2 FAME/WETH. This is genesis for the currently
-reviewed pool set, not every FAME pool ever deployed. The five direct pools and
+2024-07-13 00:00:29 UTC**, Uniswap V2 and V3 FAME/WETH. This is genesis for the currently
+reviewed pool set, not every FAME pool ever deployed. The six direct pools and
 five conversion sources are recorded in the [deployment inventory](../research/2026-10-08-genesis-deployment-inventory.md)
 and its JSON evidence. Other old venues and newly proposed pools remain separate
 scope additions.
@@ -192,15 +192,19 @@ for operator-paced runs; foreground invocations only until production wiring is
 reviewed. No detached process or new scheduler in this milestone.
 
 Read-only launch rehearsal:
-1. Validate chain/resource identity and the ten source boundaries.
+1. Validate chain/resource identity and the eleven source boundaries.
 2. Sample a small fixed selection near the earliest launch and each later pool
    launch, plus a quiet and an active current bucket. Record every call/byte/error.
-3. Freeze one 24-hour interval adjacent to existing history. Capture/rebuild
+3. Freeze **2024-07-13 00:00 UTC through July 14 00:00 UTC** as the first
+   24-hour exercise. Include both V2 and V3 from their shared creation block,
+   exclude the four later direct pools by lifecycle, and leave the interval
+   between this day and live coverage explicitly unfilled. Capture/rebuild
    locally, interrupt/resume, and compare with a clean rebuild.
 4. Prepare the exact production import manifest and expected read/write/storage
    counts. Operator merges/deploys serving changes before publication.
 5. Verify that historical date through authenticated chart and activity APIs in
-   both currencies, including the join. Only then extend the managed target to
+   both currencies, including launch boundaries and the gap to live history. Rehearse the live
+   join with a later adjacent window. Only then extend the managed target to
    the remaining years.
 
 ## Tests, review and completion

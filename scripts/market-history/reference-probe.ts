@@ -1,6 +1,6 @@
 /** Read-only source qualification. Never archives or publishes production state. */
 import { GetParameterCommand, SSMClient } from "@aws-sdk/client-ssm";
-import { famePoolStateRegistry } from "../../src/fame-swap-pool-state/registry/index.ts";
+import { fameHistoryRegistry } from "../../src/fame-market-history/registry.ts";
 import { historyScope } from "../../src/fame-market-history/model.ts";
 import {
   boundedTransport,
@@ -26,7 +26,7 @@ try {
     }),
   );
   if (!result.Parameter?.Value) throw new Error("No RPC");
-  const scope = historyScope(famePoolStateRegistry),
+  const scope = historyScope(fameHistoryRegistry),
     policy = referencePolicy(scope);
   const rpc = boundedTransport({
     url: result.Parameter.Value,

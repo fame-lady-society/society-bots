@@ -9,14 +9,14 @@ import { readFileSync } from "node:fs";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { HistoryError, historyReader, parseHistoryRequest } from "./api.ts";
-import { famePoolStateRegistry } from "../fame-swap-pool-state/registry/index.ts";
+import { fameHistoryRegistry } from "./registry.ts";
 import { historyScope } from "./model.ts";
 import type { TokenMetadata } from "./decode.ts";
 import { servingRevision } from "./revision.ts";
 
 import { parseSampledRequest, readSampledMarket } from "./sampled-api.ts";
 
-const scope = historyScope(famePoolStateRegistry);
+const scope = historyScope(fameHistoryRegistry);
 const metadata: TokenMetadata = JSON.parse(
   readFileSync(new URL("./token-metadata.json", import.meta.url), "utf8"),
 );

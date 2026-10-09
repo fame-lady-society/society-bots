@@ -2,7 +2,7 @@
 
 Verified read-only on 2026-10-08 using authenticated Blockscout Pro MCP.
 Repository baseline: `f704e112a83ba13dc05f588acce1e6b2fa418897`.
-Scope: the five direct FAME pools selected by `historyScope`, plus the five
+Scope: the six direct FAME pools selected by `historyScope`, plus the five
 conversion sources selected by `sampledPolicy`. This is not a discovery of every
 historical FAME venue. Previously excluded pools remain excluded.
 
@@ -13,6 +13,7 @@ historical FAME venue. Previously excluded pools remain excluded.
 | uniswap-v3-usdc-weth-5bps | 3620407 | 2023-09-06 19:56:01.000000Z | [transaction](https://base.blockscout.com/tx/0xedb1f442fbc11aa4c0b46d4301ffd50304bc39f6abf125636088c227af75e6e6) |
 | scale-equalizer-usdc-scale | 9024316 | 2024-01-09 22:06:19.000000Z | [transaction](https://base.blockscout.com/tx/0x19744fe1afc427e3c95221bbc9ac771d53e652c4a55252303ca5a89a242d7e6e) |
 | uniswap-v2-fame-direct | 17019741 | 2024-07-13 00:00:29.000000Z | [transaction](https://base.blockscout.com/tx/0x4bf357967b670f85ee4929953045b9e2071fb7f5d85cda08d536ae6e8e2fabc5) |
+| uniswap-v3-weth-fame-30bps | 17019741 | 2024-07-13 00:00:29 | [transaction](https://base.blockscout.com/tx/0x4bf357967b670f85ee4929953045b9e2071fb7f5d85cda08d536ae6e8e2fabc5) |
 | scale-equalizer-weth-fame | 22613864 | 2024-11-19 11:51:15.000000Z | [transaction](https://base.blockscout.com/tx/0x1ba44f547a477aa049a32a06d74f90039a9f36dd621287195a9344a2249d68df) |
 | scale-equalizer-scale-fame | 22614190 | 2024-11-19 12:02:07.000000Z | [transaction](https://base.blockscout.com/tx/0xbff542bf4017bd33db2b9a9e70c45c18408d963b257188ef9353e1604283c605) |
 | uniswap-v3-zora-weth | 29319573 | 2025-04-23 17:14:53.000000Z | [transaction](https://base.blockscout.com/tx/0x94d4e533a391cef88b49eed9bb6adfbbaea63b7d70b2b0de2f343d14eeb010cd) |
@@ -21,8 +22,14 @@ historical FAME venue. Previously excluded pools remain excluded.
 | scale-equalizer-usdc-frxusd | 38096669 | 2025-11-12 21:24:45.000000Z | [transaction](https://base.blockscout.com/tx/0x89c5eed6e8af5e31650f51071cad1a32b80c60bc2413149244772e2dd0c40f46) |
 | scale-equalizer-frxusd-fame | 43282547 | 2026-03-12 22:27:21.000Z | [transaction](https://base.blockscout.com/tx/0x7659316d381f035c3ba6b4f004f9b233f61d1fa47ab6e7c7517dc118daf4d3e2) |
 
-The earliest direct pool is Uniswap V2 FAME/WETH, block **17,019,741**.
+The earliest direct pools are Uniswap V2 and V3 FAME/WETH, block **17,019,741**.
 Include the creation block itself when collecting logs.
+
+The V3 pool was admitted after the initial ten-source inventory. Its factory
+PoolCreated (log 194), Initialize (195), and two Mint events (199, 209) are in
+the same launch transaction as V2. Both positions were initially below the
+initialized tick and contained only FAME (about 266.4 million in total).
+Inventory is not active liquidity. See the [V3 admission receipt](2026-10-08-uniswap-v3-history-admission.md).
 
 ## Evidence and limitations
 

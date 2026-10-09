@@ -1,4 +1,4 @@
-import { famePoolStateRegistry } from "../fame-swap-pool-state/registry/index.ts";
+import { fameHistoryRegistry } from "./registry.ts";
 import { collect } from "./collector.ts";
 import { historyScope, integer } from "./model.ts";
 import { boundedTransport, chainReader } from "./rpc.ts";
@@ -44,7 +44,7 @@ export async function runHistory(
   { dryRun, deadline }: { dryRun: boolean; deadline: number },
 ) {
   const config = configuration(env, dryRun);
-  const scope = historyScope(famePoolStateRegistry);
+  const scope = historyScope(fameHistoryRegistry);
   const rpc = boundedTransport({
     url: config.rpcUrl,
     maxRequests: config.maxRequests,

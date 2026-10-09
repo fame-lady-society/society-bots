@@ -7,7 +7,7 @@ import {
   chainReader,
 } from "../../src/fame-market-history/rpc.ts";
 import { historyScope } from "../../src/fame-market-history/model.ts";
-import { famePoolStateRegistry } from "../../src/fame-swap-pool-state/registry/index.ts";
+import { fameHistoryRegistry } from "../../src/fame-market-history/registry.ts";
 
 // Manual CI deployment only. Credentials never enter outputs or synthesized templates.
 const ssm = new SSMClient({ maxAttempts: 2 });
@@ -27,7 +27,7 @@ try {
       deadline: Date.now() + 30_000,
     });
     return chainReader(
-      historyScope(famePoolStateRegistry),
+      historyScope(fameHistoryRegistry),
       rpc.transport,
       1,
     ).finalized();
