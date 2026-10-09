@@ -40,7 +40,7 @@ export async function readSampledMarket(
   now = Date.now,
 ) {
   const reader = sampledReader(db, table, sampledPolicy(scope).revision, now);
-  const p = await reader.publication();
+  const p = await reader.window(request.from, request.to);
   const generation = p.generation;
   const buckets = await reader.pages(
     p.pages.filter(
@@ -59,18 +59,14 @@ export async function readSampledMarket(
       (_, i) => {
         const timestamp = request.from + i * 300;
         const published = buckets.get(timestamp);
-        if (
-          !published &&
-          timestamp >= p.startTimestamp &&
-          timestamp < p.nextTimestamp
-        )
+        if (!published && p.pages.some((r) => r.timestamp === timestamp))
           throw new Error("Missing published sampled bucket");
         return {
           ...(published ??
             sampledMarketBucket(scope, request.currency, timestamp, null, [])),
           publicationStatus: published
             ? "published"
-            : timestamp < p.startTimestamp
+            : timestamp < p.nextTimestamp
               ? "outside-published-window"
               : "not-yet-published",
         };

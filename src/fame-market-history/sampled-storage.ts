@@ -1,3 +1,9 @@
+import {
+  utcDay,
+  validateDay,
+  updateDay,
+  dayWrites,
+} from "./dated-publication.ts";
 import { valuedActivity } from "./activity-events.ts";
 import { activityIndexed, writeActivity } from "./activity-storage.ts";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
@@ -80,6 +86,10 @@ export function awsSampled({
     evidence: SampledEvidence,
     buckets: SampledBucket[],
   ): Promise<void>;
+  publishHistorical(
+    evidence: SampledEvidence,
+    buckets: SampledBucket[],
+  ): Promise<void>;
   revise(
     previous: SampledPublication,
     evidence: SampledEvidence,
@@ -118,6 +128,15 @@ export function awsSampled({
           ExpressionAttributeValues: { ":body": JSON.stringify(p) },
         },
       }));
+  const datedWrites = async (
+    ref: import("./sampled-live.ts").SampledPageRef,
+  ) => {
+    const row = await get(sampledKey(revision, `day:${utcDay(ref.timestamp)}`));
+    const previous = row
+      ? validateDay(JSON.parse(row.body), revision, utcDay(ref.timestamp))
+      : null;
+    return dayWrites(table, previous, updateDay(previous, revision, ref));
+  };
   const collected = async () =>
     cursorValue(await get(sampledKey(revision, "collected")), revision);
   const download = async (key: string, length: number, sha: string) => {
@@ -387,6 +406,52 @@ export function awsSampled({
     },
     activity,
     indexActivity,
+    publishHistorical: async (e, buckets) => {
+      const ref = nextSampledPublication(null, e, buckets).pages[0];
+      await indexActivity(e, buckets);
+      const dated = await datedWrites(ref);
+      await db.send(
+        new TransactWriteCommand({
+          TransactItems: [
+            ...dated,
+            {
+              ConditionCheck: {
+                TableName: table,
+                Key: sampledKey(revision, "published"),
+                ConditionExpression: "startTimestamp > :t",
+                ExpressionAttributeValues: { ":t": e.timestamp },
+              },
+            },
+            {
+              ConditionCheck: {
+                TableName: table,
+                Key: sampledKey(revision, `observation:${e.timestamp}`),
+                ConditionExpression: "sha256 = :sha",
+                ExpressionAttributeValues: {
+                  ":sha": digest(JSON.stringify(e)),
+                },
+              },
+            },
+            ...buckets.map((b) => ({
+              Put: {
+                TableName: table,
+                Item: {
+                  ...sampledPageKey(
+                    revision,
+                    b.currency,
+                    e.timestamp,
+                    ref[b.currency],
+                  ),
+                  body: JSON.stringify(b),
+                },
+                ConditionExpression: "attribute_not_exists(pk) OR body = :body",
+                ExpressionAttributeValues: { ":body": JSON.stringify(b) },
+              },
+            })),
+          ],
+        }),
+      );
+    },
     revise: async (previous, e, buckets) => {
       previous = validateSampledPublication(previous, revision);
       const replacement = nextSampledPublication(null, e, buckets).pages[0];
@@ -400,10 +465,12 @@ export function awsSampled({
       const generation = digest(JSON.stringify(next));
       if (generation === previous.generation) return;
       await indexActivity(e, buckets);
+      const dated = await datedWrites(replacement);
       await db.send(
         new TransactWriteCommand({
           TransactItems: [
             ...manifests(previous, { ...next, generation }),
+            ...dated,
             {
               ConditionCheck: {
                 TableName: table,
@@ -453,10 +520,12 @@ export function awsSampled({
       await indexActivity(e, buckets);
       const { key, sha, bytes } = await archiveEvidence(e);
       const ref = next.pages[0];
+      const dated = await datedWrites(ref);
       await db.send(
         new TransactWriteCommand({
           TransactItems: [
             ...manifests(previous, next),
+            ...dated,
             // Historical work can never claim a live collector's bucket.
             {
               ConditionCheck: {
@@ -527,10 +596,12 @@ export function awsSampled({
       const next = nextSampledPublication(previous, e, buckets);
       await indexActivity(e, buckets);
       const ref = next.pages.at(-1)!;
+      const dated = await datedWrites(ref);
       await db.send(
         new TransactWriteCommand({
           TransactItems: [
             ...manifests(previous, next),
+            ...dated,
             {
               ConditionCheck: {
                 TableName: table,

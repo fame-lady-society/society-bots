@@ -1,5 +1,8 @@
 # FAME market history
 
+For dated chart and activity reads beyond the rolling live window, see
+[Serving retained FAME history](historical-serving.md).
+
 ## Implementation status
 
 The approved plan is `docs/plans/2026-10-03-001-feat-affordable-market-history-plan.md`.

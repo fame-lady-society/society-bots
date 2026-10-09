@@ -1,3 +1,8 @@
+import {
+  validateSources,
+  type WindowSource,
+  type ReadPublication,
+} from "./dated-publication.ts";
 import type { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { HistoryError } from "./api.ts";
 import type { Scope } from "./model.ts";
@@ -18,6 +23,7 @@ export interface ChartRequest {
   cursor?: string;
 }
 interface Cursor {
+  sources?: WindowSource[];
   v: 1;
   revision: string;
   generation: string;
@@ -37,6 +43,7 @@ function decode(raw: string): Cursor {
   try {
     const c = JSON.parse(Buffer.from(raw, "base64url").toString());
     if (c.v !== 1) return reset();
+    if (c.sources !== undefined) validateSources(c.sources);
     if (
       !/^[a-f0-9]{64}$/.test(c.revision) ||
       !/^[a-f0-9]{64}$/.test(c.generation) ||
@@ -144,19 +151,21 @@ function gap(
       : {}),
   };
 }
-const state = (p: SampledPublication, t: number) =>
-  t < p.startTimestamp
-    ? "outside-published-window"
-    : t >= p.nextTimestamp
-      ? "not-yet-published"
-      : "published";
+const state = (p: ReadPublication, t: number) =>
+  p.pages.some((r) => r.timestamp === t)
+    ? "published"
+    : t < p.startTimestamp
+      ? "outside-published-window"
+      : t >= p.nextTimestamp
+        ? "not-yet-published"
+        : "outside-published-window";
 export async function readChart(
   db: DynamoDBDocumentClient,
   table: string,
   scope: Scope,
   request: ChartRequest,
   now = Date.now,
-  pinned?: SampledPublication,
+  pinned?: ReadPublication,
 ) {
   const revision = sampledPolicy(scope).revision,
     reader = sampledReader(db, table, revision, now);
@@ -171,11 +180,15 @@ export async function readChart(
       request.from >= c.to)
   )
     reset();
-  const current = pinned ?? (await reader.publication());
-  let base: SampledPublication | null = null;
+  const current = pinned ?? (await reader.window(request.from, request.to));
+  let base: ReadPublication | null = null;
   if (c) {
     if (c.generation === current.generation) base = current;
-    else {
+    else if (c.sources) {
+      base = await reader.window(c.from, c.to, c.sources);
+      if (base.generation !== c.generation)
+        throw new Error("Historical chart manifest mismatch");
+    } else {
       const stored = await reader.get(`manifest:${c.generation}`);
       if (!stored) reset();
       if (
@@ -220,6 +233,7 @@ export async function readChart(
     v: 1,
     revision,
     generation: current.generation,
+    ...("sources" in current ? { sources: current.sources } : {}),
     currency: request.currency,
     series: request.series,
     from: request.from,

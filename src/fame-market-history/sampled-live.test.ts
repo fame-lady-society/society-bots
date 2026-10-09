@@ -110,7 +110,7 @@ test("a fresh deployment returns explicit gaps around available publication", as
   const db = {
     send: async (command: any) =>
       command.input.Key
-        ? { Item: p }
+        ? { Item: command.input.Key.sk === "published" ? p : undefined }
         : {
             Responses: {
               table: command.input.RequestItems.table.Keys.map((Key: any) => ({
