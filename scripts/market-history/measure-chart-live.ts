@@ -5,10 +5,10 @@ import { readChart } from "../../src/fame-market-history/chart-api.ts";
 import { sampledReader } from "../../src/fame-market-history/sampled-reader.ts";
 import { sampledPolicy } from "../../src/fame-market-history/sampled-market.ts";
 import { historyScope } from "../../src/fame-market-history/model.ts";
-import { fameHistoryRegistry } from "../../src/fame-market-history/registry.ts";
+import { famePoolStateRegistry } from "../../src/fame-swap-pool-state/registry/index.ts";
 const table = process.env.FAME_HISTORY_TABLE;
 if (!table) throw new Error("Missing history table");
-const scope = historyScope(fameHistoryRegistry),
+const scope = historyScope(famePoolStateRegistry),
   client = DynamoDBDocumentClient.from(new DynamoDBClient({ maxAttempts: 2 }));
 let calls = 0,
   capacity = 0,

@@ -8,9 +8,9 @@ import {
   type Header,
   type RawLog,
 } from "./model.ts";
-import { fameHistoryRegistry } from "./registry.ts";
+import { famePoolStateRegistry } from "../fame-swap-pool-state/registry/index.ts";
 
-const scope = historyScope(fameHistoryRegistry);
+const scope = historyScope(famePoolStateRegistry);
 const h = (n: number): Hex => `0x${n.toString(16).padStart(64, "0")}`;
 const header = (number: number): Header => ({
   number,
@@ -279,8 +279,8 @@ test("no new finalized blocks means no writes", async () => {
   expect(f.operations).toEqual([]);
 });
 
-test("scope contains six direct pools and excludes connector/V4 manager", () => {
-  expect(scope.pools).toHaveLength(6);
+test("scope contains five direct pools and excludes connector/V4 manager", () => {
+  expect(scope.pools).toHaveLength(5);
   expect(
     scope.pools.every(
       (p) =>
@@ -291,8 +291,8 @@ test("scope contains six direct pools and excludes connector/V4 manager", () => 
   ).toBe(true);
   expect(
     historyScope({
-      ...fameHistoryRegistry,
-      source: { ...fameHistoryRegistry.source, pinnedBaseBlock: 1 },
+      ...famePoolStateRegistry,
+      source: { ...famePoolStateRegistry.source, pinnedBaseBlock: 1 },
     }).id,
   ).toBe(scope.id);
 });

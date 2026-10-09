@@ -6,7 +6,7 @@ import {
   toEventSelector,
   type Hex,
 } from "viem";
-import { fameHistoryRegistry } from "./registry.ts";
+import { famePoolStateRegistry } from "../fame-swap-pool-state/registry/index.ts";
 import { collect } from "./collector.ts";
 import { historyScope, FAME_ADDRESS, type Manifest } from "./model.ts";
 import { EVENT_ABIS, type TokenMetadata } from "./decode.ts";
@@ -18,7 +18,7 @@ import {
   type ValuationSnapshot,
 } from "./valuation.ts";
 
-export const scope = historyScope(fameHistoryRegistry);
+export const scope = historyScope(famePoolStateRegistry);
 export const pool = scope.pools.find((p) => p.venueFamily === "Solidly")!;
 export const epoch = 1700000100;
 const h = (n: number): Hex => `0x${n.toString(16).padStart(64, "0")}`;

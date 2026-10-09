@@ -103,9 +103,6 @@ jobs:
           TABLE_NAME="$(aws cloudformation describe-stacks --stack-name Bot-prod --query 'Stacks[0].Outputs[?OutputKey==`FamePoolStateFamePoolStateTableName19BB0848`].OutputValue | [0]' --output text)"
           test -n "$TABLE_NAME" && test "$TABLE_NAME" != None
           echo "FAME_HISTORY_POOL_STATE_TABLE=$TABLE_NAME" >> "$GITHUB_ENV"
-          HISTORY_TABLE="$(aws cloudformation describe-stacks --stack-name FameMarketHistory --query 'Stacks[0].Outputs[?OutputKey==`TableName`].OutputValue | [0]' --output text)"
-          test -n "$HISTORY_TABLE" && test "$HISTORY_TABLE" != None
-          echo "FAME_HISTORY_TABLE=$HISTORY_TABLE" >> "$GITHUB_ENV"
           API_ID="$(aws cloudformation describe-stacks --stack-name Bot-prod --query 'Stacks[0].Outputs[?OutputKey==`HistoryApiId`].OutputValue | [0]' --output text)"
           AUTHORIZER_ID="$(aws cloudformation describe-stacks --stack-name Bot-prod --query 'Stacks[0].Outputs[?OutputKey==`HistoryAuthorizerId`].OutputValue | [0]' --output text)"
           test -n "$API_ID" && test "$API_ID" != None

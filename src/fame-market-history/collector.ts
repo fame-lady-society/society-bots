@@ -1,5 +1,5 @@
 import { gzipSync } from "node:zlib";
-import { isCapacityError, WorkLimit, RangeLimit } from "./limits.ts";
+import { isCapacityError, WorkLimit } from "./limits.ts";
 import { validateSnapshots, type ValuationSnapshot } from "./valuation.ts";
 import {
   digest,
@@ -65,7 +65,6 @@ export async function collect({
   maxBlocks,
   maxEvents,
   dryRun = false,
-  endBlock,
 }: {
   chain: ChainReader;
   store: ArchiveStore;
@@ -74,13 +73,10 @@ export async function collect({
   maxBlocks: number;
   maxEvents: number;
   dryRun?: boolean;
-  /** Inclusive, explicit replay boundary; never substitutes for finalized head. */
-  endBlock?: number;
 }): Promise<CollectResult> {
   integer(startBlock, "start block", 1);
   integer(maxBlocks, "max blocks", 1);
   integer(maxEvents, "max events", 1);
-  if (endBlock !== undefined) integer(endBlock, "end block", startBlock);
   const cursor = await store.cursor(scope.id, startBlock);
   if (cursor.startBlock !== startBlock)
     throw new Error(
@@ -101,7 +97,6 @@ export async function collect({
   const fromBlock = cursor.nextBlock;
   let toBlock = Math.min(
     finalized.number,
-    endBlock ?? finalized.number,
     fromBlock + Math.min(maxBlocks, cursor.maxBlocks ?? maxBlocks) - 1,
   );
   const requestedBlocks = toBlock - fromBlock + 1;
@@ -114,7 +109,7 @@ export async function collect({
     finalizedBlock: finalized.number,
     coverageLagBlocks: Math.max(0, finalized.number - (cursor.nextBlock - 1)),
   };
-  if (fromBlock > toBlock) return { ...result, status: "caught-up" };
+  if (fromBlock > finalized.number) return { ...result, status: "caught-up" };
   try {
     const previous = await chain.header(fromBlock - 1);
     if (cursor.previousHash && cursor.previousHash !== previous.hash)
@@ -128,7 +123,7 @@ export async function collect({
     let logs = scanned.logs;
     let yieldReason: CollectResult["yieldReason"] = scanned.yieldReason;
     if (logs.length > maxEvents)
-      throw new RangeLimit(
+      throw new Error(
         "Event limit exceeded; reduce block range before retrying",
       );
     let blocks = [

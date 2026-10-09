@@ -29,10 +29,6 @@
     "uniswap-v2-fame-direct": {
       "token0": "0x4200000000000000000000000000000000000006",
       "token1": "0xf307e242bfe1ec1ff01a4cef2fdaa81b10a52418"
-    },
-    "uniswap-v3-weth-fame-30bps": {
-      "token0": "0x4200000000000000000000000000000000000006",
-      "token1": "0xf307e242bfe1ec1ff01a4cef2fdaa81b10a52418"
     }
   },
   "decoderReview": "provisional"

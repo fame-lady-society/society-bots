@@ -1,7 +1,7 @@
 /** Read-only finalized valuation check. No AWS writes or transaction signing. */
 import "dotenv/config";
 import { writeFile } from "node:fs/promises";
-import { fameHistoryRegistry } from "../../src/fame-market-history/registry.ts";
+import { famePoolStateRegistry } from "../../src/fame-swap-pool-state/registry/index.ts";
 import { historyScope } from "../../src/fame-market-history/model.ts";
 import {
   boundedTransport,
@@ -12,7 +12,7 @@ import { validateSnapshots } from "../../src/fame-market-history/valuation.ts";
 try {
   const url = process.env.FAME_HISTORY_RPC_URL ?? process.env.BASE_RPC_URL;
   if (!url) throw new Error("Missing RPC configuration");
-  const scope = historyScope(fameHistoryRegistry);
+  const scope = historyScope(famePoolStateRegistry);
   const rpc = boundedTransport({
     url,
     maxRequests: 10,

@@ -124,24 +124,25 @@ test("actual ABI decoding distinguishes buy/sell in every family and either toke
         const [n0, n1] = fame0
           ? [fameDelta, quoteDelta]
           : [quoteDelta, fameDelta];
-        const args = ["Slipstream", "UniswapV3"].includes(pool.venueFamily)
-          ? {
-              sender: a,
-              recipient: a,
-              amount0: n0,
-              amount1: n1,
-              sqrtPriceX96: 2n ** 96n,
-              liquidity: 10n,
-              tick: 0,
-            }
-          : {
-              sender: a,
-              to: a,
-              amount0In: n0 > 0n ? n0 : 0n,
-              amount1In: n1 > 0n ? n1 : 0n,
-              amount0Out: n0 < 0n ? -n0 : 0n,
-              amount1Out: n1 < 0n ? -n1 : 0n,
-            };
+        const args =
+          pool.venueFamily === "Slipstream"
+            ? {
+                sender: a,
+                recipient: a,
+                amount0: n0,
+                amount1: n1,
+                sqrtPriceX96: 2n ** 96n,
+                liquidity: 10n,
+                tick: 0,
+              }
+            : {
+                sender: a,
+                to: a,
+                amount0In: n0 > 0n ? n0 : 0n,
+                amount1In: n1 > 0n ? n1 : 0n,
+                amount0Out: n0 < 0n ? -n0 : 0n,
+                amount1Out: n1 < 0n ? -n1 : 0n,
+              };
         expect(action(pool, "Swap", args)).toMatchObject({
           type: buy ? "buy" : "sell",
           fameAtoms: "10",
@@ -164,7 +165,7 @@ test("Mint/Burn are principal changes; Collect, Sync and zero liquidity pokes ar
     };
     expect(action(pool, "Mint", common)?.type).toBe("add");
     expect(action(pool, "Burn", common)?.type).toBe("remove");
-    if (["Slipstream", "UniswapV3"].includes(pool.venueFamily)) {
+    if (pool.venueFamily === "Slipstream") {
       expect(action(pool, "Burn", { ...common, amount: 0n })).toBeNull();
       expect(action(pool, "Collect", { ...common, recipient: a })).toBeNull();
     } else

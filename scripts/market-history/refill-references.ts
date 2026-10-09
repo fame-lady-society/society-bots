@@ -5,7 +5,7 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand } from "@aws-sdk/lib-dynamodb";
 import { S3Client } from "@aws-sdk/client-s3";
 import { SSMClient, GetParameterCommand } from "@aws-sdk/client-ssm";
-import { fameHistoryRegistry } from "../../src/fame-market-history/registry.ts";
+import { famePoolStateRegistry } from "../../src/fame-swap-pool-state/registry/index.ts";
 import { historyScope } from "../../src/fame-market-history/model.ts";
 import {
   boundedTransport,
@@ -65,7 +65,7 @@ async function main() {
   };
   const table = output("TableName"),
     bucket = output("BucketName");
-  const scope = historyScope(fameHistoryRegistry),
+  const scope = historyScope(famePoolStateRegistry),
     policy = referencePolicy(scope);
   const db = DynamoDBDocumentClient.from(
     new DynamoDBClient({ region, maxAttempts: 2 }),
