@@ -1,3 +1,4 @@
+import { activeDataset } from "./dataset.ts";
 import { fameHistoryRegistry } from "./registry.ts";
 import { collect } from "./collector.ts";
 import { historyScope, integer } from "./model.ts";
@@ -44,7 +45,10 @@ export async function runHistory(
   { dryRun, deadline }: { dryRun: boolean; deadline: number },
 ) {
   const config = configuration(env, dryRun);
-  const scope = historyScope(fameHistoryRegistry);
+  const scope =
+    dryRun && !config.table
+      ? historyScope(fameHistoryRegistry)
+      : (await activeDataset(config.table)).scope;
   const rpc = boundedTransport({
     url: config.rpcUrl,
     maxRequests: config.maxRequests,

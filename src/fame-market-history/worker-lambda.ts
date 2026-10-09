@@ -1,20 +1,14 @@
+import { activeDataset } from "./dataset.ts";
 import type { Context } from "aws-lambda";
-import { readFileSync } from "node:fs";
-import { fameHistoryRegistry } from "./registry.ts";
-import { historyScope, integer } from "./model.ts";
+import { integer } from "./model.ts";
 import { aggregateNext } from "./worker.ts";
 import { awsAggregation } from "./worker-storage.ts";
-import type { TokenMetadata } from "./decode.ts";
 import { publishReferences } from "./reference-worker.ts";
 import { awsReferences } from "./reference-storage.ts";
 import { failureCode } from "./failure.ts";
 
 import { publishSampled } from "./sampled-live.ts";
 import { awsSampled } from "./sampled-storage.ts";
-
-export const tokenMetadata: TokenMetadata = JSON.parse(
-  readFileSync(new URL("./token-metadata.json", import.meta.url), "utf8"),
-);
 
 export async function handler(_event: unknown, context: Context) {
   if (context.getRemainingTimeInMillis() < 110_000)
@@ -29,12 +23,12 @@ export async function handler(_event: unknown, context: Context) {
     1,
   );
   try {
-    const scope = historyScope(fameHistoryRegistry);
+    const { scope, metadata } = await activeDataset(table);
     const outcomes = await Promise.allSettled([
       aggregateNext({
         scope,
         startBlock,
-        metadata: tokenMetadata,
+        metadata,
         store: awsAggregation({ table, bucket }),
       }),
       publishReferences(
@@ -59,7 +53,7 @@ export async function handler(_event: unknown, context: Context) {
         scope,
         table,
         bucket,
-        metadata: tokenMetadata,
+        metadata,
         canContinue: () => context.getRemainingTimeInMillis() > 25000,
       }),
       () => context.getRemainingTimeInMillis() > 30000,

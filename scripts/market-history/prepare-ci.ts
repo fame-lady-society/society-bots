@@ -1,3 +1,4 @@
+import { activeDataset } from "../../src/fame-market-history/dataset.ts";
 import { appendFile } from "node:fs/promises";
 import { PutParameterCommand, SSMClient } from "@aws-sdk/client-ssm";
 import { historyRpcParameter } from "./ci-config.ts";
@@ -14,6 +15,17 @@ const ssm = new SSMClient({ maxAttempts: 2 });
 try {
   const envFile = process.env.GITHUB_ENV;
   if (!envFile) throw new Error("CI environment file required");
+  const table = process.env.FAME_HISTORY_TABLE;
+  if (!table)
+    throw new Error("Existing history table is required for dataset preflight");
+  const active = await activeDataset(table);
+  console.log(
+    JSON.stringify({
+      event: "history-deployment-dataset",
+      scopeId: active.scope.id,
+      pools: active.scope.pools.length,
+    }),
+  );
   const input = historyRpcParameter(
     process.env.FAME_POOL_STATE_INDEXER_BASE_RPCS_JSON,
     process.env.FAME_HISTORY_RPC_PARAMETER,

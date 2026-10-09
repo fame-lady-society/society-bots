@@ -32,8 +32,8 @@ bucket; exact large integers come from retained event bytes, not JSON numbers.
 
 The history registry composes the existing www-derived registry with
 `src/fame-market-history/additional-pools.json`. The swap/landing authority set
-remains unchanged. Every history collector, publisher, reader and operator script
-uses the same expanded registry; the three Lambda bundles include the additions.
+remains unchanged. The compiled registry makes the sixth pool available; production resolves the
+active definition, while admission scripts use the expanded registry; the three Lambda bundles include the additions.
 `tracked-only` and `concentrated-liquidity` describe swap-quote capability, not
 exclusion from market history: history captures all direct-pool address logs.
 This does not enable a new executable swap route or a liquidity tick indexer.
@@ -55,19 +55,17 @@ state rather than fabricate an executable price or claim a complete blend.
 
 ## Rollout boundary
 
-**Not deployed. Do not deploy this registry addition alone as a seamless upgrade.**
-The sixth address changes raw scope identity and sampled policy revision. Old
-archives, checkpoints, chart pages and activity remain intact under their prior
-identities; they are not reinterpreted as six-pool coverage. The current API derives
-its selected revision from code, so deploying immediately would switch reads to an
-unpopulated revision and initially return history-not-ready/unavailable.
+**Not deployed.** The sixth address changes raw scope identity and sampled
+policy revision. Archives, checkpoints and publications stay under their original
+identities. Production entrypoints now resolve an explicit active dataset rather
+than selecting the compiled registry automatically.
 
-Stage the expanded dataset through the managed-backfill work: reuse verified
-five-pool raw evidence, collect the missing V3 logs, sample/rebuild six-pool prices,
-and verify chart/activity generations before the reader cutover. Do not relabel
-old manifests or reset live cursors. The existing importer is not a scope merger.
-The genesis exercise is a local historical test, not this production cutover.
-Operator merge/deploy authorization is still needed after that preparation.
+Follow [the six-pool rollout runbook](2026-10-08-six-pool-rollout.md): prepare the
+immutable job, register/stage a separate expanded dataset, deploy through the
+operator, finish catch-up and verification, then explicitly activate it. CI
+preflight rejects deployment before the active dataset definition is registered.
+The old five-pool view remains selected until the conditional handoff succeeds.
+The July 2024 genesis exercise remains separate from this recent-window rollout.
 
 Tests cover launch bytes, both same-transaction liquidity rows, both swap
 directions/orientations, principal vs fee events, spot prices, V3 slot0 sampling,
