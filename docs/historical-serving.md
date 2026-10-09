@@ -151,3 +151,40 @@ The preceding eight-hour replay also passed (96 buckets, five events, both
 currencies). Receipts are generated locally by the rehearsal command; no archive
 payloads or credentials are committed. Public API verification remains an
 operator deployment step, followed by materialization of retained older ranges.
+
+## Earliest available history and backwards navigation
+
+`GET /fame/history?view=availability&before=1791417600` returns:
+
+```json
+{
+  "version": "fame-history-availability-v1",
+  "policyRevision": "<active sampled policy hash>",
+  "earliestAvailableTimestamp": 1791344700,
+  "latestAvailableTimestamp": 1791581700,
+  "resolution": 300,
+  "maxWindowSeconds": 86400,
+  "before": 1791417600,
+  "hasEarlier": true
+}
+```
+
+The timestamps above illustrate the shape; read the endpoint for current values.
+`before` is optional and exclusive. With it, `hasEarlier` is true iff at least one
+published bucket is older than `before`. The boundary describes published chart
+and activity-page references for this policy, not chain genesis, retained raw
+coverage, price completeness, or a guarantee of uninterrupted observations.
+
+For each earlier page, use the current page's `from` as `before`. Stop when
+`hasEarlier` is false (or the current `from` reaches `earliestAvailableTimestamp`).
+Otherwise request `[max(earliestAvailableTimestamp, before - 86400), before)`.
+Continue through empty/interior gaps: **never stop based on
+`outside-published-window` alone**. Refresh availability when navigating; later
+materialization may move the earliest boundary backwards. A policy change requires
+refreshing this metadata and discarding cursors from the previous policy.
+
+Availability uses one consistent live-pointer read and a `Limit: 1` ascending
+query of dated directories, with no table scan or page-body reads. It uses the
+same authentication and `private, no-store` response policy. Existing ten-digit
+Unix-second directory keys sort chronologically for Base history (through 2286);
+an unexpected key fails closed instead of returning a misleading stop signal.

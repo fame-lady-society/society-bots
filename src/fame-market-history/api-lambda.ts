@@ -1,3 +1,4 @@
+import { parseAvailabilityRequest } from "./availability-api.ts";
 import { parseActivityRequest, readActivity } from "./activity-api.ts";
 import { digest } from "./model.ts";
 import { sampledPolicy } from "./sampled-market.ts";
@@ -35,6 +36,19 @@ export async function handler(event: APIGatewayProxyEventV2) {
   try {
     if (event.requestContext.http.method !== "GET" || event.body)
       throw new HistoryError(400, "invalid-request");
+    if (
+      new URLSearchParams(event.rawQueryString).get("view") === "availability"
+    ) {
+      const before = parseAvailabilityRequest(event.rawQueryString);
+      const table = process.env.FAME_HISTORY_TABLE;
+      if (!table) throw new Error("Missing history table");
+      const body = await sampledReader(
+        db,
+        table,
+        sampledPolicy(scope).revision,
+      ).availability(before);
+      return { statusCode: 200, headers, body: JSON.stringify(body) };
+    }
     const activity =
       new URLSearchParams(event.rawQueryString).get("view") === "activity";
     const activityRequest = activity
