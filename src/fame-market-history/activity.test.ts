@@ -371,7 +371,12 @@ test("missing indexes are explicit gaps; index validation rejects invalid counts
   f.data.delete(key(activityKey(f.current.policyRevision, f.current.pages[0])));
   expect(
     (await readActivity(f.db, "table", scope, req)).coverage.unavailableBuckets,
-  ).toEqual([{ timestamp: epoch, reason: "activity-not-indexed" }]);
+  ).toEqual(
+    expect.arrayContaining([
+      { timestamp: epoch, reason: "activity-not-indexed" },
+      { timestamp: epoch + 300, reason: "not-published" },
+    ]),
+  );
   const { index } = buildActivityIndex(epoch, rows(), "complete");
   expect(validateActivityIndex(index)).toEqual(index);
   expect(() => validateActivityIndex({ ...index, count: 42 })).toThrow();
@@ -494,4 +499,54 @@ test("partial quiet bucket coverage is not skipped when normalizing a full page 
     cursor: first.nextCursor!,
   });
   expect(second.coverage.partialBuckets).toEqual([epoch]);
+});
+
+test("historical activity pagination pins a dated generation across repairs", async () => {
+  const { dayPublication, utcDay, updateDay } = await import(
+    "./dated-publication.ts"
+  );
+  const f = fixture(),
+    revision = f.current.policyRevision;
+  const original = dayPublication(revision, utcDay(epoch), f.current.pages);
+  const dayKey = key(sampledKey(revision, `day:${original.day}`));
+  f.data.set(dayKey, { body: JSON.stringify(original) });
+  const e = sampledFixture(epoch + 86400);
+  const live = nextSampledPublication(
+    null,
+    e,
+    (["ETH", "USDC"] as const).map((c) =>
+      sampledMarketBucket(
+        scope,
+        c,
+        e.timestamp,
+        deriveSampledObservation(scope, e),
+        [],
+      ),
+    ),
+  );
+  f.data.set(key(sampledKey(revision, "published")), live);
+  const request = { ...req, to: epoch + 600, limit: 1 };
+  const first = await readActivity(f.db, "table", scope, request);
+  expect(first.rows).toHaveLength(1);
+  expect(first.nextCursor).not.toBeNull();
+  f.data.set(key(sampledKey(revision, `day-manifest:${original.generation}`)), {
+    body: JSON.stringify(original),
+    expiresAt: Math.floor(Date.now() / 1000) + 86400,
+  });
+  // A new adjacent bucket would shift descending page offsets without a pinned directory.
+  f.data.set(dayKey, {
+    body: JSON.stringify(
+      updateDay(original, revision, {
+        ...original.pages[0],
+        timestamp: epoch + 300,
+      }),
+    ),
+  });
+  const second = await readActivity(f.db, "table", scope, {
+    ...request,
+    cursor: first.nextCursor!,
+  });
+  expect(second.rows[0].id).not.toBe(first.rows[0].id);
+  expect(second.rows[0].transactionHash).toBe(first.rows[0].transactionHash);
+  expect(second.publicationId).toBe(first.publicationId);
 });

@@ -1,4 +1,12 @@
 import {
+  utcDay,
+  validateDay,
+  validateSources,
+  type ReadPublication,
+  type WindowSource,
+  type WindowPublication,
+} from "./dated-publication.ts";
+import {
   BatchGetCommand,
   GetCommand,
   type DynamoDBDocumentClient,
@@ -44,6 +52,103 @@ export function sampledReader(
     if (!item) throw new HistoryError(503, "sampled-history-not-ready");
     const { pk: _, sk: __, ...p } = item;
     return validateSampledPublication(p as SampledPublication, revision);
+  };
+  const window = async (
+    from: number,
+    to: number,
+    sources?: WindowSource[],
+  ): Promise<ReadPublication> => {
+    if (
+      ![from, to].every(
+        (n) => Number.isSafeInteger(n) && n >= 0 && n % 300 === 0,
+      ) ||
+      to <= from ||
+      to - from > 86400
+    )
+      throw new Error("Invalid history window");
+    const dayKeys = [...new Set([utcDay(from), utcDay(to - 1)])].map(
+      (d) => `day:${d}`,
+    );
+    if (sources) {
+      validateSources(sources);
+      if (
+        JSON.stringify(sources.map((s) => s.key)) !==
+        JSON.stringify([
+          ...dayKeys,
+          ...(sources.some((s) => s.key === "published") ? ["published"] : []),
+        ])
+      )
+        throw new HistoryError(400, "invalid-query");
+    }
+    const liveRow = sources ? null : await get("published");
+    if (!sources && !liveRow)
+      throw new HistoryError(503, "sampled-history-not-ready");
+    const live = liveRow
+      ? validateSampledPublication(liveRow as SampledPublication, revision)
+      : null;
+    if (live && from >= live.startTimestamp) return live;
+    let horizon = live?.nextTimestamp ?? to;
+    const selected: WindowSource[] = [];
+    const refs = new Map<number, SampledPageRef>();
+    const keys = sources?.map((s) => s.key) ?? [
+      ...dayKeys,
+      ...(live && to > live.startTimestamp ? ["published"] : []),
+    ];
+    for (const key of keys) {
+      const pinned = sources?.find((s) => s.key === key);
+      if (pinned?.generation === null) {
+        selected.push(pinned);
+        continue;
+      }
+      let current: ReadPublication | ReturnType<typeof validateDay> | null;
+      if (key === "published") {
+        const row = live ?? (await get(key));
+        current = row
+          ? validateSampledPublication(row as SampledPublication, revision)
+          : null;
+      } else {
+        const row = await get(key);
+        current = row
+          ? validateDay(JSON.parse(row.body), revision, Number(key.slice(4)))
+          : null;
+      }
+      if (pinned && current?.generation !== pinned.generation) {
+        const row = await get(
+          `${key === "published" ? "manifest" : "day-manifest"}:${pinned.generation}`,
+        );
+        if (
+          !row ||
+          !Number.isSafeInteger(row.expiresAt) ||
+          row.expiresAt <= Math.floor(now() / 1000)
+        )
+          throw new HistoryError(409, "cursor-reset-required");
+        current =
+          key === "published"
+            ? validateSampledPublication(JSON.parse(row.body), revision)
+            : validateDay(JSON.parse(row.body), revision, Number(key.slice(4)));
+        if (current.generation !== pinned.generation)
+          throw new Error("Historical manifest identity mismatch");
+      }
+      if (key === "published" && current && "nextTimestamp" in current)
+        horizon = current.nextTimestamp;
+      selected.push({ key, generation: current?.generation ?? null });
+      for (const ref of current?.pages ?? [])
+        if (ref.timestamp >= from && ref.timestamp < to)
+          refs.set(ref.timestamp, ref);
+    }
+    const pages = [...refs.values()].sort((a, b) => a.timestamp - b.timestamp);
+    const body = {
+      version: "fame-history-window-v1" as const,
+      policyRevision: revision,
+      startTimestamp: from,
+      nextTimestamp: Math.min(to, horizon),
+      pages,
+    };
+    return {
+      ...body,
+      generation: digest(JSON.stringify({ ...body, from, to })),
+      sources: selected,
+    } satisfies WindowPublication;
   };
   const pages = async (refs: SampledPageRef[], currency: Currency) => {
     if (refs.length > 288) throw new Error("Too many sampled pages");
@@ -119,5 +224,5 @@ export function sampledReader(
     );
     return result;
   };
-  return { get, publication, pages };
+  return { get, publication, window, pages };
 }

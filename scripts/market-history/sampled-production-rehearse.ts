@@ -352,6 +352,21 @@ export async function rehearseSampled(
     assert.equal(full.buckets.length, 288);
     assert.ok(Buffer.byteLength(JSON.stringify(full)) < 2 * 1024 * 1024);
   }
+  // Evicted history remains readable through dated directories. Materialization
+  // is idempotent and cannot touch buckets still owned by the live window.
+  const liveBefore = await store.publication();
+  await store.publishHistorical(historical, historicalRows);
+  await store.publishHistorical(historical, historicalRows);
+  assert.deepEqual(await store.publication(), liveBefore);
+  const archived = await readChart(db, table, scope, {
+    currency: "ETH",
+    series: "market",
+    from: epoch,
+    to: epoch + 300,
+  });
+  assert.equal(archived.upserts[0].publicationStatus, "published");
+  await assert.rejects(() => store.publishHistorical(nextEvidence, nextRows));
+  assert.deepEqual(await store.publication(), liveBefore);
   console.log(
     JSON.stringify({
       event: "sampled-production-local-proof",

@@ -58,11 +58,10 @@ export async function handler(event: APIGatewayProxyEventV2) {
     const table = process.env.FAME_HISTORY_TABLE;
     if (!table) throw new Error("Missing history table");
     const publication = chart
-      ? await sampledReader(
-          db,
-          table,
-          sampledPolicy(scope).revision,
-        ).publication()
+      ? await sampledReader(db, table, sampledPolicy(scope).revision).window(
+          chartRequest!.from,
+          chartRequest!.to,
+        )
       : undefined;
     const etag =
       chart && !chartRequest!.cursor

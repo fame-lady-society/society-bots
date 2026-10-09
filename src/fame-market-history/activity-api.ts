@@ -1,3 +1,4 @@
+import { validateSources, type WindowSource } from "./dated-publication.ts";
 import {
   BatchGetCommand,
   GetCommand,
@@ -38,6 +39,7 @@ function decodeCursor(raw: string) {
     throw new HistoryError(400, "invalid-query");
   try {
     const c = JSON.parse(Buffer.from(raw, "base64url").toString());
+    if (c.sources !== undefined) validateSources(c.sources);
     if (c.version !== ACTIVITY_VERSION)
       throw new HistoryError(409, "cursor-reset-required");
     if (
@@ -53,6 +55,7 @@ function decodeCursor(raw: string) {
     )
       throw new Error();
     return c as {
+      sources?: WindowSource[];
       version: string;
       revision: string;
       generation: string;
@@ -135,17 +138,27 @@ export async function readActivity(
     cursor = raw ? decodeCursor(raw) : null;
   if (cursor && (cursor.query !== query || cursor.revision !== revision))
     throw new HistoryError(409, "cursor-reset-required");
-  let publication = await reader.publication();
+  let publication = await reader.window(request.from, request.to);
   if (cursor && cursor.generation !== publication.generation) {
-    const row = await reader.get(`manifest:${cursor.generation}`);
-    if (!row) throw new HistoryError(409, "cursor-reset-required");
-    if (!Number.isSafeInteger(row.expiresAt) || typeof row.body !== "string")
-      throw new Error("Invalid retained activity manifest");
-    if (row.expiresAt <= Math.floor(now() / 1000))
-      throw new HistoryError(409, "cursor-reset-required");
-    publication = validateSampledPublication(JSON.parse(row.body), revision);
-    if (publication.generation !== cursor.generation)
-      throw new Error("Activity manifest mismatch");
+    if (cursor.sources) {
+      publication = await reader.window(
+        request.from,
+        request.to,
+        cursor.sources,
+      );
+      if (publication.generation !== cursor.generation)
+        throw new Error("Historical activity manifest mismatch");
+    } else {
+      const row = await reader.get(`manifest:${cursor.generation}`);
+      if (!row) throw new HistoryError(409, "cursor-reset-required");
+      if (!Number.isSafeInteger(row.expiresAt) || typeof row.body !== "string")
+        throw new Error("Invalid retained activity manifest");
+      if (row.expiresAt <= Math.floor(now() / 1000))
+        throw new HistoryError(409, "cursor-reset-required");
+      publication = validateSampledPublication(JSON.parse(row.body), revision);
+      if (publication.generation !== cursor.generation)
+        throw new Error("Activity manifest mismatch");
+    }
   }
   const refs = publication.pages
     .filter((p) => p.timestamp >= request.from && p.timestamp < request.to)
@@ -299,6 +312,9 @@ export async function readActivity(
             version: ACTIVITY_VERSION,
             revision,
             generation: publication.generation,
+            ...("sources" in publication
+              ? { sources: publication.sources }
+              : {}),
             query,
             page,
             chunk,
@@ -344,7 +360,15 @@ export async function readActivity(
     })),
     nextCursor,
     coverage: {
-      unavailableBuckets: gaps,
+      unavailableBuckets: [
+        ...Array.from(
+          { length: (request.to - request.from) / 300 },
+          (_, i) => request.from + i * 300,
+        )
+          .filter((t) => !publication.pages.some((p) => p.timestamp === t))
+          .map((timestamp) => ({ timestamp, reason: "not-published" })),
+        ...gaps,
+      ],
       partialBuckets: partial,
       outsidePublishedWindow: request.from < publication.startTimestamp,
       notYetPublished: request.to > publication.nextTimestamp,
