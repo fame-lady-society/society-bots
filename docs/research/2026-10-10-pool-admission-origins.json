@@ -1,0 +1,30 @@
+[
+  {
+    "id": "aerodrome-cbbtc-fame",
+    "address": "0x3ed81ea504b5987611d4e270884539fe648694f0",
+    "creationBlock": 21374567,
+    "creationTimestamp": "2024-10-21T19:21:21.000000Z",
+    "creationTransaction": "0xedd7795fcca4402020cc8453e89861c72d7c5fa7110e2d4cdffdcd93ca9a924d"
+  },
+  {
+    "id": "aerodrome-spx-fame",
+    "address": "0x02360e4d2bd3129e02a8953a04fc68b08e57f7b3",
+    "creationBlock": 21194336,
+    "creationTimestamp": "2024-10-17T15:13:39.000000Z",
+    "creationTransaction": "0x5c15d6bbc470e66923c7f4b9a0f8f93f6c93122308f8a0366d13822e8f232314"
+  },
+  {
+    "id": "slipstream-spx-weth",
+    "address": "0x4ba1e3e9280facbacafa7baf4ae0b78bea60beca",
+    "creationBlock": 20549217,
+    "creationTimestamp": "2024-10-02T16:49:41.000000Z",
+    "creationTransaction": "0x98c678d6fe65f2bf93206c4d12b5dc64558b476eafe62f0435bb1a24b0b28221"
+  },
+  {
+    "id": "uniswap-v3-usdc-cbbtc-5bps",
+    "address": "0xfbb6eed8e7aa03b138556eedaf5d271a5e1e43ef",
+    "creationBlock": 19763050,
+    "creationTimestamp": "2024-09-14T12:04:07.000000Z",
+    "creationTransaction": "0xefba72c1ae6a5a31939ad47c541cf8ca7cecddb7798f32d57a0fa399ab9697b1"
+  }
+]
