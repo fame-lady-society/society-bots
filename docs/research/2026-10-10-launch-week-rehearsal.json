@@ -1,0 +1,324 @@
+{
+  "trial": {
+    "version": "local-launch-week-proof-v1",
+    "from": 1720828800,
+    "to": 1721433600,
+    "scopeId": "63e2330b25892023cd39081b5606d6b802fa6914b8bafb89def3675525678404",
+    "policyRevision": "fd1fadfbc31f56197be0fbf7cbd7f67838ab9f930a445e99710f8a44fec9b198",
+    "rawRanges": 152,
+    "rawEvents": 1632,
+    "trades": 971,
+    "activityEvents": 985,
+    "samples": 2016,
+    "summaries": [
+      {
+        "from": 1720828800,
+        "currency": "ETH",
+        "buckets": 288,
+        "prices": 284,
+        "candles": 283,
+        "events": 811,
+        "trades": 803,
+        "firstCoverage": "partial"
+      },
+      {
+        "from": 1720828800,
+        "currency": "USDC",
+        "buckets": 288,
+        "prices": 284,
+        "candles": 283,
+        "events": 811,
+        "trades": 803,
+        "firstCoverage": "partial"
+      },
+      {
+        "from": 1720915200,
+        "currency": "ETH",
+        "buckets": 288,
+        "prices": 288,
+        "candles": 288,
+        "events": 50,
+        "trades": 46,
+        "firstCoverage": "complete"
+      },
+      {
+        "from": 1720915200,
+        "currency": "USDC",
+        "buckets": 288,
+        "prices": 288,
+        "candles": 288,
+        "events": 50,
+        "trades": 46,
+        "firstCoverage": "complete"
+      },
+      {
+        "from": 1721001600,
+        "currency": "ETH",
+        "buckets": 288,
+        "prices": 288,
+        "candles": 288,
+        "events": 33,
+        "trades": 33,
+        "firstCoverage": "complete"
+      },
+      {
+        "from": 1721001600,
+        "currency": "USDC",
+        "buckets": 288,
+        "prices": 288,
+        "candles": 288,
+        "events": 33,
+        "trades": 33,
+        "firstCoverage": "complete"
+      },
+      {
+        "from": 1721088000,
+        "currency": "ETH",
+        "buckets": 288,
+        "prices": 288,
+        "candles": 288,
+        "events": 36,
+        "trades": 36,
+        "firstCoverage": "complete"
+      },
+      {
+        "from": 1721088000,
+        "currency": "USDC",
+        "buckets": 288,
+        "prices": 288,
+        "candles": 288,
+        "events": 36,
+        "trades": 36,
+        "firstCoverage": "complete"
+      },
+      {
+        "from": 1721174400,
+        "currency": "ETH",
+        "buckets": 288,
+        "prices": 288,
+        "candles": 288,
+        "events": 27,
+        "trades": 25,
+        "firstCoverage": "complete"
+      },
+      {
+        "from": 1721174400,
+        "currency": "USDC",
+        "buckets": 288,
+        "prices": 288,
+        "candles": 288,
+        "events": 27,
+        "trades": 25,
+        "firstCoverage": "complete"
+      },
+      {
+        "from": 1721260800,
+        "currency": "ETH",
+        "buckets": 288,
+        "prices": 288,
+        "candles": 288,
+        "events": 18,
+        "trades": 18,
+        "firstCoverage": "complete"
+      },
+      {
+        "from": 1721260800,
+        "currency": "USDC",
+        "buckets": 288,
+        "prices": 288,
+        "candles": 288,
+        "events": 18,
+        "trades": 18,
+        "firstCoverage": "complete"
+      },
+      {
+        "from": 1721347200,
+        "currency": "ETH",
+        "buckets": 288,
+        "prices": 288,
+        "candles": 288,
+        "events": 10,
+        "trades": 10,
+        "firstCoverage": "complete"
+      },
+      {
+        "from": 1721347200,
+        "currency": "USDC",
+        "buckets": 288,
+        "prices": 288,
+        "candles": 288,
+        "events": 10,
+        "trades": 10,
+        "firstCoverage": "complete"
+      }
+    ],
+    "parquetReplayEqual": true,
+    "productionWrites": 0
+  },
+  "serving": {
+    "results": [
+      {
+        "day": 1720828800,
+        "currency": "ETH",
+        "buckets": 288,
+        "events": 811,
+        "activityRequests": 25,
+        "emptyDelta": true
+      },
+      {
+        "day": 1720828800,
+        "currency": "USDC",
+        "buckets": 288,
+        "events": 811,
+        "activityRequests": 25,
+        "emptyDelta": true
+      },
+      {
+        "day": 1720915200,
+        "currency": "ETH",
+        "buckets": 288,
+        "events": 50,
+        "activityRequests": 18,
+        "emptyDelta": true
+      },
+      {
+        "day": 1720915200,
+        "currency": "USDC",
+        "buckets": 288,
+        "events": 50,
+        "activityRequests": 18,
+        "emptyDelta": true
+      },
+      {
+        "day": 1721001600,
+        "currency": "ETH",
+        "buckets": 288,
+        "events": 33,
+        "activityRequests": 18,
+        "emptyDelta": true
+      },
+      {
+        "day": 1721001600,
+        "currency": "USDC",
+        "buckets": 288,
+        "events": 33,
+        "activityRequests": 18,
+        "emptyDelta": true
+      },
+      {
+        "day": 1721088000,
+        "currency": "ETH",
+        "buckets": 288,
+        "events": 36,
+        "activityRequests": 18,
+        "emptyDelta": true
+      },
+      {
+        "day": 1721088000,
+        "currency": "USDC",
+        "buckets": 288,
+        "events": 36,
+        "activityRequests": 18,
+        "emptyDelta": true
+      },
+      {
+        "day": 1721174400,
+        "currency": "ETH",
+        "buckets": 288,
+        "events": 27,
+        "activityRequests": 18,
+        "emptyDelta": true
+      },
+      {
+        "day": 1721174400,
+        "currency": "USDC",
+        "buckets": 288,
+        "events": 27,
+        "activityRequests": 18,
+        "emptyDelta": true
+      },
+      {
+        "day": 1721260800,
+        "currency": "ETH",
+        "buckets": 288,
+        "events": 18,
+        "activityRequests": 18,
+        "emptyDelta": true
+      },
+      {
+        "day": 1721260800,
+        "currency": "USDC",
+        "buckets": 288,
+        "events": 18,
+        "activityRequests": 18,
+        "emptyDelta": true
+      },
+      {
+        "day": 1721347200,
+        "currency": "ETH",
+        "buckets": 288,
+        "events": 10,
+        "activityRequests": 18,
+        "emptyDelta": true
+      },
+      {
+        "day": 1721347200,
+        "currency": "USDC",
+        "buckets": 288,
+        "events": 10,
+        "activityRequests": 18,
+        "emptyDelta": true
+      }
+    ],
+    "midnightWindows": 6,
+    "availability": {
+      "version": "fame-history-availability-v1",
+      "policyRevision": "fd1fadfbc31f56197be0fbf7cbd7f67838ab9f930a445e99710f8a44fec9b198",
+      "earliestAvailableTimestamp": 1720828800,
+      "latestAvailableTimestamp": 1721433300,
+      "resolution": 300,
+      "maxWindowSeconds": 86400,
+      "before": 1720828800,
+      "hasEarlier": false
+    },
+    "productionWrites": 0,
+    "rpcCalls": 0
+  },
+  "incrementalMetrics": {
+    "requests": 6233,
+    "responseBytes": 43685535,
+    "elapsedMs": 706805,
+    "methods": {
+      "eth_chainId": 130,
+      "eth_getBlockByNumber": 4245,
+      "eth_getLogs": 130,
+      "eth_call": 1728
+    },
+    "includesPreparationAndPauseTests": true,
+    "excludesPreviouslyCapturedSeed": true
+  },
+  "storageBytes": {
+    "raw": 547725,
+    "manifests": 132869,
+    "observations": 6572160,
+    "days": 10656593,
+    "oneParquetBuildAndReplay": 25091180
+  },
+  "recoveryChecks": [
+    "two-raw-checkpoint pause and resume",
+    "SIGINT after 75 new samples then resume",
+    "one-request allowance pauses without committing an incomplete sample",
+    "concurrent writer refused",
+    "offline rebuild: zero RPC and immutable outputs identical"
+  ],
+  "previousSeedMetrics": {
+    "requests": 1399,
+    "responseBytes": 10173209
+  },
+  "tests": {
+    "suites": 33,
+    "passed": 236,
+    "typescript": "passed"
+  },
+  "productionWrites": 0
+}

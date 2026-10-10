@@ -238,10 +238,21 @@ included.
 
 ## Open evidence gates
 
-- Historical RPC receipts/state and helper/hook availability have not yet been
-  probed by this inventory research.
+- Launch-week historical state and serving are now verified by the isolated
+  trial below. Later-pool helper/hook availability still needs its own evidence.
 - Full-history RPC cost, event count and serving storage are unmeasured.
 - Deployment boundaries are explorer-backed; preserve the supplied evidence and
   confirm canonical hashes before registering a production job.
 - Confirm actual archive frontier and current live health at preparation time;
   do not reuse an earlier chat's timestamp as operational input.
+
+## July 13–20 isolated trial
+
+The next authorized step is the fixed launch-week local runner documented in
+[the launch-week runbook](../research/2026-10-10-launch-week-runner.md).
+It extends the verified first day to seven days using the same two launch pools.
+cbBTC/SPX discovery remains separate and those pools are not admitted here.
+This milestone exercises local checkpoints, historical state availability,
+deterministic replay and dated API serving. It does not register a production
+job or switch the active dataset. Launch-to-present scheduling and bounded
+partition loading remain subsequent work, informed by the trial measurements.
