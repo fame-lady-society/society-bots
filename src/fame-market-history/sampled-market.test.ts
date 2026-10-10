@@ -64,7 +64,7 @@ const quiet = (): PoolActivity[] =>
 const bucket = (s: SampledObservation | null = sample(), a = quiet()) =>
   sampledMarketBucket(scope, "USDC", epoch, s, a);
 test("shares connectors, stops USDC routes early, and never reads oracle or tick state", () => {
-  expect(policy.sources).toHaveLength(10);
+  expect(policy.sources).toHaveLength(11);
   expect(policy.routes["scale-equalizer-frxusd-fame"].USDC).toEqual([
     "scale-equalizer-usdc-frxusd",
   ]);
@@ -161,7 +161,7 @@ test("rejects duplicate activities and unreviewed routes", () => {
   expect(() => sampledPolicy(changed)).toThrow();
 });
 
-test("initial 24-hour five-series payload fits the existing API cap without transaction lists", () => {
+test("initial 24-hour six-series payload fits the existing API cap without transaction lists", () => {
   const r = bucket();
   expect(r.series[0]).not.toHaveProperty("transactionHashes");
   const bytes = Buffer.byteLength(

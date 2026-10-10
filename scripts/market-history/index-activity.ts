@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
-import { famePoolStateRegistry } from "../../src/fame-swap-pool-state/registry/index.ts";
+import { fameHistoryRegistry } from "../../src/fame-market-history/registry.ts";
 import { historyScope } from "../../src/fame-market-history/model.ts";
 import { awsSampled } from "../../src/fame-market-history/sampled-storage.ts";
 import { sampledPolicy } from "../../src/fame-market-history/sampled-market.ts";
@@ -19,7 +19,7 @@ try {
   const table = process.env.FAME_HISTORY_TABLE,
     bucket = process.env.FAME_HISTORY_BUCKET;
   if (!table || !bucket) throw new Error("Missing storage target");
-  const scope = historyScope(famePoolStateRegistry),
+  const scope = historyScope(fameHistoryRegistry),
     revision = sampledPolicy(scope).revision;
   const metadata = JSON.parse(
     await readFile(

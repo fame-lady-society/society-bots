@@ -118,7 +118,7 @@ test("one pinned call supplies reproducible raw evidence for both currencies", a
   const s = deriveSampledObservation(scope, JSON.parse(JSON.stringify(e)));
   for (const c of ["ETH", "USDC"] as const) {
     const response = sampledMarketBucket(scope, c, epoch, s, []);
-    expect(response.series.filter((r) => r.price !== null)).toHaveLength(5);
+    expect(response.series.filter((r) => r.price !== null)).toHaveLength(6);
     expect(response.totals.eventCoverage).toBe("missing");
   }
 });

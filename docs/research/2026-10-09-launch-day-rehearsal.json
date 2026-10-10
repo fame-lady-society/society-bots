@@ -1,0 +1,95 @@
+{
+  "capture": {
+    "scopeId": "63e2330b25892023cd39081b5606d6b802fa6914b8bafb89def3675525678404",
+    "startBlock": 17019741,
+    "endBlockExclusive": 17062941,
+    "launch": {
+      "number": 17019741,
+      "hash": "0x32c4524fbb01c2393daa911e936258b9ec0cbfec3b8d83c10b5eec95d27edbc2",
+      "parentHash": "0x99002908b808a1ece17445e137b099f14dd8821ab218bda52abecd841f55ec6a",
+      "timestamp": 1720828829
+    },
+    "end": {
+      "number": 17062941,
+      "hash": "0x9eace286309fcf1acd9f189b8ec0ae8f7138c177dd50b2fb91fd154c83647769",
+      "parentHash": "0x92d8348e315f64581d25ac87e97be244ebbb9dadc8587eee7821a72993eb4377",
+      "timestamp": 1720915229
+    },
+    "chartFrom": 1720828800,
+    "chartTo": 1720915200,
+    "pools": [
+      "uniswap-v2-fame-direct",
+      "uniswap-v3-weth-fame-30bps"
+    ],
+    "ranges": 22,
+    "rawEvents": 1362,
+    "trades": 803,
+    "activityEvents": 811,
+    "types": {
+      "buy": 474,
+      "sell": 329,
+      "add": 7,
+      "remove": 1
+    },
+    "summaries": [
+      {
+        "currency": "ETH",
+        "buckets": 288,
+        "prices": 284,
+        "candles": 283,
+        "unpricedEvents": 2
+      },
+      {
+        "currency": "USDC",
+        "buckets": 288,
+        "prices": 284,
+        "candles": 283,
+        "unpricedEvents": 2
+      }
+    ],
+    "metrics": {
+      "requests": 1399,
+      "responseBytes": 10173209,
+      "methods": {
+        "eth_getBlockByNumber": 1067,
+        "eth_chainId": 22,
+        "eth_getLogs": 22,
+        "eth_call": 288
+      }
+    },
+    "rawBytes": 184726,
+    "parquetReplayEqual": true,
+    "productionWrites": 0
+  },
+  "serving": {
+    "results": [
+      {
+        "currency": "ETH",
+        "buckets": 288,
+        "events": 811,
+        "activityRequests": 25,
+        "emptyDelta": true
+      },
+      {
+        "currency": "USDC",
+        "buckets": 288,
+        "events": 811,
+        "activityRequests": 25,
+        "emptyDelta": true
+      }
+    ],
+    "availability": {
+      "version": "fame-history-availability-v1",
+      "policyRevision": "fd1fadfbc31f56197be0fbf7cbd7f67838ab9f930a445e99710f8a44fec9b198",
+      "earliestAvailableTimestamp": 1720828800,
+      "latestAvailableTimestamp": 1720914900,
+      "resolution": 300,
+      "maxWindowSeconds": 86400,
+      "before": 1720828800,
+      "hasEarlier": false
+    },
+    "productionWrites": 0,
+    "rpcCalls": 0
+  },
+  "productionActiveScopeUnchanged": "4ec4f8ca2a9f9a27565e438683d40f7d56b2caef62b32879eaaad31b26073389"
+}

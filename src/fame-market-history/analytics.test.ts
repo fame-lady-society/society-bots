@@ -22,9 +22,9 @@ import {
   type ArchivedLog,
   type Pool,
 } from "./model.ts";
-import { famePoolStateRegistry } from "../fame-swap-pool-state/registry/index.ts";
+import { fameHistoryRegistry } from "./registry.ts";
 
-const scope = historyScope(famePoolStateRegistry);
+const scope = historyScope(fameHistoryRegistry);
 const pool = scope.pools.find((p) => p.venueFamily === "Solidly")!;
 const h = (n: number): Hex => `0x${n.toString(16).padStart(64, "0")}`;
 const epoch = 1800000000;

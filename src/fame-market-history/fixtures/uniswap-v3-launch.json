@@ -1,0 +1,207 @@
+{
+  "chainId": 8453,
+  "blockNumber": 17019741,
+  "timestamp": 1720828829,
+  "transactionHash": "0x4bf357967b670f85ee4929953045b9e2071fb7f5d85cda08d536ae6e8e2fabc5",
+  "source": "Blockscout Pro transaction logs, all four pages read on 2026-10-08",
+  "logs": [
+    {
+      "block_number": 17019741,
+      "topics": [
+        "0x783cca1c0412dd0d695e784568c96da2e9c22ff989357a2e8b1d9b2b4e6b7118",
+        "0x0000000000000000000000004200000000000000000000000000000000000006",
+        "0x000000000000000000000000f307e242bfe1ec1ff01a4cef2fdaa81b10a52418",
+        "0x0000000000000000000000000000000000000000000000000000000000000bb8"
+      ],
+      "data": "0x000000000000000000000000000000000000000000000000000000000000003c000000000000000000000000eed3eff5775865229dcd0d7e0f6e89c611841202",
+      "decoded": {
+        "method_call": "PoolCreated(address indexed token0, address indexed token1, uint24 indexed fee, int24 tickSpacing, address pool)",
+        "method_id": "783cca1c",
+        "parameters": [
+          {
+            "indexed": true,
+            "name": "token0",
+            "type": "address",
+            "value": "0x4200000000000000000000000000000000000006"
+          },
+          {
+            "indexed": true,
+            "name": "token1",
+            "type": "address",
+            "value": "0xf307e242BfE1EC1fF01a4Cef2fdaa81b10A52418"
+          },
+          {
+            "indexed": true,
+            "name": "fee",
+            "type": "uint24",
+            "value": "3000"
+          },
+          {
+            "indexed": false,
+            "name": "tickSpacing",
+            "type": "int24",
+            "value": "60"
+          },
+          {
+            "indexed": false,
+            "name": "pool",
+            "type": "address",
+            "value": "0xEED3eFf5775865229dCd0d7e0f6e89c611841202"
+          }
+        ]
+      },
+      "index": 194,
+      "address": "0x33128a8fC17869897dcE68Ed026d694621f6FDfD"
+    },
+    {
+      "block_number": 17019741,
+      "topics": [
+        "0x98636036cb66a9c19a37435efc1e90142190214e8abeb821bdba3f2990dd4c95",
+        null,
+        null,
+        null
+      ],
+      "data": "0x00000000000000000000000000000000000016d0780fa73d1bb1e785e2677763000000000000000000000000000000000000000000000000000000000002a594",
+      "decoded": {
+        "method_call": "Initialize(uint160 sqrtPriceX96, int24 tick)",
+        "method_id": "98636036",
+        "parameters": [
+          {
+            "indexed": false,
+            "name": "sqrtPriceX96",
+            "type": "uint160",
+            "value": "462729626208132036832380414556003"
+          },
+          {
+            "indexed": false,
+            "name": "tick",
+            "type": "int24",
+            "value": "173460"
+          }
+        ]
+      },
+      "index": 195,
+      "address": "0xEED3eFf5775865229dCd0d7e0f6e89c611841202"
+    },
+    {
+      "block_number": 17019741,
+      "topics": [
+        "0x7a53080ba414158be7ec69b987b5fb7d07dee101fe85488f0853ae16239d0bde",
+        "0x00000000000000000000000003a520b32c04bf3beef7beb72e919cf822ed34f1",
+        "0x000000000000000000000000000000000000000000000000000000000002a51c",
+        "0x000000000000000000000000000000000000000000000000000000000002a558"
+      ],
+      "data": "0x00000000000000000000000003a520b32c04bf3beef7beb72e919cf822ed34f100000000000000000000000000000000000000000004be1457d6c94929a0e51b000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000052b7d2dcc80cd2e3fffff7",
+      "decoded": {
+        "method_call": "Mint(address sender, address indexed owner, int24 indexed tickLower, int24 indexed tickUpper, uint128 amount, uint256 amount0, uint256 amount1)",
+        "method_id": "7a53080b",
+        "parameters": [
+          {
+            "indexed": false,
+            "name": "sender",
+            "type": "address",
+            "value": "0x03a520b32C04BF3bEEf7BEb72E919cf822Ed34f1"
+          },
+          {
+            "indexed": true,
+            "name": "owner",
+            "type": "address",
+            "value": "0x03a520b32C04BF3bEEf7BEb72E919cf822Ed34f1"
+          },
+          {
+            "indexed": true,
+            "name": "tickLower",
+            "type": "int24",
+            "value": "173340"
+          },
+          {
+            "indexed": true,
+            "name": "tickUpper",
+            "type": "int24",
+            "value": "173400"
+          },
+          {
+            "indexed": false,
+            "name": "amount",
+            "type": "uint128",
+            "value": "5733328174552865864475931"
+          },
+          {
+            "indexed": false,
+            "name": "amount0",
+            "type": "uint256",
+            "value": "0"
+          },
+          {
+            "indexed": false,
+            "name": "amount1",
+            "type": "uint256",
+            "value": "99999999999999999999999991"
+          }
+        ]
+      },
+      "index": 199,
+      "address": "0xEED3eFf5775865229dCd0d7e0f6e89c611841202"
+    },
+    {
+      "block_number": 17019741,
+      "topics": [
+        "0x7a53080ba414158be7ec69b987b5fb7d07dee101fe85488f0853ae16239d0bde",
+        "0x00000000000000000000000003a520b32c04bf3beef7beb72e919cf822ed34f1",
+        "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffff2764c",
+        "0x000000000000000000000000000000000000000000000000000000000002a51c"
+      ],
+      "data": "0x00000000000000000000000003a520b32c04bf3beef7beb72e919cf822ed34f1000000000000000000000000000000000000000000000611c97febf53aa7b6e1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000089a492133867423fffeabe",
+      "decoded": {
+        "method_call": "Mint(address sender, address indexed owner, int24 indexed tickLower, int24 indexed tickUpper, uint128 amount, uint256 amount0, uint256 amount1)",
+        "method_id": "7a53080b",
+        "parameters": [
+          {
+            "indexed": false,
+            "name": "sender",
+            "type": "address",
+            "value": "0x03a520b32C04BF3bEEf7BEb72E919cf822Ed34f1"
+          },
+          {
+            "indexed": true,
+            "name": "owner",
+            "type": "address",
+            "value": "0x03a520b32C04BF3bEEf7BEb72E919cf822Ed34f1"
+          },
+          {
+            "indexed": true,
+            "name": "tickLower",
+            "type": "int24",
+            "value": "-887220"
+          },
+          {
+            "indexed": true,
+            "name": "tickUpper",
+            "type": "int24",
+            "value": "173340"
+          },
+          {
+            "indexed": false,
+            "name": "amount",
+            "type": "uint128",
+            "value": "28662313129633083012833"
+          },
+          {
+            "indexed": false,
+            "name": "amount0",
+            "type": "uint256",
+            "value": "0"
+          },
+          {
+            "indexed": false,
+            "name": "amount1",
+            "type": "uint256",
+            "value": "166399999999999999999994558"
+          }
+        ]
+      },
+      "index": 209,
+      "address": "0xEED3eFf5775865229dCd0d7e0f6e89c611841202"
+    }
+  ]
+}

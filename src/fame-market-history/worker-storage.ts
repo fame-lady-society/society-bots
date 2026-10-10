@@ -27,6 +27,7 @@ import { rangeKey, progressKey, candleKey, marketKey } from "./keys.ts";
 export function publicationInput(
   table: string,
   p: Publication,
+  activeScopeId = p.scopeId,
 ): TransactWriteCommandInput {
   if (
     !p.candles.length ||
@@ -44,7 +45,7 @@ export function publicationInput(
           TableName: table,
           Key: { pk: "history:8453", sk: "active-scope" },
           ConditionExpression: "scopeId = :scope",
-          ExpressionAttributeValues: { ":scope": p.scopeId },
+          ExpressionAttributeValues: { ":scope": activeScopeId },
         },
       },
       {
@@ -127,11 +128,13 @@ export function publicationInput(
 export function awsAggregation({
   table,
   bucket,
+  staging,
   db = DynamoDBDocumentClient.from(new DynamoDBClient({ maxAttempts: 2 })),
   s3 = new S3Client({ maxAttempts: 2 }),
 }: {
   table: string;
   bucket: string;
+  staging?: { sourceScopeId: string; targetScopeId: string };
   db?: DynamoDBDocumentClient;
   s3?: S3Client;
 }): AggregationStore {
@@ -149,7 +152,13 @@ export function awsAggregation({
     acquire: async (scopeId, startBlock, metadataRevision, owner, now) => {
       const active = await get({ pk: "history:8453", sk: "active-scope" });
       if (!active) return null;
-      if (active.scopeId !== scopeId) throw new Error("History scope changed");
+      if (
+        staging &&
+        (scopeId !== staging.targetScopeId || scopeId === staging.sourceScopeId)
+      )
+        throw new Error("Invalid staging aggregation scope");
+      if (active.scopeId !== (staging?.sourceScopeId ?? scopeId))
+        throw new Error("History scope changed");
       const cursor = await get({ pk: `scope:${scopeId}`, sk: "cursor" });
       if (!cursor || cursor.startBlock !== startBlock)
         throw new Error("Collector start differs from worker");
@@ -311,8 +320,12 @@ export function awsAggregation({
         throw new Error("Derived object verification failed");
     },
     publish: async (publication) => {
+      if (staging && publication.scopeId !== staging.targetScopeId)
+        throw new Error("Invalid staging publication scope");
       await db.send(
-        new TransactWriteCommand(publicationInput(table, publication)),
+        new TransactWriteCommand(
+          publicationInput(table, publication, staging?.sourceScopeId),
+        ),
       );
     },
     release: async (scopeId, owner) => {

@@ -100,7 +100,7 @@ export async function rehearseSampled(
   assert.equal(result.buckets[0].totals.tradeCount, 2);
   assert.equal(
     result.buckets[0].series.filter((p) => p.price !== null).length,
-    5,
+    scope.pools.length,
   );
   // Reader only needs transaction reads; no network pricing or S3 dependency.
   const readOnlyDb = {
