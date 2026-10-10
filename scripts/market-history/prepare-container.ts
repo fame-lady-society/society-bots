@@ -8,7 +8,11 @@ const root = path.resolve(
   "../..",
 );
 const target = process.argv[2];
-if (!target || process.argv.length !== 3)
+const candidate = process.argv[3] === "candidate";
+if (
+  !target ||
+  (process.argv.length !== 3 && !(process.argv.length === 4 && candidate))
+)
   throw new Error("Expected new container context directory");
 const app = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
 const runtime = JSON.parse(
@@ -24,7 +28,13 @@ if (
   throw new Error("DuckDB runtime dependency differs from application lock");
 await mkdir(target, { recursive: false });
 await build({
-  entryPoints: [path.join(root, "src/fame-market-history/worker-lambda.ts")],
+  entryPoints: [
+    path.join(
+      root,
+      "src/fame-market-history",
+      candidate ? "candidate-lambda.ts" : "worker-lambda.ts",
+    ),
+  ],
   outfile: path.join(target, "index.mjs"),
   bundle: true,
   platform: "node",

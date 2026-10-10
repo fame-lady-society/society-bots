@@ -7,6 +7,10 @@ on:
       - "src/fame-swap-pool-state/registry/**"
       - "scripts/market-history/**"
       - "deploy/lib/fame-market-history.ts"
+      - "deploy/lib/fame-history-candidate.ts"
+      - "deploy/bin/history-candidate.ts"
+      - "deploy/test/fame-history-candidate.test.ts"
+      - ".github/workflows/history-candidate.yml"
       - "deploy/lib/http-api.ts"
       - "deploy/bin/market-history.ts"
       - "deploy/test/fame-market-history.test.ts"
@@ -45,6 +49,8 @@ jobs:
       - run: yarn types
       - name: Verify worker transactions, crash recovery and history HTTP API
         run: yarn nodets scripts/market-history/worker-rehearse.ts
+      - name: Verify candidate checkpoints and retained API reads
+        run: yarn nodets scripts/market-history/candidate-rehearse.ts
       - name: Verify raw to Parquet rebuild end to end
         run: yarn nodets scripts/market-history/e2e.ts src/fame-market-history/fixtures/base-52090000-52139999 "$RUNNER_TEMP/history-e2e"
       - name: Verify offline Lambda Linux runtime
@@ -52,7 +58,12 @@ jobs:
           yarn nodets scripts/market-history/prepare-container.ts "$RUNNER_TEMP/history-container"
           docker build --platform linux/amd64 -t history-runtime-proof "$RUNNER_TEMP/history-container"
           docker run --rm --platform linux/amd64 --network none --memory 512m --cpus 1 --read-only --tmpfs /tmp:rw,size=256m history-runtime-proof
-      - run: yarn test --runInBand test/fame-market-history.test.ts
+      - name: Verify candidate Lambda Linux entrypoint
+        run: |
+          yarn nodets scripts/market-history/prepare-container.ts "$RUNNER_TEMP/candidate-container" candidate
+          docker build --platform linux/amd64 --target runtime -t candidate-runtime-proof "$RUNNER_TEMP/candidate-container"
+          docker run --rm --platform linux/amd64 --network none --entrypoint /var/lang/bin/node candidate-runtime-proof --input-type=module -e 'const {handler}=await import("/var/task/index.mjs"); if(typeof handler !== "function")process.exit(1)'
+      - run: yarn test --runInBand test/fame-market-history.test.ts test/fame-history-candidate.test.ts
         working-directory: deploy
       - run: yarn build
         working-directory: deploy
