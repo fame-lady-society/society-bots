@@ -40,7 +40,7 @@ export function eventSpot(
     d1 = metadata.decimals[pool.token1];
   let rate: Fraction;
   if (
-    ["UniswapV2", "Solidly"].includes(pool.venueFamily) &&
+    ["UniswapV2", "Solidly", "AerodromeV2"].includes(pool.venueFamily) &&
     event.eventName === "Sync"
   ) {
     const x = BigInt(a.reserve0) * 10n ** BigInt(d1),
