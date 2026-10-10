@@ -77,7 +77,9 @@ export function bundleHistoryReader(): string {
   return bundle;
 }
 
-export function bundleHistoryWorker(): string {
+export function bundleHistoryWorker(
+  entryPoint: "worker-lambda.ts" | "candidate-lambda.ts" = "worker-lambda.ts",
+): string {
   const bundle = cdk.FileSystem.mkdtemp("fame-history-worker-");
   const app = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
   const runtime = JSON.parse(
@@ -92,7 +94,7 @@ export function bundleHistoryWorker(): string {
   )
     throw new Error("DuckDB worker dependency differs from application lock");
   buildSync({
-    entryPoints: [path.join(root, "src/fame-market-history/worker-lambda.ts")],
+    entryPoints: [path.join(root, "src/fame-market-history", entryPoint)],
     outfile: path.join(bundle, "index.mjs"),
     bundle: true,
     platform: "node",

@@ -256,3 +256,13 @@ This milestone exercises local checkpoints, historical state availability,
 deterministic replay and dated API serving. It does not register a production
 job or switch the active dataset. Launch-to-present scheduling and bounded
 partition loading remain subsequent work, informed by the trial measurements.
+
+## First AWS candidate chunk
+
+The seven-day local trial passed. The next implementation uses a dedicated
+candidate stack for July 13–August 12, 2024, with the two launch pools only.
+See [the AWS candidate runbook](../research/2026-10-10-aws-candidate-backfill.md).
+Raw capture, bounded Parquet derivation and bucket publication have separate
+checkpoints; operator start/pause/resume controls do not affect production.
+Deployment and the real AWS 30-day run remain separate proof gates. Later pool
+admission and production promotion are not part of this chunk.

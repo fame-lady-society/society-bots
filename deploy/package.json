@@ -10,7 +10,8 @@
     "watch": "tsc -w",
     "test": "node --experimental-vm-modules ./node_modules/.bin/jest",
     "cdk": "cdk",
-    "history:app": "node --import 'data:text/javascript,import { register } from \"node:module\"; import { pathToFileURL } from \"node:url\"; register(\"ts-node/esm\", pathToFileURL(\"./\"));' bin/market-history.ts"
+    "history:app": "node --import 'data:text/javascript,import { register } from \"node:module\"; import { pathToFileURL } from \"node:url\"; register(\"ts-node/esm\", pathToFileURL(\"./\"));' bin/market-history.ts",
+    "candidate:app": "node --import 'data:text/javascript,import { register } from \"node:module\"; import { pathToFileURL } from \"node:url\"; register(\"ts-node/esm\", pathToFileURL(\"./\"));' bin/history-candidate.ts"
   },
   "devDependencies": {
     "@types/jest": "^29.5.12",

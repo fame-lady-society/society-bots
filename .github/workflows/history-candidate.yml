@@ -1,0 +1,46 @@
+name: History candidate
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      dynamodb:
+        image: amazon/dynamodb-local@sha256:ff89bd48ff32cd8d9be5fee8873b65b8854dc408f1afe881be6eb00247bc0dab
+        ports:
+          - 18001:8000
+    concurrency:
+      group: history-candidate-deploy
+      cancel-in-progress: false
+    env:
+      CDK_DEFAULT_ACCOUNT: "590183914614"
+      CDK_DEFAULT_REGION: us-west-1
+      FAME_HISTORY_RPC_PARAMETER: /society-bots/market-history/base-rpc
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24"
+      - run: corepack enable
+      - run: sudo apt-get update && sudo apt-get install -y libcairo2-dev libjpeg-dev libpango1.0-dev libgif-dev librsvg2-dev
+      - run: yarn install --frozen-lockfile --non-interactive
+      - run: yarn install --frozen-lockfile --non-interactive
+        working-directory: deploy
+      - run: yarn types && yarn test --runInBand src/fame-market-history scripts/market-history
+      - run: yarn nodets scripts/market-history/candidate-rehearse.ts
+      - run: yarn build && yarn test --runInBand test/fame-history-candidate.test.ts
+        working-directory: deploy
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-west-1
+      - name: Check account and deploy candidate resources only
+        working-directory: deploy
+        run: |
+          test "$(aws sts get-caller-identity --query Account --output text)" = "$CDK_DEFAULT_ACCOUNT"
+          yarn cdk --app 'yarn candidate:app' deploy FameHistoryCandidate --require-approval never

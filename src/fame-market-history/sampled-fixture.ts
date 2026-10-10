@@ -1,15 +1,18 @@
 import { encodeFunctionResult } from "viem";
-import { scope, epoch } from "./worker-fixture.ts";
+import { scope as defaultScope, epoch } from "./worker-fixture.ts";
 import { sampledCalls, type SampledEvidence } from "./sampled-rpc.ts";
 import { sampledPolicy } from "./sampled-market.ts";
-import type { Header } from "./model.ts";
+import type { Header, Scope } from "./model.ts";
 export const sampledHeader = (n: number): Header => ({
   number: n,
   timestamp: epoch + (n - 100) * 60,
   hash: `0x${n.toString(16).padStart(64, "0")}`,
   parentHash: `0x${(n - 1).toString(16).padStart(64, "0")}`,
 });
-export function sampledFixture(timestamp = epoch): SampledEvidence {
+export function sampledFixture(
+  timestamp = epoch,
+  scope: Scope = defaultScope,
+): SampledEvidence {
   const block = sampledHeader(104 + (timestamp - epoch) / 60),
     after = sampledHeader(block.number + 1);
   const results = sampledCalls(scope).map((c) => {
