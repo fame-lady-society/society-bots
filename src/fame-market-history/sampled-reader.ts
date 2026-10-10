@@ -8,6 +8,7 @@ import {
 } from "./dated-publication.ts";
 import {
   BatchGetCommand,
+  QueryCommand,
   GetCommand,
   type DynamoDBDocumentClient,
 } from "@aws-sdk/lib-dynamodb";
@@ -224,5 +225,45 @@ export function sampledReader(
     );
     return result;
   };
-  return { get, publication, window, pages };
+  const availability = async (before?: number) => {
+    const live = await publication();
+    const result = await db.send(
+      new QueryCommand({
+        TableName: table,
+        KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+        ExpressionAttributeValues: {
+          ":pk": sampledKey(revision, "").pk,
+          ":prefix": "day:",
+        },
+        ConsistentRead: true,
+        ScanIndexForward: true,
+        Limit: 1,
+      }),
+      { abortSignal: signal() },
+    );
+    const row = result.Items?.[0];
+    let earliest = live.startTimestamp;
+    if (row) {
+      if (typeof row.sk !== "string" || !/^day:[0-9]{10}$/.test(row.sk))
+        throw new Error("Invalid dated availability key");
+      const day = validateDay(
+        JSON.parse(row.body),
+        revision,
+        Number(row.sk.slice(4)),
+      );
+      earliest = Math.min(earliest, day.pages[0].timestamp);
+    }
+    return {
+      version: "fame-history-availability-v1",
+      policyRevision: revision,
+      earliestAvailableTimestamp: earliest,
+      latestAvailableTimestamp: live.nextTimestamp - 300,
+      resolution: 300,
+      maxWindowSeconds: 86400,
+      ...(before !== undefined
+        ? { before, hasEarlier: earliest < before }
+        : {}),
+    };
+  };
+  return { get, publication, window, pages, availability };
 }

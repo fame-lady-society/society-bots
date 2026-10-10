@@ -1,3 +1,5 @@
+import { dataset, datasetKey } from "../../src/fame-market-history/dataset.ts";
+import { activeScopeKey } from "../../src/fame-market-history/keys.ts";
 /** Read-only AWS archives -> disposable DynamoDB Local -> actual API handler over HTTP.
  * No RPC, remote writes, or live cursor updates. */
 import assert from "node:assert/strict";
@@ -110,6 +112,18 @@ try {
   );
   assert(live.Item);
   await local.send(new PutCommand({ TableName: table, Item: live.Item }));
+  await local.send(
+    new PutCommand({
+      TableName: table,
+      Item: { ...activeScopeKey, scopeId: scope.id },
+    }),
+  );
+  await local.send(
+    new PutCommand({
+      TableName: table,
+      Item: { ...datasetKey(scope.id), ...dataset(scope, metadata) },
+    }),
+  );
   const receipt = await materializeHistory({
     scope,
     metadata,

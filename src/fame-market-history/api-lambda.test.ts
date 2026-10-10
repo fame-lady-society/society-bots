@@ -241,6 +241,7 @@ test("deployed six-pool code keeps serving the active five-pool definition", asy
   jest
     .spyOn(DynamoDBDocumentClient.prototype, "send")
     .mockImplementation(async (command: any) => {
+      if (command.input.KeyConditionExpression) return { Items: [] } as never;
       const key = command.input.Key;
       if (key?.sk === "active-scope")
         return { Item: { scopeId: oldScope.id } } as never;
@@ -263,6 +264,15 @@ test("deployed six-pool code keeps serving the active five-pool definition", asy
   const response = await handler(event(query));
   expect(response.statusCode).toBe(200);
   expect(JSON.parse(response.body).pools).toHaveLength(5);
+  const availability = await handler(
+    event(`view=availability&before=${epoch}`),
+  );
+  expect(availability.statusCode).toBe(200);
+  expect(JSON.parse(availability.body)).toMatchObject({
+    policyRevision: sampledPolicy(oldScope).revision,
+    earliestAvailableTimestamp: epoch,
+    hasEarlier: false,
+  });
   expect(
     (
       await handler(
