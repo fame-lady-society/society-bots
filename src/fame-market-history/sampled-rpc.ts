@@ -52,6 +52,7 @@ export function sampledCalls(scope: Scope) {
   for (const p of policy.sources) {
     if (
       ![
+        "AerodromeV2",
         "UniswapV2",
         "Solidly",
         "UniswapV3",
@@ -69,7 +70,7 @@ export function sampledCalls(scope: Scope) {
       if (!p.poolAddress) throw new Error("Missing snapshot address");
       add(`${p.id}:token0`, p.poolAddress, "token0");
       add(`${p.id}:token1`, p.poolAddress, "token1");
-      if (["Solidly", "UniswapV2"].includes(p.venueFamily))
+      if (["Solidly", "UniswapV2", "AerodromeV2"].includes(p.venueFamily))
         add(`${p.id}:state`, p.poolAddress, "getReserves");
       else {
         add(
@@ -160,9 +161,16 @@ export function deriveSampledObservation(
     if (d !== null) {
       if (typeof d !== "number" || !Number.isInteger(d) || d < 0 || d > 36)
         throw new Error("Invalid sampled decimals");
-      // Current reviewed assets; cbBTC onboarding must add reviewed metadata.
+      // Reviewed eight-decimal quote assets; never treat cbBTC or SPX as 18 decimals.
       const expected =
-        token === "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913" ? 6 : 18;
+        token === "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+          ? 6
+          : [
+                "0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf",
+                "0x50da645f148798f68ef2d7db7c1cb22a6819bb2c",
+              ].includes(token)
+            ? 8
+            : 18;
       if (d !== expected) throw new Error("Unreviewed sampled token decimals");
       decimals[token] = d;
     }
@@ -188,7 +196,7 @@ export function deriveSampledObservation(
       d0 !== undefined &&
       d1 !== undefined
     ) {
-      if (["Solidly", "UniswapV2"].includes(p.venueFamily)) {
+      if (["Solidly", "UniswapV2", "AerodromeV2"].includes(p.venueFamily)) {
         const x = BigInt(state[0]) * 10n ** BigInt(d1),
           y = BigInt(state[1]) * 10n ** BigInt(d0);
         if (x > 0n && y > 0n)

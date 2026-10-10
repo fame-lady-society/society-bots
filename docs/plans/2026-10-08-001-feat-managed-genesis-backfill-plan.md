@@ -1,7 +1,7 @@
 ---
 title: "feat: Managed genesis backfill and dated market-history publication"
 type: feat
-status: planned
+status: in-progress
 date: 2026-10-08
 ---
 
@@ -16,10 +16,14 @@ derived data can be repaired without repeating the chain ingest.
 
 The verified earliest direct-pool creation is **Base block 17,019,741,
 2024-07-13 00:00:29 UTC**, Uniswap V2 and V3 FAME/WETH. This is genesis for the currently
-reviewed pool set, not every FAME pool ever deployed. The six direct pools and
-five conversion sources are recorded in the [deployment inventory](../research/2026-10-08-genesis-deployment-inventory.md)
-and its JSON evidence. Other old venues and newly proposed pools remain separate
-scope additions.
+reviewed pool set, not every FAME pool ever deployed. The original six direct
+pools and five conversion sources are recorded in the [deployment inventory](../research/2026-10-08-genesis-deployment-inventory.md).
+The isolated target now also includes **Aerodrome FAME/cbBTC and FAME/SPX**,
+with separate conversion routes and creation evidence in the
+[admission report](../research/2026-10-10-cbbtc-spx-admission.md).
+That makes eight direct pools and seven conversion sources. cbBTC is intended
+for eventual ongoing collection; SPX history is retained even if its current
+liquidity becomes unusable. These additions are not in the production registry.
 
 This document supersedes implementation details in the October 6 backfill plan
 that referred to the prior Chainlink/execution-candle publisher. Keep its useful
@@ -30,29 +34,35 @@ existing authorization permits local backfill and PRs.
 
 ## Current code and missing pieces
 
-Baseline: main `f704e112a83ba13dc05f588acce1e6b2fa418897`.
+Baseline: PR #56 head `709e443` (still open when implementation began), carrying
+#53 dated serving, #54 availability and #57 retain-live behavior.
 
-Reuse:
-- `collector.ts`, `rpc.ts`, `archive.ts`, `decode.ts`: bounded address/topic
-  scans, ordered native logs, checksums and durable raw archives.
-- `reference-collector.ts`, `sampled-rpc.ts`: verified time boundaries and
-  historical block-pinned pooled reads.
-- `sampled-rebuild.ts`, `market-blend.ts`, activity builders and Parquet exports:
-  the same derivation as live collection.
-- `chart-api.ts` and activity API: compact responses, filters, bounded reads,
-  generation-aware cursors and cache behavior.
+Reuse the bounded collector, exact raw archives, Parquet rebuild, historical
+sampler, blended index, dated chart/activity publication, and compact/cursor APIs.
+The first launch day was verified locally; see the October 9 rehearsal receipt.
 
-Build:
-1. Dated source membership and deployment evidence validation.
-2. A historical raw-log collector with isolated durable job state.
-3. Dated chart/activity publication and bounded date lookup.
-4. An operator CLI for preparation, progress, resumption and explicit range repair.
+Implemented in the first isolated-admission increment:
+- Separate eight-pool registry and explicit cbBTC/SPX routes; no production import.
+- Aerodrome V2 event decoding and eight-decimal sample validation.
+- Read-only verification of creation, historical identities, route pricing and
+  bounded launch log capture, with evidence saved locally.
+- Frozen local manifest preparation with bounded day/lifecycle windows.
 
-`sampled-backfill.ts` only rebuilds a day from already committed raw archives.
-It cannot ingest the missing years. `import-sampled-history.ts` fills a live
-publication only until it contains 288 buckets. `sampled-live.ts` then retains
-only the latest 288 references. Removing that cap would create an ever-growing
-DynamoDB item and is not the design.
+Remaining before a multi-day run:
+1. Managed capture/sample/derive progress with safe pause/resume, fenced ownership,
+   RPC pacing and separate durable storage; the planner alone does not collect.
+2. Enforce source lifetimes in log filters and sampling, including conversion
+   contracts/helpers and mid-bucket pool births. Current membership windows are
+   planning inputs, not proof that blended creation-bucket behavior is implemented.
+3. Join day/epoch boundaries with prior observations and canonical event identity.
+4. Wire staging-only dated chart/activity generation, reconciliation and repairs.
+5. Rehearse seven days plus the new pools' launch periods before a full fill.
+
+Keep production's active dataset, live cursors, tables and archive publications
+untouched. Use local artifacts first; any durable remote staging resources require
+an explicit reviewed target. Verification and eventual production admission are
+separate from capture. A full fill freezes its end block/hash instead of chasing
+wall time while running.
 
 ## Price and membership rules
 
@@ -113,7 +123,8 @@ metadata, and job identity. Resume never recomputes the interval from wall time.
 Reject concurrent ownership with a fenced expiring lease. Stale runners cannot
 commit; duplicate submissions reuse the same job.
 
-Initial backfill works backward from the earliest verified contiguous raw coverage.
+The isolated genesis rehearsal proceeds forward from launch. Reuse compatible retained
+archives at the recent end; repairs may select arbitrary explicit intervals.
 Choose adjacent UTC/bucket-aligned windows up to one day, shrinking when limits
 require it. Scan forward within each window; record contiguous raw prefix commits.
 A crash resumes that prefix without rescanning completed ranges. Separate phases:
@@ -192,7 +203,7 @@ for operator-paced runs; foreground invocations only until production wiring is
 reviewed. No detached process or new scheduler in this milestone.
 
 Read-only launch rehearsal:
-1. Validate chain/resource identity and the eleven source boundaries.
+1. Validate chain/resource identity and the fifteen source boundaries.
 2. Sample a small fixed selection near the earliest launch and each later pool
    launch, plus a quiet and an active current bucket. Record every call/byte/error.
 3. Freeze **2024-07-13 00:00 UTC through July 14 00:00 UTC** as the first
@@ -238,10 +249,26 @@ included.
 
 ## Open evidence gates
 
-- Historical RPC receipts/state and helper/hook availability have not yet been
-  probed by this inventory research.
+- Launch-day and cbBTC/SPX admission probes cover selected historical states,
+  not every source lifetime. Full-range helper/hook availability remains unproven.
 - Full-history RPC cost, event count and serving storage are unmeasured.
 - Deployment boundaries are explorer-backed; preserve the supplied evidence and
   confirm canonical hashes before registering a production job.
 - Confirm actual archive frontier and current live health at preparation time;
   do not reuse an earlier chat's timestamp as operational input.
+
+## cbBTC/SPX volume accounting
+
+Preserve exact native amounts, transaction hash and log identity for every action.
+Record priced/unpriced counts and native quantities alongside ETH/USDC totals.
+Missing conversion is not zero volume. The eventual cumulative **pool execution
+volume** sums supported swap events once per pool/log; a transaction visiting two
+FAME pools contributes two executions. Deduplicated economic trade volume is a
+separate future metric requiring explicit routing semantics, not an incidental
+transaction-hash dedupe. Rebuild per-day totals from canonical events and replace
+a day generation atomically; never increment counters again on resume/repair.
+
+Conversion sources are sampled at bucket end only. cbBTC → USDC → WETH uses the
+existing WETH/USDC edge in reverse; SPX → WETH → USDC uses Slipstream SPX/WETH.
+These are reviewed spot valuation routes, not executable quotes or execution-time
+FX. Keep selected routes frozen; missing historical liquidity stays an explicit gap.

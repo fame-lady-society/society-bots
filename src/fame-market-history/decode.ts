@@ -25,6 +25,17 @@ const concentrated = parseAbi([
   "event Collect(address indexed owner,address recipient,int24 indexed tickLower,int24 indexed tickUpper,uint128 amount0,uint128 amount1)",
 ]);
 export const EVENT_ABIS = {
+  AerodromeV2: parseAbi([
+    "event EIP712DomainChanged()",
+    "event Swap(address indexed sender,address indexed to,uint256 amount0In,uint256 amount1In,uint256 amount0Out,uint256 amount1Out)",
+    "event Burn(address indexed sender,address indexed to,uint256 amount0,uint256 amount1)",
+    "event Mint(address indexed sender,uint256 amount0,uint256 amount1)",
+    "event Sync(uint256 reserve0,uint256 reserve1)",
+    "event Transfer(address indexed from,address indexed to,uint256 value)",
+    "event Approval(address indexed owner,address indexed spender,uint256 value)",
+    "event Fees(address indexed sender,uint256 amount0,uint256 amount1)",
+    "event Claim(address indexed sender,address indexed recipient,uint256 amount0,uint256 amount1)",
+  ]),
   UniswapV2: parseAbi([...v2, "event Sync(uint112 reserve0,uint112 reserve1)"]),
   Solidly: parseAbi([
     ...v2,
@@ -142,6 +153,7 @@ export function decode(
       "Flash",
       "IncreaseObservationCardinalityNext",
       "SetFeeProtocol",
+      "EIP712DomainChanged",
     ].includes(event.name)
       ? "auxiliary"
       : "liquidity";

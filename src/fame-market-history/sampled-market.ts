@@ -25,6 +25,14 @@ export {
   type Fraction,
 } from "./price-math.ts";
 const one: Fraction = { numerator: "1", denominator: "1" };
+const sampledRoutes: Record<string, string[]> = {
+  ...ROUTES,
+  "0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf": [
+    "uniswap-v3-usdc-cbbtc-5bps",
+    "uniswap-v3-usdc-weth-5bps",
+  ],
+  "0x50da645f148798f68ef2d7db7c1cb22a6819bb2c": ["slipstream-spx-weth"],
+};
 const ethUsdcPool = "uniswap-v3-usdc-weth-5bps";
 export function sampledPolicy(scope: Scope) {
   const routes: Record<string, Record<Currency, string[]>> = {};
@@ -34,7 +42,7 @@ export function sampledPolicy(scope: Scope) {
     let eth: string[];
     if (token === USDC) eth = [ethUsdcPool];
     else {
-      const known = ROUTES[token];
+      const known = sampledRoutes[token];
       if (!known) throw new Error(`Unreviewed quote token for ${direct.id}`);
       eth = [...known];
     }

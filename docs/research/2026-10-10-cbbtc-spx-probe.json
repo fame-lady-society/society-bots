@@ -1,0 +1,265 @@
+{
+  "verifiedAt": "2026-10-10T17:44:45.273Z",
+  "pinnedBlock": 52431920,
+  "receipts": [
+    {
+      "id": "aerodrome-cbbtc-fame",
+      "origin": {
+        "id": "aerodrome-cbbtc-fame",
+        "address": "0x3ed81ea504b5987611d4e270884539fe648694f0",
+        "creationBlock": 21374567,
+        "creationTimestamp": "2024-10-21T19:21:21.000000Z",
+        "creationTransaction": "0xedd7795fcca4402020cc8453e89861c72d7c5fa7110e2d4cdffdcd93ca9a924d"
+      },
+      "identities": [
+        {
+          "id": "aerodrome-cbbtc-fame",
+          "creationBlock": 21374567,
+          "creationTransaction": "0xedd7795fcca4402020cc8453e89861c72d7c5fa7110e2d4cdffdcd93ca9a924d",
+          "values": {
+            "token0": "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf",
+            "token1": "0xf307e242BfE1EC1fF01a4Cef2fdaa81b10A52418",
+            "factory": "0x420DD381b31aEf6683db6B902084cB0FFECe40Da",
+            "stable": false
+          }
+        },
+        {
+          "id": "uniswap-v3-usdc-cbbtc-5bps",
+          "creationBlock": 19763050,
+          "creationTransaction": "0xefba72c1ae6a5a31939ad47c541cf8ca7cecddb7798f32d57a0fa399ab9697b1",
+          "values": {
+            "token0": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+            "token1": "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf",
+            "factory": "0x33128a8fC17869897dcE68Ed026d694621f6FDfD",
+            "tickSpacing": 10
+          }
+        },
+        {
+          "id": "uniswap-v3-usdc-weth-5bps",
+          "creationBlock": 3620407,
+          "creationTransaction": "0xedb1f442fbc11aa4c0b46d4301ffd50304bc39f6abf125636088c227af75e6e6",
+          "values": {
+            "token0": "0x4200000000000000000000000000000000000006",
+            "token1": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+            "tickSpacing": 10
+          }
+        }
+      ],
+      "samples": [
+        {
+          "timestamp": 1729538400,
+          "block": {
+            "number": 21374676,
+            "hash": "0x7e9346950f0b31dd01423da630f1e1f0c8d8a991ae70ea18f9c1c2364a32f88a",
+            "parentHash": "0x8513fb6679ba6bac3f3ba20eed1815b5d733943c218959e8adb159028dd66c98",
+            "timestamp": 1729538699
+          },
+          "conversion": {
+            "ETH": "25.263478021121317889",
+            "USDC": "67503.731753989444150288"
+          },
+          "rate": {
+            "numerator": "1577478470806828919187431",
+            "denominator": "9889953750000000"
+          },
+          "decimals": {
+            "0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf": 8,
+            "0xf307e242bfe1ec1ff01a4cef2fdaa81b10a52418": 18,
+            "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 6,
+            "0x4200000000000000000000000000000000000006": 18
+          }
+        },
+        {
+          "timestamp": 1729624500,
+          "block": {
+            "number": 21417726,
+            "hash": "0x807c369c2d51f397770f250aad6d8d37a951e0d68d3c82589ad9d3c95f4a4fb8",
+            "parentHash": "0x17041b4ec7a0c48170e589e48e0092bc7e27e557cc492491cf49e1ff7152429e",
+            "timestamp": 1729624799
+          },
+          "conversion": {
+            "ETH": "25.659888186551524836",
+            "USDC": "67481.305845610542898895"
+          },
+          "rate": {
+            "numerator": "6310202277112966168141647",
+            "denominator": "39558020000000000"
+          },
+          "decimals": {
+            "0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf": 8,
+            "0xf307e242bfe1ec1ff01a4cef2fdaa81b10a52418": 18,
+            "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 6,
+            "0x4200000000000000000000000000000000000006": 18
+          }
+        },
+        {
+          "timestamp": 1791652800,
+          "block": {
+            "number": 52431876,
+            "hash": "0xe05fe60f20035278a0ac7fa131f0d0f8e5bab0be0ce44e1c436ec3b44811b3cd",
+            "parentHash": "0x115ef4972f29327c09a530249d4263e5437039f01e8f792dfcd564933c5642d9",
+            "timestamp": 1791653099
+          },
+          "conversion": {
+            "ETH": "33.137709100213279921",
+            "USDC": "82993.834523143865968416"
+          },
+          "rate": {
+            "numerator": "416047067318941715501971",
+            "denominator": "1056196000000000"
+          },
+          "decimals": {
+            "0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf": 8,
+            "0xf307e242bfe1ec1ff01a4cef2fdaa81b10a52418": 18,
+            "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 6,
+            "0x4200000000000000000000000000000000000006": 18
+          }
+        }
+      ],
+      "events": {
+        "Transfer": 3,
+        "Sync": 5,
+        "Mint": 2,
+        "Fees": 3,
+        "Swap": 3
+      },
+      "actions": 5
+    },
+    {
+      "id": "aerodrome-spx-fame",
+      "origin": {
+        "id": "aerodrome-spx-fame",
+        "address": "0x02360e4d2bd3129e02a8953a04fc68b08e57f7b3",
+        "creationBlock": 21194336,
+        "creationTimestamp": "2024-10-17T15:13:39.000000Z",
+        "creationTransaction": "0x5c15d6bbc470e66923c7f4b9a0f8f93f6c93122308f8a0366d13822e8f232314"
+      },
+      "identities": [
+        {
+          "id": "aerodrome-spx-fame",
+          "creationBlock": 21194336,
+          "creationTransaction": "0x5c15d6bbc470e66923c7f4b9a0f8f93f6c93122308f8a0366d13822e8f232314",
+          "values": {
+            "token0": "0x50dA645f148798F68EF2d7dB7C1CB22A6819bb2C",
+            "token1": "0xf307e242BfE1EC1fF01a4Cef2fdaa81b10A52418",
+            "factory": "0x420DD381b31aEf6683db6B902084cB0FFECe40Da",
+            "stable": false
+          }
+        },
+        {
+          "id": "slipstream-spx-weth",
+          "creationBlock": 20549217,
+          "creationTransaction": "0x98c678d6fe65f2bf93206c4d12b5dc64558b476eafe62f0435bb1a24b0b28221",
+          "values": {
+            "token0": "0x4200000000000000000000000000000000000006",
+            "token1": "0x50dA645f148798F68EF2d7dB7C1CB22A6819bb2C",
+            "factory": "0x5e7BB104d84c7CB9B682AaC2F3d509f5F406809A",
+            "tickSpacing": 200
+          }
+        },
+        {
+          "id": "uniswap-v3-usdc-weth-5bps",
+          "creationBlock": 3620407,
+          "creationTransaction": "0xedb1f442fbc11aa4c0b46d4301ffd50304bc39f6abf125636088c227af75e6e6",
+          "values": {
+            "token0": "0x4200000000000000000000000000000000000006",
+            "token1": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+            "tickSpacing": 10
+          }
+        }
+      ],
+      "samples": [
+        {
+          "timestamp": 1729177800,
+          "block": {
+            "number": 21194376,
+            "hash": "0x55cbed9634b4f57915d9d6a8d58c8a88ff6cf582cf8ada69dfc46f355052040f",
+            "parentHash": "0x96c22d856f7db0c87c22111afb9111ea103548399c663472976768c69c68c84f",
+            "timestamp": 1729178099
+          },
+          "conversion": {
+            "ETH": "0.000281988812959161",
+            "USDC": "0.734520370508853798"
+          },
+          "rate": {
+            "numerator": "1717296962182269",
+            "denominator": "1000000000000"
+          },
+          "decimals": {
+            "0x50da645f148798f68ef2d7db7c1cb22a6819bb2c": 8,
+            "0xf307e242bfe1ec1ff01a4cef2fdaa81b10a52418": 18,
+            "0x4200000000000000000000000000000000000006": 18,
+            "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 6
+          }
+        },
+        {
+          "timestamp": 1729263900,
+          "block": {
+            "number": 21237426,
+            "hash": "0xc4b80cac9ce9ac85f3a28c6e48ca24e5ea5dd13b67c1169e92e26a63b391fbc6",
+            "parentHash": "0xa71044acb79cd6a357cc6c8eb5cd5de05a25a8bea4d612cab02db4c6e88b8e8a",
+            "timestamp": 1729264199
+          },
+          "conversion": {
+            "ETH": "0.000252794752527242",
+            "USDC": "0.668623950935267885"
+          },
+          "rate": {
+            "numerator": "2443268407397257186973337",
+            "denominator": "1581454642460000000000"
+          },
+          "decimals": {
+            "0x50da645f148798f68ef2d7db7c1cb22a6819bb2c": 8,
+            "0xf307e242bfe1ec1ff01a4cef2fdaa81b10a52418": 18,
+            "0x4200000000000000000000000000000000000006": 18,
+            "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 6
+          }
+        },
+        {
+          "timestamp": 1791652800,
+          "block": {
+            "number": 52431876,
+            "hash": "0xe05fe60f20035278a0ac7fa131f0d0f8e5bab0be0ce44e1c436ec3b44811b3cd",
+            "parentHash": "0x115ef4972f29327c09a530249d4263e5437039f01e8f792dfcd564933c5642d9",
+            "timestamp": 1791653099
+          },
+          "conversion": {
+            "ETH": "0.000148245860710019",
+            "USDC": "0.371283735858167752"
+          },
+          "rate": {
+            "numerator": "94073569567875528958897",
+            "denominator": "53225187685000000000"
+          },
+          "decimals": {
+            "0x50da645f148798f68ef2d7db7c1cb22a6819bb2c": 8,
+            "0xf307e242bfe1ec1ff01a4cef2fdaa81b10a52418": 18,
+            "0x4200000000000000000000000000000000000006": 18,
+            "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 6
+          }
+        }
+      ],
+      "events": {
+        "Transfer": 2,
+        "Sync": 6,
+        "Mint": 1,
+        "Fees": 5,
+        "Swap": 5
+      },
+      "actions": 6
+    }
+  ],
+  "metrics": {
+    "requests": 191,
+    "responseBytes": 1882052,
+    "methods": {
+      "eth_chainId": 3,
+      "eth_getBlockByNumber": 140,
+      "eth_getTransactionReceipt": 6,
+      "eth_getCode": 12,
+      "eth_call": 28,
+      "eth_getLogs": 2
+    }
+  },
+  "productionWrites": 0
+}
