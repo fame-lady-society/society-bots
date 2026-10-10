@@ -1,3 +1,4 @@
+import { activeDataset } from "./dataset.ts";
 import { parseAvailabilityRequest } from "./availability-api.ts";
 import { parseActivityRequest, readActivity } from "./activity-api.ts";
 import { digest } from "./model.ts";
@@ -6,22 +7,16 @@ import { sampledReader } from "./sampled-reader.ts";
 import { gzipSync } from "node:zlib";
 import { parseChartRequest, readChart } from "./chart-api.ts";
 import type { APIGatewayProxyEventV2 } from "aws-lambda";
-import { readFileSync } from "node:fs";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { HistoryError, historyReader, parseHistoryRequest } from "./api.ts";
-import { famePoolStateRegistry } from "../fame-swap-pool-state/registry/index.ts";
+import { fameHistoryRegistry } from "./registry.ts";
 import { historyScope } from "./model.ts";
-import type { TokenMetadata } from "./decode.ts";
 import { servingRevision } from "./revision.ts";
 
 import { parseSampledRequest, readSampledMarket } from "./sampled-api.ts";
 
-const scope = historyScope(famePoolStateRegistry);
-const metadata: TokenMetadata = JSON.parse(
-  readFileSync(new URL("./token-metadata.json", import.meta.url), "utf8"),
-);
-const metadataRevision = servingRevision(scope, metadata);
+const availableScope = historyScope(fameHistoryRegistry);
 const db = DynamoDBDocumentClient.from(
   new DynamoDBClient({
     maxAttempts: 2,
@@ -36,19 +31,28 @@ export async function handler(event: APIGatewayProxyEventV2) {
   try {
     if (event.requestContext.http.method !== "GET" || event.body)
       throw new HistoryError(400, "invalid-request");
+    // Validate availability before storage, then resolve the same active dataset
+    // as chart/activity reads; deployed pool admission never selects it implicitly.
     if (
       new URLSearchParams(event.rawQueryString).get("view") === "availability"
     ) {
       const before = parseAvailabilityRequest(event.rawQueryString);
       const table = process.env.FAME_HISTORY_TABLE;
       if (!table) throw new Error("Missing history table");
+      const selected = await activeDataset(
+        table,
+        db,
+        AbortSignal.timeout(1500),
+      );
       const body = await sampledReader(
         db,
         table,
-        sampledPolicy(scope).revision,
+        sampledPolicy(selected.scope).revision,
       ).availability(before);
       return { statusCode: 200, headers, body: JSON.stringify(body) };
     }
+    let scope = availableScope;
+
     const activity =
       new URLSearchParams(event.rawQueryString).get("view") === "activity";
     const activityRequest = activity
@@ -71,6 +75,14 @@ export async function handler(event: APIGatewayProxyEventV2) {
         : parseHistoryRequest(event.rawQueryString, scope);
     const table = process.env.FAME_HISTORY_TABLE;
     if (!table) throw new Error("Missing history table");
+    // Leave room for the existing 6.5s page-read budget inside the 10s Lambda.
+    const selected = await activeDataset(table, db, AbortSignal.timeout(1500));
+    scope = selected.scope;
+    const metadata = selected.metadata;
+    const metadataRevision = servingRevision(scope, metadata);
+    if (activity) parseActivityRequest(event.rawQueryString, scope);
+    else if (chart) parseChartRequest(event.rawQueryString, scope);
+    else if (!sampled) parseHistoryRequest(event.rawQueryString, scope);
     const publication = chart
       ? await sampledReader(db, table, sampledPolicy(scope).revision).window(
           chartRequest!.from,

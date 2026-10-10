@@ -1,12 +1,11 @@
+import { activeDataset } from "../../src/fame-market-history/dataset.ts";
 import { retainLiveHistory } from "../../src/fame-market-history/retain-live-history.ts";
 import { sampledPolicy } from "../../src/fame-market-history/sampled-market.ts";
 /** Default read-only; --apply publishes only older dated pages. No RPC. */
-import { readFile, mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
-import { famePoolStateRegistry } from "../../src/fame-swap-pool-state/registry/index.ts";
-import { historyScope } from "../../src/fame-market-history/model.ts";
 import { materializeHistory } from "../../src/fame-market-history/materialize-history.ts";
 import { failureCode } from "../../src/fame-market-history/failure.ts";
 try {
@@ -21,19 +20,11 @@ try {
   const table = process.env.FAME_HISTORY_TABLE,
     bucket = process.env.FAME_HISTORY_BUCKET;
   if (!table || !bucket) throw new Error("Missing storage target");
-  const metadata = JSON.parse(
-    await readFile(
-      new URL(
-        "../../src/fame-market-history/token-metadata.json",
-        import.meta.url,
-      ),
-      "utf8",
-    ),
-  );
-  const scope = historyScope(famePoolStateRegistry);
   const db = DynamoDBDocumentClient.from(
     new DynamoDBClient({ maxAttempts: 2 }),
   );
+  const selected = await activeDataset(table, db);
+  const scope = selected.scope;
   if (flags.includes("--retain-live")) {
     const receipt = await retainLiveHistory(
       db,
@@ -50,7 +41,7 @@ try {
   } else {
     const receipt = await materializeHistory({
       scope,
-      metadata,
+      metadata: selected.metadata,
       table,
       bucket,
       db,

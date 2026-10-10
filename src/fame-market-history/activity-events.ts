@@ -42,16 +42,18 @@ export function activityEvent(
     baseIs0 = pool.token0 === FAME_ADDRESS;
   let type: ActivityType, base: string, quote: string;
   if (event.classification === "trade") {
-    const signed =
-      pool.venueFamily === "Slipstream"
-        ? BigInt(baseIs0 ? a.amount0 : a.amount1)
-        : BigInt(baseIs0 ? a.amount0In : a.amount1In) -
-          BigInt(baseIs0 ? a.amount0Out : a.amount1Out);
+    const signed = ["Slipstream", "UniswapV3"].includes(pool.venueFamily)
+      ? BigInt(baseIs0 ? a.amount0 : a.amount1)
+      : BigInt(baseIs0 ? a.amount0In : a.amount1In) -
+        BigInt(baseIs0 ? a.amount0Out : a.amount1Out);
     type = signed < 0n ? "buy" : "sell";
     base = event.baseAtoms!;
     quote = event.quoteAtoms!;
   } else if (event.eventName === "Mint" || event.eventName === "Burn") {
-    if (pool.venueFamily === "Slipstream" && BigInt(a.amount) === 0n)
+    if (
+      ["Slipstream", "UniswapV3"].includes(pool.venueFamily) &&
+      BigInt(a.amount) === 0n
+    )
       return null; // fee-accounting poke
     base = baseIs0 ? a.amount0 : a.amount1;
     quote = baseIs0 ? a.amount1 : a.amount0;

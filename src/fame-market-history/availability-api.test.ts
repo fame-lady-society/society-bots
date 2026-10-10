@@ -1,3 +1,5 @@
+import { dataset, datasetKey } from "./dataset.ts";
+import { metadata } from "./worker-fixture.ts";
 import { jest, afterEach } from "@jest/globals";
 import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { parseAvailabilityRequest } from "./availability-api.ts";
@@ -63,7 +65,16 @@ test("without archived directories the live window supplies the boundary", async
   const live = publication(epoch);
   const db = {
     send: async (c: any) =>
-      c instanceof QueryCommand ? { Items: [] } : { Item: live },
+      c instanceof QueryCommand
+        ? { Items: [] }
+        : {
+            Item:
+              c.input.Key?.sk === "active-scope"
+                ? { scopeId: scope.id }
+                : c.input.Key?.pk === datasetKey(scope.id).pk
+                  ? dataset(scope, metadata)
+                  : live,
+          },
   } as unknown as DynamoDBDocumentClient;
   expect(
     await sampledReader(db, "table", live.policyRevision).availability(),
@@ -82,7 +93,16 @@ test("endpoint validates navigation before storage and returns uncached boundary
   const send = jest
     .spyOn(DynamoDBDocumentClient.prototype, "send")
     .mockImplementation(async (c: any) =>
-      c instanceof QueryCommand ? { Items: [] } : { Item: live },
+      c instanceof QueryCommand
+        ? { Items: [] }
+        : {
+            Item:
+              c.input.Key?.sk === "active-scope"
+                ? { scopeId: scope.id }
+                : c.input.Key?.pk === datasetKey(scope.id).pk
+                  ? dataset(scope, metadata)
+                  : live,
+          },
     );
   for (const q of [
     "view=availability&before=1",
