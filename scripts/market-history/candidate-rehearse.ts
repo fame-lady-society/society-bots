@@ -9,7 +9,11 @@ import {
   CreateTableCommand,
   DeleteTableCommand,
 } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  DynamoDBDocumentClient,
+  GetCommand,
+  UpdateCommand,
+} from "@aws-sdk/lib-dynamodb";
 import {
   S3Client,
   PutObjectCommand,
@@ -29,6 +33,12 @@ import {
 } from "../../src/fame-market-history/candidate.ts";
 import { launchScope } from "../../src/fame-market-history/local-backfill.ts";
 import { awsArchive } from "../../src/fame-market-history/storage.ts";
+import { cursorKey } from "../../src/fame-market-history/storage.ts";
+import {
+  progressKey,
+  sampledKey,
+  activeScopeKey,
+} from "../../src/fame-market-history/keys.ts";
 import { awsSampled } from "../../src/fame-market-history/sampled-storage.ts";
 import { awsAggregation } from "../../src/fame-market-history/worker-storage.ts";
 import { aggregateNext } from "../../src/fame-market-history/worker.ts";
@@ -189,6 +199,10 @@ try {
     await candidateHandler({}, { getRemainingTimeInMillis: () => 300000 }),
     { phase: "idle" },
   );
+  const august = candidateStore(db, table, () => now, "august-30d-v1");
+  const september = candidateStore(db, table, () => now, "september-30d-v1");
+  await assert.rejects(august.control("start"), /must be complete/);
+  await assert.rejects(september.control("start"), /must be complete/);
   assert.equal(await store.acquire("idle"), null);
   await store.control("start");
   await store.control("start");
@@ -337,6 +351,115 @@ try {
     }),
   );
   await assert.rejects(store.acquire("wrong-spec"), /specification changed/);
+  // Transaction-only continuation fixture: move the durable frontiers to the
+  // completed boundary. This does NOT claim the intervening month was replayed.
+  await db.send(
+    new UpdateCommand({
+      TableName: table,
+      Key: candidateKey,
+      UpdateExpression: "SET specHash = :hash, completed = :done",
+      ExpressionAttributeValues: {
+        ":hash": status.job.specHash,
+        ":done": true,
+      },
+    }),
+  );
+  await assert.rejects(august.control("start")); // completion bit alone is insufficient
+  const set = async (
+    Key: Record<string, string>,
+    field: string,
+    value: number,
+  ) =>
+    db.send(
+      new UpdateCommand({
+        TableName: table,
+        Key,
+        UpdateExpression: `SET ${field} = :value`,
+        ExpressionAttributeValues: { ":value": value },
+      }),
+    );
+  await set(cursorKey(spec.scopeId), "nextBlock", bounds.end.number + 1);
+  await set(progressKey(spec.scopeId), "nextBlock", bounds.end.number + 1);
+  await set(
+    sampledKey(spec.policyRevision, "collected"),
+    "nextTimestamp",
+    spec.to,
+  );
+  await assert.rejects(august.control("start")); // publication must also be caught up
+  await set(
+    sampledKey(spec.policyRevision, "published"),
+    "nextTimestamp",
+    spec.to,
+  );
+  const completedJob = await store.read();
+  assert.deepEqual(
+    await candidateHandler({}, { getRemainingTimeInMillis: () => 300000 }),
+    { phase: "idle" },
+  );
+  assert.equal(await august.read(), undefined); // deployment never auto-starts a successor
+  await august.control("start");
+  await august.control("start"); // lost-response retry / duplicate control
+  assert(await august.acquire("august-owner"));
+  assert.equal(await august.acquire("duplicate-owner"), null);
+  await assert.rejects(september.control("start"), /must be complete/);
+  chain.finalized = async () => h(spec.startBlock + 90 * 43200 + 100);
+  const augustBounds = await prepareCandidate(chain, "august-30d-v1");
+  const activeBefore = await db.send(
+    new GetCommand({ TableName: table, Key: activeScopeKey }),
+  );
+  await august.initialize("august-owner", augustBounds, metadata);
+  assert.deepEqual(
+    (await db.send(new GetCommand({ TableName: table, Key: activeScopeKey })))
+      .Item,
+    activeBefore.Item,
+  );
+  await august.control("pause");
+  await august.control("start");
+  assert.equal(await august.canContinue("august-owner"), false);
+  await august.finish("august-owner", { phase: "yielded" }, zero);
+  assert.deepEqual(
+    await candidateHandler({}, { getRemainingTimeInMillis: () => 300000 }),
+    { phase: "idle" },
+  );
+  await august.control("resume");
+  assert(await august.acquire("august-crash"));
+  now += CANDIDATE_LEASE_MS + 1;
+  assert(await august.acquire("august-recovery"));
+  await assert.rejects(
+    august.finish("august-crash", { phase: "complete" }, zero),
+  );
+  await august.finish("august-recovery", { phase: "yielded" }, zero);
+  assert.deepEqual(await store.read(), completedJob); // predecessor is never rewritten
+  assert(await august.acquire("august-completion"));
+  await set(cursorKey(spec.scopeId), "nextBlock", augustBounds.end.number + 1);
+  await set(
+    progressKey(spec.scopeId),
+    "nextBlock",
+    augustBounds.end.number + 1,
+  );
+  await set(
+    sampledKey(spec.policyRevision, "collected"),
+    "nextTimestamp",
+    candidateSpec("august-30d-v1").to,
+  );
+  await set(
+    sampledKey(spec.policyRevision, "published"),
+    "nextTimestamp",
+    candidateSpec("august-30d-v1").to,
+  );
+  await august.finish("august-completion", { phase: "complete" }, zero);
+  assert.deepEqual(
+    await candidateHandler({}, { getRemainingTimeInMillis: () => 300000 }),
+    { phase: "idle" },
+  );
+  assert.equal(await september.read(), undefined);
+  await september.control("start");
+  await september.control("pause");
+  assert.deepEqual(
+    await candidateHandler({}, { getRemainingTimeInMillis: () => 300000 }),
+    { phase: "idle" },
+  );
+  assert.equal((await september.read())?.predecessor, "august-30d-v1");
   console.log(
     JSON.stringify({
       proof: "candidate-pipeline",
@@ -346,6 +469,7 @@ try {
       activityRows: 1,
       currencies: ["ETH", "USDC"],
       frozenSpecGuard: true,
+      continuationTransactions: true,
       lostUploadResponse: true,
       leaseRecovery: true,
       pauseResume: true,

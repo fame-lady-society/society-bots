@@ -1,4 +1,4 @@
-/** Fixed first production rehearsal chunk. Promotion is deliberately absent. */
+/** Reviewed same-scope candidate chunks. Promotion and October admission are absent. */
 import { DECODER_VERSION } from "./decode.ts";
 import type { Header } from "./model.ts";
 import { digest } from "./model.ts";
@@ -13,19 +13,32 @@ import { collect, type ArchiveStore, type ChainReader } from "./collector.ts";
 import { publishSampled, type SampledStore } from "./sampled-live.ts";
 
 export const candidateKey = { pk: "candidate:launch-30d-v1", sk: "job" };
-export function candidateSpec() {
+export const candidateChunks = [
+  "launch-30d-v1",
+  "august-30d-v1",
+  "september-30d-v1",
+] as const;
+export type CandidateChunk = (typeof candidateChunks)[number];
+export function candidateJobKey(chunk: CandidateChunk) {
+  candidateSpec(chunk); // Runtime callers cannot introduce arbitrary chunks.
+  return { pk: `candidate:${chunk}`, sk: "job" };
+}
+export function candidateSpec(chunk: CandidateChunk = "launch-30d-v1") {
+  const index = candidateChunks.indexOf(chunk);
+  if (index < 0) throw new Error("Unknown candidate chunk");
   const scope = launchScope();
   return {
-    version: "launch-30d-v1",
+    version: chunk,
     decoderVersion: DECODER_VERSION,
-    from: 1720828800,
-    to: 1720828800 + 30 * 86400,
+    from: 1720828800 + index * 30 * 86400,
+    to: 1720828800 + (index + 1) * 30 * 86400,
     startBlock: 17019741,
     scopeId: scope.id,
     policyRevision: sampledPolicy(scope).revision,
   };
 }
-export const candidateHash = () => digest(JSON.stringify(candidateSpec()));
+export const candidateHash = (chunk: CandidateChunk = "launch-30d-v1") =>
+  digest(JSON.stringify(candidateSpec(chunk)));
 export interface CandidateBounds {
   launch: Header;
   before: Header;
@@ -34,13 +47,14 @@ export interface CandidateBounds {
 }
 export async function prepareCandidate(
   chain: ChainReader,
+  chunk: CandidateChunk = "launch-30d-v1",
 ): Promise<CandidateBounds> {
-  const spec = candidateSpec();
+  const spec = candidateSpec(chunk);
   const launch = await chain.header(spec.startBlock),
     before = await chain.header(spec.startBlock - 1),
     head = await chain.finalized();
   if (
-    launch.timestamp !== spec.from + 29 ||
+    launch.timestamp !== candidateSpec().from + 29 ||
     launch.parentHash !== before.hash ||
     head.timestamp < spec.to
   )
@@ -53,11 +67,14 @@ export async function prepareCandidate(
   );
   return { launch, before, end, endBefore };
 }
-export function validateCandidateBounds(b: CandidateBounds) {
-  const s = candidateSpec();
+export function validateCandidateBounds(
+  b: CandidateBounds,
+  chunk: CandidateChunk = "launch-30d-v1",
+) {
+  const s = candidateSpec(chunk);
   if (
     b.launch.number !== s.startBlock ||
-    b.launch.timestamp !== s.from + 29 ||
+    b.launch.timestamp !== candidateSpec().from + 29 ||
     b.before.number !== s.startBlock - 1 ||
     b.launch.parentHash !== b.before.hash ||
     b.end.number <= b.launch.number ||
@@ -71,6 +88,7 @@ export function validateCandidateBounds(b: CandidateBounds) {
 /** Existing stores retain independent raw, Parquet and sampled/publication cursors.
  * The coordinator never loads a day or month into memory. */
 export async function advanceCandidate(args: {
+  chunk?: CandidateChunk;
   bounds: CandidateBounds;
   chain: ChainReader;
   archive: ArchiveStore;
@@ -82,9 +100,9 @@ export async function advanceCandidate(args: {
   maxSteps?: number;
 }) {
   const { bounds, chain, archive, sampled } = args,
-    spec = candidateSpec(),
+    spec = candidateSpec(args.chunk),
     scope = launchScope();
-  validateCandidateBounds(bounds);
+  validateCandidateBounds(bounds, args.chunk);
   const sample = args.sample;
   if (
     (await chain.header(bounds.launch.number)).hash !== bounds.launch.hash ||
@@ -110,14 +128,19 @@ export async function advanceCandidate(args: {
     parquetNext > raw.nextBlock
   )
     throw new Error("Candidate Parquet exceeds raw coverage");
-  let cursor = await sampled.cursor({
-    startTimestamp: spec.from,
-    nextTimestamp: spec.from,
-    anchor: bounds.before,
-    policyRevision: spec.policyRevision,
-  });
+  let cursor =
+    spec.version === "launch-30d-v1"
+      ? await sampled.cursor({
+          startTimestamp: candidateSpec().from,
+          nextTimestamp: candidateSpec().from,
+          anchor: bounds.before,
+          policyRevision: spec.policyRevision,
+        })
+      : await sampled.collected();
+  if (!cursor) throw new Error("Missing predecessor samples");
   if (
-    cursor.startTimestamp !== spec.from ||
+    cursor.startTimestamp !== candidateSpec().from ||
+    cursor.nextTimestamp < spec.from ||
     cursor.nextTimestamp > spec.to ||
     cursor.policyRevision !== spec.policyRevision
   )
@@ -138,6 +161,11 @@ export async function advanceCandidate(args: {
     }
     // Repair publication lag first: a lost response must never repeat a sample.
     const published = await sampled.publication();
+    if (
+      spec.version !== "launch-30d-v1" &&
+      (!published || published.nextTimestamp < spec.from)
+    )
+      throw new Error("Missing predecessor publication");
     if ((published?.nextTimestamp ?? spec.from) > cursor.nextTimestamp)
       throw new Error("Candidate publication exceeds samples");
     if ((published?.nextTimestamp ?? spec.from) < cursor.nextTimestamp) {
@@ -168,7 +196,7 @@ export async function advanceCandidate(args: {
       rawTime = (await chain.header(raw.nextBlock - 1)).timestamp;
       continue;
     }
-    const t = cursor.nextTimestamp;
+    const t: number = cursor.nextTimestamp;
     if (t >= spec.to) throw new Error("Candidate sample outside chunk");
     const guess = Math.min(bounds.end.number - 1, cursor.anchor.number + 150);
     const low = await chain.header(guess),

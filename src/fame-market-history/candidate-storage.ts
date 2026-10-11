@@ -6,7 +6,9 @@ import {
   type DynamoDBDocumentClient,
 } from "@aws-sdk/lib-dynamodb";
 import {
-  candidateKey,
+  candidateJobKey,
+  candidateChunks,
+  type CandidateChunk,
   candidateHash,
   candidateSpec,
   validateCandidateBounds,
@@ -25,7 +27,10 @@ export function candidateStore(
   db: DynamoDBDocumentClient,
   table: string,
   now = Date.now,
+  chunk: CandidateChunk = "launch-30d-v1",
 ) {
+  const candidateKey = candidateJobKey(chunk),
+    spec = candidateSpec(chunk);
   const get = async (Key: Record<string, string>) =>
     (
       await db.send(
@@ -36,8 +41,11 @@ export function candidateStore(
     const row = await get(candidateKey);
     if (
       row &&
-      (row.specHash !== candidateHash() ||
-        row.spec !== JSON.stringify(candidateSpec()) ||
+      (row.specHash !== candidateHash(chunk) ||
+        row.spec !== JSON.stringify(spec) ||
+        (chunk !== "launch-30d-v1" &&
+          row.predecessor !==
+            candidateChunks[candidateChunks.indexOf(chunk) - 1]) ||
         !["running", "paused"].includes(row.desired) ||
         typeof row.completed !== "boolean")
     )
@@ -50,18 +58,107 @@ export function candidateStore(
     read,
     control: async (command: "start" | "pause" | "resume") => {
       if (command === "start") {
+        // A retried start cannot reset progress or resume a paused job.
+        if (await read()) return read();
+        const item = {
+          ...candidateKey,
+          spec: JSON.stringify(spec),
+          specHash: candidateHash(chunk),
+          desired: "running",
+          completed: false,
+          createdAt: now(),
+        };
+        if (chunk !== "launch-30d-v1") {
+          const previousChunk =
+            candidateChunks[candidateChunks.indexOf(chunk) - 1];
+          const previous = await candidateStore(
+            db,
+            table,
+            now,
+            previousChunk,
+          ).read();
+          if (!previous?.completed || previous.leaseOwner || !previous.bounds)
+            throw new Error(
+              "Previous candidate chunk must be complete and unleased",
+            );
+          validateCandidateBounds(previous.bounds, previousChunk);
+          const nextBlock = previous.bounds.end.number + 1;
+          const checks = [
+            {
+              Key: candidateJobKey(previousChunk),
+              ConditionExpression:
+                "completed = :done AND specHash = :hash AND attribute_not_exists(leaseOwner)",
+              ExpressionAttributeValues: {
+                ":done": true,
+                ":hash": candidateHash(previousChunk),
+              },
+            },
+            {
+              Key: cursorKey(spec.scopeId),
+              ConditionExpression: "nextBlock = :block AND startBlock = :start",
+              ExpressionAttributeValues: {
+                ":block": nextBlock,
+                ":start": spec.startBlock,
+              },
+            },
+            {
+              Key: progressKey(spec.scopeId),
+              ConditionExpression: "nextBlock = :block",
+              ExpressionAttributeValues: { ":block": nextBlock },
+            },
+            ...["collected", "published"].map((kind) => ({
+              Key: sampledKey(
+                spec.policyRevision,
+                kind as "collected" | "published",
+              ),
+              ConditionExpression: "nextTimestamp = :time",
+              ExpressionAttributeValues: { ":time": spec.from },
+            })),
+            {
+              Key: activeScopeKey,
+              ConditionExpression: "scopeId = :scope",
+              ExpressionAttributeValues: { ":scope": spec.scopeId },
+            },
+          ];
+          try {
+            await db.send(
+              new TransactWriteCommand({
+                TransactItems: [
+                  ...checks.map((check) => ({
+                    ConditionCheck: { TableName: table, ...check },
+                  })),
+                  {
+                    Put: {
+                      TableName: table,
+                      Item: { ...item, predecessor: previousChunk },
+                      ConditionExpression: "attribute_not_exists(pk)",
+                    },
+                  },
+                ],
+              }),
+            );
+          } catch (e) {
+            // Lost response or competing identical starts are idempotent only if
+            // the exact immutable job now exists. Other transaction errors surface.
+            if (!(await read())) {
+              if (
+                e instanceof Error &&
+                e.name === "TransactionCanceledException"
+              )
+                throw new Error(
+                  "Candidate continuation requires completed predecessor, matching active scope and aligned raw/Parquet/sample/publication checkpoints",
+                  { cause: e },
+                );
+              throw e;
+            }
+          }
+          return read();
+        }
         try {
           await db.send(
             new PutCommand({
               TableName: table,
-              Item: {
-                ...candidateKey,
-                spec: JSON.stringify(candidateSpec()),
-                specHash: candidateHash(),
-                desired: "running",
-                completed: false,
-                createdAt: now(),
-              },
+              Item: item,
               ConditionExpression: "attribute_not_exists(pk)",
             }),
           );
@@ -78,7 +175,7 @@ export function candidateStore(
             ConditionExpression: "specHash = :spec AND completed = :false",
             ExpressionAttributeValues: {
               ":desired": command === "pause" ? "paused" : "running",
-              ":spec": candidateHash(),
+              ":spec": candidateHash(chunk),
               ":false": false,
             },
           }),
@@ -98,7 +195,7 @@ export function candidateStore(
               ":owner": owner,
               ":until": now() + CANDIDATE_LEASE_MS,
               ":now": now(),
-              ":spec": candidateHash(),
+              ":spec": candidateHash(chunk),
               ":running": "running",
               ":false": false,
             },
@@ -127,7 +224,7 @@ export function candidateStore(
       bounds: CandidateBounds,
       metadata: TokenMetadata,
     ) => {
-      validateCandidateBounds(bounds);
+      validateCandidateBounds(bounds, chunk);
       const scope = launchScope();
       await db.send(
         new TransactWriteCommand({
@@ -146,20 +243,27 @@ export function candidateStore(
                 },
               },
             },
-            {
-              Put: {
-                TableName: table,
-                Item: { ...activeScopeKey, scopeId: scope.id },
-                ConditionExpression: "attribute_not_exists(pk)",
-              },
-            },
-            {
-              Put: {
-                TableName: table,
-                Item: { ...datasetKey(scope.id), ...dataset(scope, metadata) },
-                ConditionExpression: "attribute_not_exists(pk)",
-              },
-            },
+            ...(chunk === "launch-30d-v1"
+              ? [
+                  {
+                    Put: {
+                      TableName: table,
+                      Item: { ...activeScopeKey, scopeId: scope.id },
+                      ConditionExpression: "attribute_not_exists(pk)",
+                    },
+                  },
+                  {
+                    Put: {
+                      TableName: table,
+                      Item: {
+                        ...datasetKey(scope.id),
+                        ...dataset(scope, metadata),
+                      },
+                      ConditionExpression: "attribute_not_exists(pk)",
+                    },
+                  },
+                ]
+              : []),
           ],
         }),
       );
@@ -190,8 +294,8 @@ export function candidateStore(
     },
     status: async () => {
       const job = await read();
-      if (!job) return { state: "not-started", spec: candidateSpec() };
-      const s = candidateSpec();
+      if (!job) return { state: "not-started", spec };
+      const s = spec;
       const [raw, aggregation, collected, published] = await Promise.all([
         get(cursorKey(s.scopeId)),
         get(progressKey(s.scopeId)),
