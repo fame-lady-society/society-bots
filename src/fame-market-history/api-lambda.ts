@@ -1,3 +1,5 @@
+import additions from "./isolated-pools.json" with { type: "json" };
+import { parseFamePoolStateRegistry } from "../fame-swap-pool-state/registry/index.ts";
 import { activeDataset } from "./dataset.ts";
 import { parseAvailabilityRequest } from "./availability-api.ts";
 import { parseActivityRequest, readActivity } from "./activity-api.ts";
@@ -16,7 +18,13 @@ import { servingRevision } from "./revision.ts";
 
 import { parseSampledRequest, readSampledMarket } from "./sampled-api.ts";
 
-const availableScope = historyScope(fameHistoryRegistry);
+// Syntax validation recognizes reviewed IDs; the active dataset below still authorizes membership.
+const availableScope = historyScope(
+  parseFamePoolStateRegistry({
+    ...fameHistoryRegistry,
+    pools: [...fameHistoryRegistry.pools, ...additions],
+  }),
+);
 const db = DynamoDBDocumentClient.from(
   new DynamoDBClient({
     maxAttempts: 2,

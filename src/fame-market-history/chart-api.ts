@@ -101,6 +101,21 @@ export function parseChartRequest(
 export function projectChartBucket(b: SampledBucket, series: string) {
   const p =
     series === "market" ? null : b.series.find((p) => p.poolId === series);
+  if (!p && b.notYetCreatedPoolIds?.includes(series))
+    return {
+      timestamp: b.timestamp,
+      publicationStatus: "published" as const,
+      reason: "not-yet-created" as const,
+      price: null,
+      candle: null,
+      volume: "0",
+      inventory: "0",
+      volumeStatus: "complete" as const,
+      inventoryStatus: "complete" as const,
+      tradeCount: 0,
+      eventCoverage: "complete",
+      marketVolume: b.totals.volume,
+    };
   if (series !== "market" && !p) throw new Error("Missing chart pool");
   return {
     timestamp: b.timestamp,

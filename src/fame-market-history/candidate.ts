@@ -1,4 +1,5 @@
-/** Reviewed same-scope candidate chunks. Promotion and October admission are absent. */
+/** Reviewed candidate chunks. Production promotion is deliberately absent. */
+import { octoberScope } from "./october-scope.ts";
 import { DECODER_VERSION } from "./decode.ts";
 import type { Header } from "./model.ts";
 import { digest } from "./model.ts";
@@ -17,16 +18,19 @@ export const candidateChunks = [
   "launch-30d-v1",
   "august-30d-v1",
   "september-30d-v1",
+  "october-30d-v1",
 ] as const;
 export type CandidateChunk = (typeof candidateChunks)[number];
 export function candidateJobKey(chunk: CandidateChunk) {
   candidateSpec(chunk); // Runtime callers cannot introduce arbitrary chunks.
   return { pk: `candidate:${chunk}`, sk: "job" };
 }
+export const candidateScope = (chunk: CandidateChunk = "launch-30d-v1") =>
+  chunk === "october-30d-v1" ? octoberScope() : launchScope();
 export function candidateSpec(chunk: CandidateChunk = "launch-30d-v1") {
   const index = candidateChunks.indexOf(chunk);
   if (index < 0) throw new Error("Unknown candidate chunk");
-  const scope = launchScope();
+  const scope = candidateScope(chunk);
   return {
     version: chunk,
     decoderVersion: DECODER_VERSION,
@@ -101,7 +105,7 @@ export async function advanceCandidate(args: {
 }) {
   const { bounds, chain, archive, sampled } = args,
     spec = candidateSpec(args.chunk),
-    scope = launchScope();
+    scope = candidateScope(args.chunk);
   validateCandidateBounds(bounds, args.chunk);
   const sample = args.sample;
   if (

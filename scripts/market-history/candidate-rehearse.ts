@@ -13,6 +13,7 @@ import {
   DynamoDBDocumentClient,
   GetCommand,
   UpdateCommand,
+  PutCommand,
 } from "@aws-sdk/lib-dynamodb";
 import {
   S3Client,
@@ -31,6 +32,14 @@ import {
   candidateKey,
   prepareCandidate,
 } from "../../src/fame-market-history/candidate.ts";
+import {
+  octoberScope,
+  octoberMetadata,
+} from "../../src/fame-market-history/october-scope.ts";
+import { replayCandidate } from "../../src/fame-market-history/candidate-replay.ts";
+import { dataset, datasetKey } from "../../src/fame-market-history/dataset.ts";
+import { rangeKey } from "../../src/fame-market-history/keys.ts";
+import type { Manifest } from "../../src/fame-market-history/model.ts";
 import { launchScope } from "../../src/fame-market-history/local-backfill.ts";
 import { awsArchive } from "../../src/fame-market-history/storage.ts";
 import { cursorKey } from "../../src/fame-market-history/storage.ts";
@@ -336,6 +345,148 @@ try {
   );
   assert.equal(availability.earliestAvailableTimestamp, spec.from);
   assert.equal(availability.hasEarlier, false);
+  // Rebuild the real retained fixture into the expanded generation, no RPC.
+  const target = octoberScope(),
+    targetMetadata = octoberMetadata(metadata);
+  const staging = { sourceScopeId: scope.id, targetScopeId: target.id };
+  const sourceSamples = awsSampled({
+    scope,
+    table,
+    bucket: "local",
+    metadata,
+    db,
+    s3,
+  });
+  const oldPublication = await sourceSamples.publication();
+  const oldCollected = await sourceSamples.collected();
+  const sourceJob = await store.read();
+  await db.send(
+    new PutCommand({
+      TableName: table,
+      Item: { ...datasetKey(target.id), ...dataset(target, targetMetadata) },
+    }),
+  );
+  const targetSamples = awsSampled({
+    scope: target,
+    table,
+    bucket: "local",
+    metadata: targetMetadata,
+    db,
+    s3,
+  });
+  const targetAggregation = awsAggregation({
+    table,
+    bucket: "local",
+    db,
+    s3,
+    staging,
+  });
+  const targetProgress = async () =>
+    (
+      await db.send(
+        new GetCommand({
+          TableName: table,
+          Key: progressKey(target.id),
+          ConsistentRead: true,
+        }),
+      )
+    ).Item?.nextBlock ?? spec.startBlock;
+  let replayRuns = 0;
+  const replay = () =>
+    replayCandidate({
+      source: scope,
+      target,
+      startBlock: spec.startBlock,
+      from: spec.from,
+      to: oldCollected!.nextTimestamp,
+      before: bounds.before,
+      end: h(status.rawNextBlock - 1),
+      archive: awsArchive({ table, bucket: "local", db, s3, staging }),
+      sourceSamples,
+      targetSamples,
+      aggregate: () =>
+        aggregateNext({
+          scope: target,
+          startBlock: spec.startBlock,
+          metadata: targetMetadata,
+          store: targetAggregation,
+        }),
+      aggregationNext: targetProgress,
+      canContinue: async () => true,
+      maxSteps: 96,
+      sourceRange: async (n) => {
+        const manifest = (
+          await db.send(
+            new GetCommand({
+              TableName: table,
+              Key: { pk: `scope:${scope.id}`, sk: rangeKey(n) },
+              ConsistentRead: true,
+            }),
+          )
+        ).Item as Manifest;
+        return { manifest, bytes: await targetAggregation.read(manifest) };
+      },
+    });
+  loseUploadResponse = true;
+  await assert.rejects(replay(), /Simulated lost upload response/);
+  while ((await replay()).phase !== "staged") assert(++replayRuns < 20);
+  assert.equal((await replay()).phase, "staged"); // resume after a lost completion response
+  assert.deepEqual(await sourceSamples.publication(), oldPublication);
+  assert.deepEqual(await sourceSamples.collected(), oldCollected);
+  assert.deepEqual(await store.read(), sourceJob);
+  assert.equal(
+    (await db.send(new GetCommand({ TableName: table, Key: activeScopeKey })))
+      .Item?.scopeId,
+    scope.id,
+  );
+  // Local-only pointer changes exercise the actual private API against staged data.
+  await db.send(
+    new UpdateCommand({
+      TableName: table,
+      Key: activeScopeKey,
+      UpdateExpression: "SET scopeId = :s",
+      ExpressionAttributeValues: { ":s": target.id },
+    }),
+  );
+  for (const currency of ["ETH", "USDC"]) {
+    const q = new URLSearchParams({
+      view: "chart",
+      series: "market",
+      currency,
+      resolution: "300",
+      from: String(spec.from),
+      to: String(spec.from + 86400),
+    });
+    const chart = await call(q);
+    assert.equal(chart.upserts.length, 288);
+    assert(chart.upserts.some((b: any) => b.candle));
+    assert.equal(
+      chart.upserts.reduce((n: number, b: any) => n + (b.tradeCount ?? 0), 0),
+      1,
+    );
+    q.set("series", "aerodrome-spx-fame");
+    assert(
+      (await call(q)).upserts.every((b: any) => b.reason === "not-yet-created"),
+    );
+    q.delete("series");
+    q.set("view", "activity");
+    let count = 0;
+    do {
+      const page = await call(q);
+      count += page.rows.length;
+      if (!page.nextCursor) break;
+      q.set("cursor", page.nextCursor);
+    } while (true);
+    assert.equal(count, 1);
+  }
+  await db.send(
+    new UpdateCommand({
+      TableName: table,
+      Key: activeScopeKey,
+      UpdateExpression: "SET scopeId = :s",
+      ExpressionAttributeValues: { ":s": scope.id },
+    }),
+  );
   await store.control("pause");
   assert.equal(await store.acquire("after-pause"), null);
   assert.deepEqual(
@@ -460,6 +611,61 @@ try {
     { phase: "idle" },
   );
   assert.equal((await september.read())?.predecessor, "august-30d-v1");
+  const october = candidateStore(db, table, () => now, "october-30d-v1");
+  await assert.rejects(october.control("start"), /must be complete/);
+  await september.control("resume");
+  assert(await september.acquire("september-proof"));
+  chain.finalized = async () => h(spec.startBlock + 120 * 43200 + 100);
+  const septemberBounds = await prepareCandidate(chain, "september-30d-v1");
+  await september.initialize("september-proof", septemberBounds, metadata);
+  for (const key of [cursorKey(scope.id), progressKey(scope.id)])
+    await set(key, "nextBlock", septemberBounds.end.number + 1);
+  for (const kind of ["collected", "published"] as const)
+    await set(
+      sampledKey(spec.policyRevision, kind),
+      "nextTimestamp",
+      candidateSpec("october-30d-v1").from,
+    );
+  await september.finish("september-proof", { phase: "complete" }, zero);
+  await october.control("start");
+  assert(await october.acquire("october-proof"));
+  // target definition already exists from the replay fixture; test initialize in a clean definition slot.
+  const { DeleteCommand } = await import("@aws-sdk/lib-dynamodb");
+  await db.send(
+    new DeleteCommand({ TableName: table, Key: datasetKey(target.id) }),
+  );
+  await october.initialize(
+    "october-proof",
+    await prepareCandidate(chain, "october-30d-v1"),
+    targetMetadata,
+  );
+  assert.equal(
+    (await db.send(new GetCommand({ TableName: table, Key: activeScopeKey })))
+      .Item?.scopeId,
+    scope.id,
+  );
+  await assert.rejects(october.activateOctober("october-proof")); // incomplete staging cannot activate
+  for (const key of [cursorKey(target.id), progressKey(target.id)])
+    await set(key, "nextBlock", septemberBounds.end.number + 1);
+  for (const kind of ["collected", "published"] as const)
+    await set(
+      sampledKey(candidateSpec("october-30d-v1").policyRevision, kind),
+      "nextTimestamp",
+      candidateSpec("october-30d-v1").from,
+    );
+  await october.control("pause");
+  await assert.rejects(october.activateOctober("october-proof"));
+  await october.control("resume");
+  await assert.rejects(october.activateOctober("wrong-owner"));
+  const septemberReceipt = await september.read();
+  await october.activateOctober("october-proof");
+  assert.equal(
+    (await db.send(new GetCommand({ TableName: table, Key: activeScopeKey })))
+      .Item?.scopeId,
+    target.id,
+  );
+  assert.deepEqual(await september.read(), septemberReceipt);
+  await october.finish("october-proof", { phase: "candidate-activated" }, zero);
   console.log(
     JSON.stringify({
       proof: "candidate-pipeline",
@@ -470,6 +676,12 @@ try {
       currencies: ["ETH", "USDC"],
       frozenSpecGuard: true,
       continuationTransactions: true,
+      octoberReplay: {
+        replayRuns,
+        sourceUnchanged: true,
+        currencies: ["ETH", "USDC"],
+        admissionActivationGuards: true,
+      },
       lostUploadResponse: true,
       leaseRecovery: true,
       pauseResume: true,

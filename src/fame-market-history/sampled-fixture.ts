@@ -21,7 +21,14 @@ export function sampledFixture(
     switch (c.functionName) {
       case "decimals":
         result =
-          c.address === "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913" ? 6 : 18;
+          c.address === "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+            ? 6
+            : [
+                  "0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf",
+                  "0x50da645f148798f68ef2d7db7c1cb22a6819bb2c",
+                ].includes(c.address)
+              ? 8
+              : 18;
         break;
       case "token0":
         result = p!.token0;

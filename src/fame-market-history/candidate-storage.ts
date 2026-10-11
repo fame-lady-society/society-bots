@@ -6,6 +6,7 @@ import {
   type DynamoDBDocumentClient,
 } from "@aws-sdk/lib-dynamodb";
 import {
+  candidateScope,
   candidateJobKey,
   candidateChunks,
   type CandidateChunk,
@@ -14,10 +15,9 @@ import {
   validateCandidateBounds,
   type CandidateBounds,
 } from "./candidate.ts";
-import { dataset, datasetKey } from "./dataset.ts";
+import { dataset, datasetKey, decodeDataset } from "./dataset.ts";
 import { activeScopeKey, progressKey, sampledKey } from "./keys.ts";
 import { cursorKey } from "./storage.ts";
-import { launchScope } from "./local-backfill.ts";
 import type { TokenMetadata } from "./decode.ts";
 import type { RpcMetrics } from "./rpc.ts";
 export const CANDIDATE_LEASE_MS = 360_000; // Longer than the deployed 300s Lambda timeout.
@@ -82,6 +82,7 @@ export function candidateStore(
               "Previous candidate chunk must be complete and unleased",
             );
           validateCandidateBounds(previous.bounds, previousChunk);
+          const source = candidateSpec(previousChunk);
           const nextBlock = previous.bounds.end.number + 1;
           const checks = [
             {
@@ -94,7 +95,7 @@ export function candidateStore(
               },
             },
             {
-              Key: cursorKey(spec.scopeId),
+              Key: cursorKey(source.scopeId),
               ConditionExpression: "nextBlock = :block AND startBlock = :start",
               ExpressionAttributeValues: {
                 ":block": nextBlock,
@@ -102,13 +103,13 @@ export function candidateStore(
               },
             },
             {
-              Key: progressKey(spec.scopeId),
+              Key: progressKey(source.scopeId),
               ConditionExpression: "nextBlock = :block",
               ExpressionAttributeValues: { ":block": nextBlock },
             },
             ...["collected", "published"].map((kind) => ({
               Key: sampledKey(
-                spec.policyRevision,
+                source.policyRevision,
                 kind as "collected" | "published",
               ),
               ConditionExpression: "nextTimestamp = :time",
@@ -117,7 +118,7 @@ export function candidateStore(
             {
               Key: activeScopeKey,
               ConditionExpression: "scopeId = :scope",
-              ExpressionAttributeValues: { ":scope": spec.scopeId },
+              ExpressionAttributeValues: { ":scope": source.scopeId },
             },
           ];
           try {
@@ -225,7 +226,7 @@ export function candidateStore(
       metadata: TokenMetadata,
     ) => {
       validateCandidateBounds(bounds, chunk);
-      const scope = launchScope();
+      const scope = candidateScope(chunk);
       await db.send(
         new TransactWriteCommand({
           TransactItems: [
@@ -252,6 +253,10 @@ export function candidateStore(
                       ConditionExpression: "attribute_not_exists(pk)",
                     },
                   },
+                ]
+              : []),
+            ...(["launch-30d-v1", "october-30d-v1"].includes(chunk)
+              ? [
                   {
                     Put: {
                       TableName: table,
@@ -264,6 +269,103 @@ export function candidateStore(
                   },
                 ]
               : []),
+          ],
+        }),
+      );
+    },
+    activateOctober: async (owner: string) => {
+      if (chunk !== "october-30d-v1") throw new Error("Not an admission job");
+      const source = candidateSpec("september-30d-v1");
+      const previous = await candidateStore(
+        db,
+        table,
+        now,
+        "september-30d-v1",
+      ).read();
+      if (!previous?.completed || !previous.bounds)
+        throw new Error("Missing completed predecessor");
+      validateCandidateBounds(previous.bounds, "september-30d-v1");
+      const nextBlock = previous.bounds.end.number + 1;
+      const definition = await get(datasetKey(spec.scopeId));
+      if (!definition || decodeDataset(definition).scope.id !== spec.scopeId)
+        throw new Error("Missing staged dataset definition");
+      await db.send(
+        new TransactWriteCommand({
+          TransactItems: [
+            {
+              ConditionCheck: {
+                TableName: table,
+                Key: datasetKey(spec.scopeId),
+                ConditionExpression: "definitionHash = :hash",
+                ExpressionAttributeValues: {
+                  ":hash": definition.definitionHash,
+                },
+              },
+            },
+            {
+              ConditionCheck: {
+                TableName: table,
+                Key: candidateKey,
+                ConditionExpression:
+                  "leaseOwner = :owner AND leaseUntil > :now AND desired = :running AND specHash = :hash AND attribute_exists(bounds)",
+                ExpressionAttributeValues: {
+                  ":owner": owner,
+                  ":now": now(),
+                  ":running": "running",
+                  ":hash": candidateHash(chunk),
+                },
+              },
+            },
+            {
+              ConditionCheck: {
+                TableName: table,
+                Key: candidateJobKey("september-30d-v1"),
+                ConditionExpression:
+                  "completed = :yes AND specHash = :hash AND attribute_not_exists(leaseOwner)",
+                ExpressionAttributeValues: {
+                  ":yes": true,
+                  ":hash": candidateHash("september-30d-v1"),
+                },
+              },
+            },
+            ...[source, spec].flatMap((s) => [
+              {
+                ConditionCheck: {
+                  TableName: table,
+                  Key: cursorKey(s.scopeId),
+                  ConditionExpression: "nextBlock = :next",
+                  ExpressionAttributeValues: { ":next": nextBlock },
+                },
+              },
+              {
+                ConditionCheck: {
+                  TableName: table,
+                  Key: progressKey(s.scopeId),
+                  ConditionExpression: "nextBlock = :next",
+                  ExpressionAttributeValues: { ":next": nextBlock },
+                },
+              },
+              ...(["collected", "published"] as const).map((kind) => ({
+                ConditionCheck: {
+                  TableName: table,
+                  Key: sampledKey(s.policyRevision, kind),
+                  ConditionExpression: "nextTimestamp = :next",
+                  ExpressionAttributeValues: { ":next": spec.from },
+                },
+              })),
+            ]),
+            {
+              Update: {
+                TableName: table,
+                Key: activeScopeKey,
+                UpdateExpression: "SET scopeId = :target",
+                ConditionExpression: "scopeId = :source",
+                ExpressionAttributeValues: {
+                  ":source": source.scopeId,
+                  ":target": spec.scopeId,
+                },
+              },
+            },
           ],
         }),
       );
@@ -306,13 +408,16 @@ export function candidateStore(
         job,
         rawNextBlock: raw?.nextBlock ?? s.startBlock,
         parquetNextBlock: aggregation?.nextBlock ?? s.startBlock,
-        sampleNextTimestamp: collected?.nextTimestamp ?? s.from,
-        publishedNextTimestamp: published?.nextTimestamp ?? s.from,
+        sampleNextTimestamp:
+          collected?.nextTimestamp ??
+          (chunk === "october-30d-v1" ? candidateSpec().from : s.from),
+        publishedNextTimestamp:
+          published?.nextTimestamp ??
+          (chunk === "october-30d-v1" ? candidateSpec().from : s.from),
         leaseActive: !!job.leaseOwner && job.leaseUntil > now(),
       };
     },
     aggregationNext: async () =>
-      (await get(progressKey(candidateSpec().scopeId)))?.nextBlock ??
-      candidateSpec().startBlock,
+      (await get(progressKey(spec.scopeId)))?.nextBlock ?? spec.startBlock,
   };
 }

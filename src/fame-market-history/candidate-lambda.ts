@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, GetCommand } from "@aws-sdk/lib-dynamodb";
 import { S3Client } from "@aws-sdk/client-s3";
 import { SSMClient, GetParameterCommand } from "@aws-sdk/client-ssm";
 import { candidateStore } from "./candidate-storage.ts";
@@ -10,6 +10,7 @@ import {
   prepareCandidate,
   candidateSpec,
   candidateChunks,
+  candidateScope,
   type CandidateBounds,
 } from "./candidate.ts";
 import { launchScope } from "./local-backfill.ts";
@@ -20,7 +21,11 @@ import { sampledReader } from "./sampled-rpc.ts";
 import { awsAggregation } from "./worker-storage.ts";
 import { aggregateNext } from "./worker.ts";
 import type { TokenMetadata } from "./decode.ts";
-import { activeDataset } from "./dataset.ts";
+import { octoberMetadata } from "./october-scope.ts";
+import { replayCandidate } from "./candidate-replay.ts";
+import { rangeKey } from "./keys.ts";
+import type { Manifest } from "./model.ts";
+import { activeDataset, decodeDataset, datasetKey } from "./dataset.ts";
 import { failureCode } from "./failure.ts";
 
 export async function handler(
@@ -72,12 +77,12 @@ export async function handler(
       },
     });
     metrics = rpc.metrics;
-    const scope = launchScope(),
+    const scope = candidateScope(chunk),
       chain = chainReader(scope, rpc.transport, 5000, rpc.capacity);
     const bounds: CandidateBounds =
       job.bounds ?? (await prepareCandidate(chain, chunk));
     if (!job.bounds) {
-      const metadata: TokenMetadata =
+      let metadata: TokenMetadata =
         chunk === "launch-30d-v1"
           ? JSON.parse(
               await readFile(
@@ -90,14 +95,35 @@ export async function handler(
         metadata.blockNumber = bounds.launch.number;
         metadata.blockHash = bounds.launch.hash;
       }
+      if (chunk === "october-30d-v1") metadata = octoberMetadata(metadata);
       await store.initialize(owner, bounds, metadata);
     }
     const selected = await activeDataset(table, db);
-    if (selected.scope.id !== scope.id)
+    const staging =
+      chunk === "october-30d-v1" && selected.scope.id === launchScope().id
+        ? { sourceScopeId: selected.scope.id, targetScopeId: scope.id }
+        : undefined;
+    if (selected.scope.id !== scope.id && !staging)
       throw new Error("Candidate active scope changed");
-    const metadata = selected.metadata;
+    const metadata = staging
+      ? decodeDataset(
+          (
+            await db.send(
+              new GetCommand({
+                TableName: table,
+                Key: datasetKey(scope.id),
+                ConsistentRead: true,
+              }),
+            )
+          ).Item!,
+        ).metadata
+      : selected.metadata;
     const canWork = () => context.getRemainingTimeInMillis() > 40000;
-    const archive = awsArchive({ table, bucket, db, s3 });
+    const canContinue = async () =>
+      canWork() &&
+      rpc.capacity.remainingRequests() > 8 &&
+      (await store.canContinue(owner));
+    const archive = awsArchive({ table, bucket, db, s3, staging });
     const sampled = awsSampled({
       scope,
       table,
@@ -107,27 +133,81 @@ export async function handler(
       s3,
       canContinue: canWork,
     });
-    const aggregation = awsAggregation({ table, bucket, db, s3 });
-    result = await advanceCandidate({
-      chunk,
-      bounds,
-      chain,
-      archive,
-      sampled,
-      sample: sampledReader(scope, rpc.transport),
-      aggregationNext: store.aggregationNext,
-      aggregate: () =>
-        aggregateNext({
-          scope,
-          startBlock: candidateSpec().startBlock,
-          metadata,
-          store: aggregation,
+    const aggregation = awsAggregation({ table, bucket, db, s3, staging });
+    const aggregate = () =>
+      aggregateNext({
+        scope,
+        startBlock: candidateSpec().startBlock,
+        metadata,
+        store: aggregation,
+      });
+    if (staging) {
+      const previous = await candidateStore(
+        db,
+        table,
+        Date.now,
+        "september-30d-v1",
+      ).read();
+      if (!previous?.completed || !previous.bounds)
+        throw new Error("Incomplete staging source");
+      result = await replayCandidate({
+        source: selected.scope,
+        target: scope,
+        startBlock: candidateSpec().startBlock,
+        from: candidateSpec().from,
+        to: candidateSpec(chunk).from,
+        before: bounds.before,
+        end: previous.bounds.end,
+        archive,
+        sourceSamples: awsSampled({
+          scope: selected.scope,
+          metadata: selected.metadata,
+          table,
+          bucket,
+          db,
+          s3,
+          canContinue: canWork,
         }),
-      canContinue: async () =>
-        canWork() &&
-        rpc.capacity.remainingRequests() > 8 &&
-        (await store.canContinue(owner)),
-    });
+        targetSamples: sampled,
+        maxSteps: 2048, // Replay is RPC-free; time/lease checks remain the primary bound.
+        aggregate,
+        aggregationNext: store.aggregationNext,
+        canContinue,
+        sourceRange: async (nextBlock) => {
+          const row = (
+            await db.send(
+              new GetCommand({
+                TableName: table,
+                Key: {
+                  pk: `scope:${selected.scope.id}`,
+                  sk: rangeKey(nextBlock),
+                },
+                ConsistentRead: true,
+              }),
+            )
+          ).Item;
+          if (!row) throw new Error("Missing retained source archive");
+          const manifest = row as Manifest;
+          return { manifest, bytes: await aggregation.read(manifest) };
+        },
+      });
+      if (result.phase === "staged") {
+        await store.activateOctober(owner);
+        result = { phase: "candidate-activated" };
+      }
+    } else {
+      result = await advanceCandidate({
+        chunk,
+        bounds,
+        chain,
+        archive,
+        sampled,
+        sample: sampledReader(scope, rpc.transport),
+        aggregationNext: store.aggregationNext,
+        aggregate,
+        canContinue,
+      });
+    }
   } catch (e) {
     const code = failureCode(e);
     result = { phase: code === "work-limit" ? "yielded" : "failed", code };

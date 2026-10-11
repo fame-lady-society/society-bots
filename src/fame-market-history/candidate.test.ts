@@ -140,12 +140,14 @@ test("fixed 30-day chunk has only the original two pools", () => {
   ]);
 });
 
-test("reviewed chunks are contiguous, keep the deployed first hash, and stop before October admission", () => {
+test("reviewed chunks are contiguous, keep the deployed first hash, and isolate October admission", () => {
   expect(candidateHash()).toBe(
     "42692d8932e5245782cda6fe0c0401cbd37cd815b58cc7c70552681d63511ded",
   );
   const specs = candidateChunks.map(candidateSpec);
-  expect(specs.map((s) => s.to - s.from)).toEqual([2592000, 2592000, 2592000]);
+  expect(specs.map((s) => s.to - s.from)).toEqual([
+    2592000, 2592000, 2592000, 2592000,
+  ]);
   expect(specs[1].from).toBe(specs[0].to);
   expect(specs[2].from).toBe(specs[1].to);
   expect(new Date(specs[2].to * 1000).toISOString()).toBe(

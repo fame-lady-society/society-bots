@@ -10,6 +10,8 @@ import {
   type Transport,
 } from "viem";
 import { base } from "viem/chains";
+import { poolBorn } from "./pool-lifecycle.ts";
+import { historyScope } from "./model.ts";
 import type { Scope, Header } from "./model.ts";
 import {
   sampledPolicy,
@@ -91,12 +93,26 @@ export function sampledCalls(scope: Scope) {
   }
   return calls;
 }
+/** Read routes only when their direct pool exists; no pre-deployment contract calls. */
+export function sampledCallsAtBlock(scope: Scope, block: number) {
+  const active = historyScope({
+    ...scope.registry,
+    pools: scope.registry.pools.filter(
+      (p) => !scope.pools.some((d) => d.id === p.id) || poolBorn(p.id, block),
+    ),
+  });
+  const policy = sampledPolicy(active);
+  if (policy.sources.some((p) => !poolBorn(p.id, block)))
+    throw new Error("Conversion route predates its deployment");
+  return sampledCalls(active);
+}
 export interface SampledEvidence {
   version: "fame-market-sampled-evidence-v1";
   policyRevision: string;
   timestamp: number;
   block: Header;
   after: Header;
+  sourceEvidence?: { policyRevision: string; sha256: string };
   results: { success: boolean; returnData: Hex }[];
 }
 /** One shared, block-pinned Multicall. Only used by bounded local rehearsal yet. */
@@ -109,13 +125,14 @@ export function sampledReader(scope: Scope, transport: Transport) {
     block: Header,
     after: Header,
   ): Promise<SampledEvidence> => {
+    const selected = sampledCallsAtBlock(scope, block.number);
     const results = await client.readContract({
       address: base.contracts.multicall3.address,
       abi: multicall3Abi,
       functionName: "aggregate3",
       blockNumber: BigInt(block.number),
       args: [
-        calls.map((c) => ({
+        selected.map((c) => ({
           target: c.address,
           allowFailure: true,
           callData: encodeFunctionData(c),
@@ -128,7 +145,10 @@ export function sampledReader(scope: Scope, transport: Transport) {
       timestamp,
       block,
       after,
-      results: [...results],
+      results: calls.map((c) => {
+        const i = selected.findIndex((s) => s.key === c.key);
+        return i < 0 ? { success: false, returnData: "0x" } : results[i];
+      }),
     };
   };
 }
