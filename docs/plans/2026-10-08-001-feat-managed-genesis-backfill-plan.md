@@ -266,3 +266,112 @@ Raw capture, bounded Parquet derivation and bucket publication have separate
 checkpoints; operator start/pause/resume controls do not affect production.
 Deployment and the real AWS 30-day run remain separate proof gates. Later pool
 admission and production promotion are not part of this chunk.
+
+## Next candidate chunks and October admissions — 2026-10-11
+
+The first AWS chunk is complete. Live status verified all four checkpoints at
+`2024-08-12T00:00:00Z`, raw/Parquet next block 18,315,728, and completion true.
+Observed usage was 41,033 RPC requests / 293,193,008 response bytes in 5h58m.
+The final day's private chart returned 288 published prices and candles in each
+currency. This is completion and endpoint evidence, not full-range reconciliation
+or production-promotion approval.
+
+### Chronology and bounded scope
+
+Continue to November 10, 2024 with these contiguous UTC intervals:
+
+| Chunk | Interval (end exclusive) | Direct FAME membership |
+| --- | --- | --- |
+| 2 | August 12–September 11 | Existing Uniswap V2/V3 WETH pools |
+| 3 | September 11–October 11 | Existing Uniswap V2/V3 WETH pools |
+| 4 | October 11–November 10 | Existing pools, then SPX and cbBTC at their creation blocks |
+
+PR #58 (`codex/isolated-genesis-pools`, evidence commit `d8a268d`) already records
+verified identities, receipt/code checks, token decimals, route samples and event
+decoding. It remains open and is not part of the deployed candidate worker.
+Carry that reviewed work forward rather than rediscovering or silently assuming
+it is deployed. Its all-eight-pool scope must not be used unchanged for this phase.
+
+| Admission | Creation block | UTC creation | Conversion |
+| --- | ---: | --- | --- |
+| FAME/SPX | 21,194,336 | 2024-10-17 15:13:39 | SPX/WETH Slipstream; WETH/USDC for USDC |
+| FAME/cbBTC | 21,374,567 | 2024-10-21 19:21:21 | cbBTC/USDC Uniswap V3; USDC/WETH for ETH |
+
+Both quote tokens have eight decimals. Both direct pools are Aerodrome volatile
+pools and require the distinct Aerodrome event decoder from #58. The selected
+SPX/WETH route was created October 2, 2024; cbBTC/USDC September 14, 2024. Their
+existence does not prove a usable price in every bucket: unavailable valuations
+remain explicit while native events are retained.
+
+The next known direct-pool boundary after these chunks is November 19, 2024:
+Equalizer FAME/WETH and FAME/SCALE. Stop November 10 rather than accidentally
+crossing that boundary with incomplete membership. Later BASED FLICK and frxUSD
+admissions remain future chunks. Dates above come from retained repository
+evidence, not new on-chain checks performed on October 11.
+
+### Implementation order
+
+1. Reconcile all 30 completed days through the candidate API in both currencies:
+   8,640 unique timestamps, explicit price/candle gaps, activity identity/totals,
+   retained pagination and midnight seams. Compare the first seven days to the
+   local receipt. Save a machine-readable receipt before reusing that corpus.
+2. Replace the hardcoded singleton job with immutable chunk manifests and a
+   single candidate coordinator. Each manifest freezes interval, source/policy
+   versions, origins, canonical boundary hashes and predecessor. Keep separate
+   raw, Parquet, sampling and publication checkpoints; persist completed jobs.
+   Start/resume cannot overwrite a manifest. An extension is a new job, never an
+   edit to `launch-30d-v1`. Explicitly select the next reviewed chunk; completion
+   does not silently enable unbounded launch-to-present work.
+3. Preserve same-scope cursors when continuing August/September. Existing capture
+   includes the first block at/after August 12 (18,315,727); retain its events for
+   the next bucket and resume raw at 18,315,728. Carry the opening observation
+   across each join. Test that the edge block is neither skipped nor counted twice.
+4. Integrate #58's isolated registry, decimals and Aerodrome decoder, with a
+   four-direct-pool candidate definition and explicit per-pool origins. Native
+   pool membership begins at its creation block, including that block's logs.
+   Before creation, mark the pool not-yet-created rather than missing; do not
+   sample it or its otherwise-unused conversion route. Within its launch bucket,
+   include only post-creation observations, expose partial coverage, and never
+   invent a pre-launch opening price. Deduplicate conversion reads per block.
+5. Treat expanded membership as a new immutable scope/policy generation. Do not
+   mutate the existing two-pool definition or relabel its published pages. Reuse
+   validated raw/sample evidence with provenance; deterministically rederive the
+   earlier pages under lifecycle-aware membership without new chain collection
+   where existing evidence suffices. Candidate reads must expose one coherent
+   history across the transition, with a generation change invalidating old delta
+   cursors. Keep the old candidate generation until the rebuilt one is verified.
+   Prove that pre-admission prices, candles and volumes remain numerically equal.
+6. Rehearse each October creation bucket plus the following 24 hours, using the
+   actual historical sampler and both currency paths. Only then run the October
+   chunk. Capture all direct-pool events, including native unpriced amounts;
+   continue using five-minute state reads for busy conversion pools, not their
+   complete swap streams. Preserve multiple events within the same transaction.
+
+The generation transition in step 5 is a prerequisite for the October chunk,
+not for the same-scope August/September continuation. Do not couple an earlier
+chunk to production activation or a redesign of the public chart.
+
+### Tests, execution and operator boundaries
+
+- Verify resume after every stage, lost commit responses, lease expiry and
+  start/pause/resume across completed/new jobs. Allow only one candidate writer.
+- Verify chunk joins, shared edge-block events, opening state, deterministic
+  replay and duplicate-free event totals. No historical range may be silently
+  replaced with a rolling window.
+- Verify pre-launch exclusion, partial creation buckets, positive/zero FAME
+  inventory, eight-decimal amounts, Aerodrome ABI layouts, route absence and
+  inverse cbBTC conversion. Native volume must survive missing conversions.
+- Test the private API before/after generation replacement: dated pages, first
+  and last days, earliest-history signals, both currencies, activity pagination,
+  stale delta cursors and rollback to the retained candidate generation.
+- Keep the same dedicated candidate stack, bounded invocations and soft usage
+  reporting. No daily cutoff, paid alarms, production pointer updates or public
+  candidate route. Request operator merge/deploy for implementation PRs; perform
+  candidate ingestion only after deployed code and the frozen chunk are verified.
+
+At the measured first-chunk rate, each additional same-scope 30 days is roughly
+six hours, 41k requests and 293 MB received; two such chunks project to about
+12 hours / 82k requests / 586 MB. These are planning estimates, not billing units
+or guarantees. Measure the two admission-day probes before estimating October:
+new direct pools, quote routes and any required generation derivation add work.
+Do not extrapolate the two-pool rate unchanged to the full multi-pool history.
