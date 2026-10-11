@@ -9,6 +9,7 @@ import {
   advanceCandidate,
   prepareCandidate,
   candidateSpec,
+  candidateChunks,
   type CandidateBounds,
 } from "./candidate.ts";
 import { launchScope } from "./local-backfill.ts";
@@ -35,8 +36,16 @@ export async function handler(
       new DynamoDBClient({ maxAttempts: 2 }),
     ),
     s3 = new S3Client({ maxAttempts: 2 });
-  const store = candidateStore(db, table),
-    owner = randomUUID(),
+  const owner = randomUUID();
+  // Never create/queue the next chunk automatically. A paused predecessor blocks
+  // later chunks, and completed jobs remain immutable audit records.
+  let chunk = candidateChunks[0] as (typeof candidateChunks)[number];
+  for (const id of candidateChunks) {
+    const existing = await candidateStore(db, table, Date.now, id).read();
+    chunk = id;
+    if (!existing?.completed) break;
+  }
+  const store = candidateStore(db, table, Date.now, chunk),
     job = await store.acquire(owner);
   if (!job) return { phase: "idle" }; // No SSM or RPC access before explicit start, after pause/completion, or while leased.
   let metrics: RpcMetrics = { requests: 0, responseBytes: 0, methods: {} };
@@ -66,16 +75,21 @@ export async function handler(
     const scope = launchScope(),
       chain = chainReader(scope, rpc.transport, 5000, rpc.capacity);
     const bounds: CandidateBounds =
-      job.bounds ?? (await prepareCandidate(chain));
+      job.bounds ?? (await prepareCandidate(chain, chunk));
     if (!job.bounds) {
-      const metadata: TokenMetadata = JSON.parse(
-        await readFile(
-          new URL("./token-metadata.json", import.meta.url),
-          "utf8",
-        ),
-      );
-      metadata.blockNumber = bounds.launch.number;
-      metadata.blockHash = bounds.launch.hash;
+      const metadata: TokenMetadata =
+        chunk === "launch-30d-v1"
+          ? JSON.parse(
+              await readFile(
+                new URL("./token-metadata.json", import.meta.url),
+                "utf8",
+              ),
+            )
+          : (await activeDataset(table, db)).metadata;
+      if (chunk === "launch-30d-v1") {
+        metadata.blockNumber = bounds.launch.number;
+        metadata.blockHash = bounds.launch.hash;
+      }
       await store.initialize(owner, bounds, metadata);
     }
     const selected = await activeDataset(table, db);
@@ -95,6 +109,7 @@ export async function handler(
     });
     const aggregation = awsAggregation({ table, bucket, db, s3 });
     result = await advanceCandidate({
+      chunk,
       bounds,
       chain,
       archive,
@@ -122,6 +137,7 @@ export async function handler(
       JSON.stringify({
         event: "candidate-backfill",
         runId: owner,
+        chunk,
         ...result,
         metrics,
       }),

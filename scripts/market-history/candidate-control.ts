@@ -6,14 +6,23 @@ import { execFileSync } from "node:child_process";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { candidateStore } from "../../src/fame-market-history/candidate-storage.ts";
+import {
+  candidateChunks,
+  type CandidateChunk,
+} from "../../src/fame-market-history/candidate.ts";
 const [command, profile, query] = process.argv.slice(2);
 if (
   !["start", "pause", "resume", "status", "query"].includes(command) ||
   !profile ||
-  process.argv.length !== (command === "query" ? 5 : 4)
+  (command === "query"
+    ? process.argv.length !== 5
+    : process.argv.length < 4 ||
+      process.argv.length > 5 ||
+      (query !== undefined &&
+        !candidateChunks.includes(query as CandidateChunk)))
 )
   throw new Error(
-    "Usage: candidate-control.ts start|pause|resume|status|query <AWS profile> [query string]",
+    "Usage: candidate-control.ts start|pause|resume|status <AWS profile> [launch-30d-v1|august-30d-v1|september-30d-v1]; query <AWS profile> <query string>",
   );
 const aws = (args: string[]) =>
   JSON.parse(
@@ -63,7 +72,12 @@ const db = DynamoDBDocumentClient.from(
     },
   }),
 );
-const store = candidateStore(db, table);
+const store = candidateStore(
+  db,
+  table,
+  Date.now,
+  (command === "query" ? undefined : query) as CandidateChunk | undefined,
+);
 if (command === "query") {
   const reader = stacks[0].Outputs.find(
     (o: any) => o.OutputKey === "ReaderName",

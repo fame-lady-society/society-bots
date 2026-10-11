@@ -1,6 +1,8 @@
 import {
   advanceCandidate,
   candidateSpec,
+  candidateHash,
+  candidateChunks,
   prepareCandidate,
 } from "./candidate.ts";
 import { launchScope } from "./local-backfill.ts";
@@ -39,6 +41,7 @@ function fixture() {
     p: SampledPublication | null = null,
     samples = 0;
   const evidence = new Map<number, ReturnType<typeof sampledFixture>>();
+  const previousReads: number[] = [];
   const operations: string[] = [];
   const chain: ChainReader = {
     header: async (n) => h(n),
@@ -61,7 +64,10 @@ function fixture() {
     collected: async () => c,
     publication: async () => p,
     read: async (t) => evidence.get(t)!,
-    previous: async (t) => evidence.get(t - 300) ?? null,
+    previous: async (t) => {
+      previousReads.push(t);
+      return evidence.get(t - 300) ?? null;
+    },
     commit: async (cur, e) => {
       evidence.set(e.timestamp, e);
       c = { ...cur, nextTimestamp: e.timestamp + 300, anchor: e.block };
@@ -93,6 +99,7 @@ function fixture() {
   return {
     args,
     operations,
+    previousReads,
     get samples() {
       return samples;
     },
@@ -111,7 +118,17 @@ function fixture() {
         policyRevision: spec.policyRevision,
         anchor: h(end - 1),
       };
-      p = { nextTimestamp: spec.to } as SampledPublication;
+      const e = {
+        ...sampledFixture(spec.to - 300, scope),
+        block: h(end - 1),
+        after: h(end),
+      };
+      evidence.set(e.timestamp, e);
+      p = {
+        nextTimestamp: spec.to,
+        policyRevision: spec.policyRevision,
+        pages: [],
+      } as unknown as SampledPublication;
     },
   };
 }
@@ -121,6 +138,79 @@ test("fixed 30-day chunk has only the original two pools", () => {
     "uniswap-v2-fame-direct",
     "uniswap-v3-weth-fame-30bps",
   ]);
+});
+
+test("reviewed chunks are contiguous, keep the deployed first hash, and stop before October admission", () => {
+  expect(candidateHash()).toBe(
+    "42692d8932e5245782cda6fe0c0401cbd37cd815b58cc7c70552681d63511ded",
+  );
+  const specs = candidateChunks.map(candidateSpec);
+  expect(specs.map((s) => s.to - s.from)).toEqual([2592000, 2592000, 2592000]);
+  expect(specs[1].from).toBe(specs[0].to);
+  expect(specs[2].from).toBe(specs[1].to);
+  expect(new Date(specs[2].to * 1000).toISOString()).toBe(
+    "2024-10-11T00:00:00.000Z",
+  );
+  expect(() => candidateSpec("october" as any)).toThrow(
+    "Unknown candidate chunk",
+  );
+});
+
+test("continuation preserves the opening sample and begins raw capture after the retained edge block", async () => {
+  const f = fixture();
+  f.complete();
+  const ranges: number[] = [],
+    seen: number[] = [];
+  f.args.chain.finalized = async () => h(end + 30 * 43200 + 10);
+  f.args.chain.logs = async (from, to) => {
+    ranges.push(from);
+    return { logs: [], throughBlock: to };
+  };
+  const sample = f.args.sample;
+  f.args.sample = async (t, b, a) => {
+    seen.push(t);
+    return sample(t, b, a);
+  };
+  const nextBounds = await prepareCandidate(f.args.chain, "august-30d-v1");
+  const args = {
+    ...f.args,
+    bounds: nextBounds,
+    chunk: "august-30d-v1" as const,
+    maxSteps: 4,
+  };
+  await advanceCandidate(args);
+  expect(ranges).toEqual([end + 1]);
+  expect(seen).toEqual([spec.to]);
+  expect(f.cursor?.startTimestamp).toBe(spec.from);
+  expect(f.publication?.nextTimestamp).toBe(spec.to + 300);
+  expect(f.previousReads).toEqual([spec.to]);
+  await advanceCandidate({ ...args, maxSteps: 2 });
+  expect(seen).toEqual([spec.to, spec.to + 300]);
+});
+
+test("continuation refuses missing predecessor samples without initializing a replacement cursor", async () => {
+  const f = fixture();
+  f.args.chain.finalized = async () => h(end + 30 * 43200 + 10);
+  const nextBounds = await prepareCandidate(f.args.chain, "august-30d-v1");
+  await expect(
+    advanceCandidate({ ...f.args, bounds: nextBounds, chunk: "august-30d-v1" }),
+  ).rejects.toThrow("Missing predecessor samples");
+  expect(f.cursor).toBeNull();
+});
+
+test("continuation refuses a missing predecessor publication before collecting more blocks", async () => {
+  const f = fixture();
+  f.complete();
+  f.args.chain.finalized = async () => h(end + 30 * 43200 + 10);
+  f.args.sampled.publication = async () => null;
+  await expect(
+    advanceCandidate({
+      ...f.args,
+      bounds: await prepareCandidate(f.args.chain, "august-30d-v1"),
+      chunk: "august-30d-v1",
+    }),
+  ).rejects.toThrow("Missing predecessor publication");
+  expect(f.operations).toEqual([]);
 });
 test("preparation resolves the exclusive boundary from bracketed header timestamps", async () => {
   const f = fixture();
