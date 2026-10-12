@@ -5,10 +5,12 @@ import {
 } from "./dated-publication.ts";
 import type { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { HistoryError } from "./api.ts";
+import { admissionOrigins } from "./pool-lifecycle.ts";
 import type { Scope } from "./model.ts";
 import { sampledPolicy, type Currency } from "./sampled-market.ts";
 import { parseSampledRequest } from "./sampled-api.ts";
-import { sampledReader } from "./sampled-reader.ts";
+import { historyReader } from "./history-reader.ts";
+import type { HistorySegment } from "./dataset.ts";
 import {
   validateSampledPublication,
   type SampledPublication,
@@ -38,7 +40,7 @@ const reset = (): never => {
 const encode = (c: Cursor) =>
   Buffer.from(JSON.stringify(c)).toString("base64url");
 function decode(raw: string): Cursor {
-  if (raw.length > 1024 || !/^[A-Za-z0-9_-]+$/.test(raw))
+  if (raw.length > 8192 || !/^[A-Za-z0-9_-]+$/.test(raw))
     throw new HistoryError(400, "invalid-query");
   try {
     const c = JSON.parse(Buffer.from(raw, "base64url").toString());
@@ -101,6 +103,26 @@ export function parseChartRequest(
 export function projectChartBucket(b: SampledBucket, series: string) {
   const p =
     series === "market" ? null : b.series.find((p) => p.poolId === series);
+  if (
+    !p &&
+    (b.notYetCreatedPoolIds?.includes(series) ||
+      (admissionOrigins[series] &&
+        b.timestamp + 300 <= admissionOrigins[series].timestamp))
+  )
+    return {
+      timestamp: b.timestamp,
+      publicationStatus: "published" as const,
+      reason: "not-yet-created" as const,
+      price: null,
+      candle: null,
+      volume: "0",
+      inventory: "0",
+      volumeStatus: "complete" as const,
+      inventoryStatus: "complete" as const,
+      tradeCount: 0,
+      eventCoverage: "complete",
+      marketVolume: b.totals.volume,
+    };
   if (series !== "market" && !p) throw new Error("Missing chart pool");
   return {
     timestamp: b.timestamp,
@@ -166,9 +188,16 @@ export async function readChart(
   request: ChartRequest,
   now = Date.now,
   pinned?: ReadPublication,
+  history: HistorySegment[] = [],
 ) {
-  const revision = sampledPolicy(scope).revision,
-    reader = sampledReader(db, table, revision, now);
+  const reader = historyReader(
+      db,
+      table,
+      sampledPolicy(scope).revision,
+      now,
+      history,
+    ),
+    revision = reader.revision;
   const c = request.cursor ? decode(request.cursor) : null;
   if (
     c &&

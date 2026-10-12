@@ -10,6 +10,8 @@ import {
   type Transport,
 } from "viem";
 import { base } from "viem/chains";
+import { poolBorn } from "./pool-lifecycle.ts";
+import { historyScope } from "./model.ts";
 import type { Scope, Header } from "./model.ts";
 import {
   sampledPolicy,
@@ -52,6 +54,7 @@ export function sampledCalls(scope: Scope) {
   for (const p of policy.sources) {
     if (
       ![
+        "AerodromeV2",
         "UniswapV2",
         "Solidly",
         "UniswapV3",
@@ -69,7 +72,7 @@ export function sampledCalls(scope: Scope) {
       if (!p.poolAddress) throw new Error("Missing snapshot address");
       add(`${p.id}:token0`, p.poolAddress, "token0");
       add(`${p.id}:token1`, p.poolAddress, "token1");
-      if (["Solidly", "UniswapV2"].includes(p.venueFamily))
+      if (["Solidly", "UniswapV2", "AerodromeV2"].includes(p.venueFamily))
         add(`${p.id}:state`, p.poolAddress, "getReserves");
       else {
         add(
@@ -90,12 +93,26 @@ export function sampledCalls(scope: Scope) {
   }
   return calls;
 }
+/** Read routes only when their direct pool exists; no pre-deployment contract calls. */
+export function sampledCallsAtBlock(scope: Scope, block: number) {
+  const active = historyScope({
+    ...scope.registry,
+    pools: scope.registry.pools.filter(
+      (p) => !scope.pools.some((d) => d.id === p.id) || poolBorn(p.id, block),
+    ),
+  });
+  const policy = sampledPolicy(active);
+  if (policy.sources.some((p) => !poolBorn(p.id, block)))
+    throw new Error("Conversion route predates its deployment");
+  return sampledCalls(active);
+}
 export interface SampledEvidence {
   version: "fame-market-sampled-evidence-v1";
   policyRevision: string;
   timestamp: number;
   block: Header;
   after: Header;
+  sourceEvidence?: { policyRevision: string; sha256: string };
   results: { success: boolean; returnData: Hex }[];
 }
 /** One shared, block-pinned Multicall. Only used by bounded local rehearsal yet. */
@@ -108,13 +125,14 @@ export function sampledReader(scope: Scope, transport: Transport) {
     block: Header,
     after: Header,
   ): Promise<SampledEvidence> => {
+    const selected = sampledCallsAtBlock(scope, block.number);
     const results = await client.readContract({
       address: base.contracts.multicall3.address,
       abi: multicall3Abi,
       functionName: "aggregate3",
       blockNumber: BigInt(block.number),
       args: [
-        calls.map((c) => ({
+        selected.map((c) => ({
           target: c.address,
           allowFailure: true,
           callData: encodeFunctionData(c),
@@ -127,7 +145,10 @@ export function sampledReader(scope: Scope, transport: Transport) {
       timestamp,
       block,
       after,
-      results: [...results],
+      results: calls.map((c) => {
+        const i = selected.findIndex((s) => s.key === c.key);
+        return i < 0 ? { success: false, returnData: "0x" } : results[i];
+      }),
     };
   };
 }
@@ -160,9 +181,16 @@ export function deriveSampledObservation(
     if (d !== null) {
       if (typeof d !== "number" || !Number.isInteger(d) || d < 0 || d > 36)
         throw new Error("Invalid sampled decimals");
-      // Current reviewed assets; cbBTC onboarding must add reviewed metadata.
+      // Reviewed eight-decimal quote assets; never treat cbBTC or SPX as 18 decimals.
       const expected =
-        token === "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913" ? 6 : 18;
+        token === "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+          ? 6
+          : [
+                "0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf",
+                "0x50da645f148798f68ef2d7db7c1cb22a6819bb2c",
+              ].includes(token)
+            ? 8
+            : 18;
       if (d !== expected) throw new Error("Unreviewed sampled token decimals");
       decimals[token] = d;
     }
@@ -188,7 +216,7 @@ export function deriveSampledObservation(
       d0 !== undefined &&
       d1 !== undefined
     ) {
-      if (["Solidly", "UniswapV2"].includes(p.venueFamily)) {
+      if (["Solidly", "UniswapV2", "AerodromeV2"].includes(p.venueFamily)) {
         const x = BigInt(state[0]) * 10n ** BigInt(d1),
           y = BigInt(state[1]) * 10n ** BigInt(d0);
         if (x > 0n && y > 0n)

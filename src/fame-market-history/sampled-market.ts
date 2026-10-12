@@ -1,3 +1,4 @@
+import { admissionOrigins, poolBorn } from "./pool-lifecycle.ts";
 import type { NativeActivityEvent } from "./activity-events.ts";
 import {
   parse,
@@ -25,6 +26,14 @@ export {
   type Fraction,
 } from "./price-math.ts";
 const one: Fraction = { numerator: "1", denominator: "1" };
+const sampledRoutes: Record<string, string[]> = {
+  ...ROUTES,
+  "0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf": [
+    "uniswap-v3-usdc-cbbtc-5bps",
+    "uniswap-v3-usdc-weth-5bps",
+  ],
+  "0x50da645f148798f68ef2d7db7c1cb22a6819bb2c": ["slipstream-spx-weth"],
+};
 const ethUsdcPool = "uniswap-v3-usdc-weth-5bps";
 export function sampledPolicy(scope: Scope) {
   const routes: Record<string, Record<Currency, string[]>> = {};
@@ -34,7 +43,7 @@ export function sampledPolicy(scope: Scope) {
     let eth: string[];
     if (token === USDC) eth = [ethUsdcPool];
     else {
-      const known = ROUTES[token];
+      const known = sampledRoutes[token];
       if (!known) throw new Error(`Unreviewed quote token for ${direct.id}`);
       eth = [...known];
     }
@@ -80,7 +89,20 @@ export function sampledPolicy(scope: Scope) {
     return pool;
   });
   const revision = digest(
-    JSON.stringify({ method: "bucket-end-spot-v1", sources, routes }),
+    JSON.stringify({
+      method: "bucket-end-spot-v1",
+      sources,
+      routes,
+      ...(sources.some((p) => admissionOrigins[p.id])
+        ? {
+            origins: Object.fromEntries(
+              sources
+                .filter((p) => admissionOrigins[p.id])
+                .map((p) => [p.id, admissionOrigins[p.id]]),
+            ),
+          }
+        : {}),
+    }),
   );
   return { revision, routes, sources };
 }
@@ -198,141 +220,164 @@ export function sampledMarketBucket(
         )
       : null,
   });
-  const rows = scope.pools.map((pool) => {
-    const a = activities.find((a) => a.poolId === pool.id);
-    if (a) {
-      if (!["complete", "partial", "missing"].includes(a.coverage))
-        throw new Error("Invalid coverage");
-      atoms(a.baseVolumeAtoms, 0);
-      atoms(a.quoteVolumeAtoms, 0);
-      integer(a.tradeCount, "trade count");
-      a.transactionHashes.forEach(hash);
-      if (
-        new Set(a.transactionHashes).size !== a.transactionHashes.length ||
-        a.transactionHashes.length > a.tradeCount ||
-        (a.tradeCount > 0 && !a.transactionHashes.length)
-      )
-        throw new Error("Invalid transaction counts");
-      if (
-        a.coverage === "missing" &&
-        (a.tradeCount ||
-          a.baseVolumeAtoms !== "0" ||
-          a.quoteVolumeAtoms !== "0")
-      )
-        throw new Error("Missing coverage cannot contain activity");
-    }
-    const quote = pool.token0 === FAME_ADDRESS ? pool.token1 : pool.token0;
-    const conversion = conversionFor(policy, pool, currency, observation);
-    const r = observation?.rates[pool.id];
-    const mark = r ? (pool.token0 === FAME_ADDRESS ? r : invert(r)) : null;
-    const price = mark && conversion ? multiply(mark, conversion) : null;
-    const amount = a && a.coverage !== "missing" ? a : null;
-    const qd = observation?.decimals[quote];
-    // Identity routes still need reviewed quote decimals; ETH and USDC are fixed.
-    const quoteDecimals =
-      qd ?? (quote === WETH ? 18 : quote === USDC ? 6 : undefined);
-    const volume =
-      amount && conversion && quoteDecimals !== undefined
-        ? multiply(atoms(amount.quoteVolumeAtoms, quoteDecimals), conversion)
-        : null;
-    let candle: {
-      open: string;
-      high: string;
-      low: string;
-      close: string;
-      coverage: "complete" | "partial" | "reference-only";
-    } | null = null;
-    if (a?.coverage === "complete" && !a.spotInvalid && mark && conversion) {
-      if (!a.spot && a.tradeCount === 0) {
-        const value = decimal(multiply(mark, conversion));
-        candle = {
-          open: value,
-          high: value,
-          low: value,
-          close: value,
-          coverage: "reference-only",
-        };
-      } else if (a.spot && a.spot.count >= a.tradeCount) {
-        const before = previous?.rates[pool.id];
-        const opening = before
-          ? pool.token0 === FAME_ADDRESS
-            ? before
-            : invert(before)
-          : null;
-        let range = a.spot;
-        if (opening) {
-          range = extend(
-            extend(extend(extend(undefined, opening), a.spot.high), a.spot.low),
-            a.spot.close,
-          );
-          range.open = opening;
-        }
-        range = extend(range, mark);
-        candle = {
-          open: decimal(multiply(range.open, conversion)),
-          high: decimal(multiply(range.high, conversion)),
-          low: decimal(multiply(range.low, conversion)),
-          close: decimal(multiply(range.close, conversion)),
-          coverage: opening ? "complete" : "partial",
-        };
+  const notYetCreatedPoolIds = scope.pools
+    .filter(
+      (p) =>
+        admissionOrigins[p.id] &&
+        (observation
+          ? !poolBorn(p.id, observation.block.number)
+          : admissionOrigins[p.id].timestamp >= timestamp + 300),
+    )
+    .map((p) => p.id);
+  const rows = scope.pools
+    .filter((p) => !notYetCreatedPoolIds.includes(p.id))
+    .map((pool) => {
+      const a = activities.find((a) => a.poolId === pool.id);
+      if (a) {
+        if (!["complete", "partial", "missing"].includes(a.coverage))
+          throw new Error("Invalid coverage");
+        atoms(a.baseVolumeAtoms, 0);
+        atoms(a.quoteVolumeAtoms, 0);
+        integer(a.tradeCount, "trade count");
+        a.transactionHashes.forEach(hash);
+        if (
+          new Set(a.transactionHashes).size !== a.transactionHashes.length ||
+          a.transactionHashes.length > a.tradeCount ||
+          (a.tradeCount > 0 && !a.transactionHashes.length)
+        )
+          throw new Error("Invalid transaction counts");
+        if (
+          a.coverage === "missing" &&
+          (a.tradeCount ||
+            a.baseVolumeAtoms !== "0" ||
+            a.quoteVolumeAtoms !== "0")
+        )
+          throw new Error("Missing coverage cannot contain activity");
       }
-    }
-    const b = observation?.balances[pool.id];
-    const fd = observation?.decimals[FAME_ADDRESS];
-    const inventory =
-      b &&
-      price &&
-      conversion &&
-      fd !== undefined &&
-      quoteDecimals !== undefined
-        ? add(
-            multiply(
-              atoms(pool.token0 === FAME_ADDRESS ? b.balance0 : b.balance1, fd),
-              price,
-            ),
-            multiply(
-              atoms(
-                pool.token0 === FAME_ADDRESS ? b.balance1 : b.balance0,
-                quoteDecimals,
+      const quote = pool.token0 === FAME_ADDRESS ? pool.token1 : pool.token0;
+      const conversion = conversionFor(policy, pool, currency, observation);
+      const r = observation?.rates[pool.id];
+      const mark = r ? (pool.token0 === FAME_ADDRESS ? r : invert(r)) : null;
+      const price = mark && conversion ? multiply(mark, conversion) : null;
+      const amount = a && a.coverage !== "missing" ? a : null;
+      const qd = observation?.decimals[quote];
+      // Identity routes still need reviewed quote decimals; ETH and USDC are fixed.
+      const quoteDecimals =
+        qd ?? (quote === WETH ? 18 : quote === USDC ? 6 : undefined);
+      const volume =
+        amount && conversion && quoteDecimals !== undefined
+          ? multiply(atoms(amount.quoteVolumeAtoms, quoteDecimals), conversion)
+          : null;
+      let candle: {
+        open: string;
+        high: string;
+        low: string;
+        close: string;
+        coverage: "complete" | "partial" | "reference-only";
+      } | null = null;
+      if (a?.coverage === "complete" && !a.spotInvalid && mark && conversion) {
+        if (!a.spot && a.tradeCount === 0) {
+          const value = decimal(multiply(mark, conversion));
+          candle = {
+            open: value,
+            high: value,
+            low: value,
+            close: value,
+            coverage: "reference-only",
+          };
+        } else if (a.spot && a.spot.count >= a.tradeCount) {
+          const before = previous?.rates[pool.id];
+          const opening = before
+            ? pool.token0 === FAME_ADDRESS
+              ? before
+              : invert(before)
+            : null;
+          let range = a.spot;
+          if (opening) {
+            range = extend(
+              extend(
+                extend(extend(undefined, opening), a.spot.high),
+                a.spot.low,
               ),
-              conversion,
-            ),
-          )
-        : null;
-    return {
-      poolId: pool.id,
-      route: policy.routes[pool.id][currency],
-      eventCoverage: a?.coverage ?? "missing",
-      candle,
-      price,
-      volume,
-      inventory,
-      baseVolumeAtoms: amount?.baseVolumeAtoms ?? null,
-      quoteVolumeAtoms: amount?.quoteVolumeAtoms ?? null,
-      tradeCount: amount?.tradeCount ?? null,
-      transactionHashes: amount?.transactionHashes ?? [],
-      blendInput: {
-        poolId: pool.id,
-        weight: previous?.balances[pool.id]
-          ? BigInt(
-              pool.token0 === FAME_ADDRESS
-                ? previous.balances[pool.id]!.balance0
-                : previous.balances[pool.id]!.balance1,
+              a.spot.close,
+            );
+            range.open = opening;
+          }
+          range = extend(range, mark);
+          candle = {
+            open: decimal(multiply(range.open, conversion)),
+            high: decimal(multiply(range.high, conversion)),
+            low: decimal(multiply(range.low, conversion)),
+            close: decimal(multiply(range.close, conversion)),
+            coverage: opening ? "complete" : "partial",
+          };
+        }
+      }
+      const b = observation?.balances[pool.id];
+      const fd = observation?.decimals[FAME_ADDRESS];
+      const inventory =
+        b &&
+        price &&
+        conversion &&
+        fd !== undefined &&
+        quoteDecimals !== undefined
+          ? add(
+              multiply(
+                atoms(
+                  pool.token0 === FAME_ADDRESS ? b.balance0 : b.balance1,
+                  fd,
+                ),
+                price,
+              ),
+              multiply(
+                atoms(
+                  pool.token0 === FAME_ADDRESS ? b.balance1 : b.balance0,
+                  quoteDecimals,
+                ),
+                conversion,
+              ),
             )
-          : null,
-        opening: previous?.rates[pool.id]
-          ? pool.token0 === FAME_ADDRESS
-            ? previous.rates[pool.id]!
-            : invert(previous.rates[pool.id]!)
-          : null,
-        closing: mark,
-        conversion,
-        activity: a,
-      },
-    };
-  });
+          : null;
+      return {
+        poolId: pool.id,
+        route: policy.routes[pool.id][currency],
+        eventCoverage: a?.coverage ?? "missing",
+        candle,
+        price,
+        volume,
+        inventory,
+        baseVolumeAtoms: amount?.baseVolumeAtoms ?? null,
+        quoteVolumeAtoms: amount?.quoteVolumeAtoms ?? null,
+        tradeCount: amount?.tradeCount ?? null,
+        transactionHashes: amount?.transactionHashes ?? [],
+        blendInput: {
+          poolId: pool.id,
+          weight:
+            admissionOrigins[pool.id]?.timestamp >= timestamp
+              ? 0n
+              : previous?.balances[pool.id]
+                ? BigInt(
+                    pool.token0 === FAME_ADDRESS
+                      ? previous.balances[pool.id]!.balance0
+                      : previous.balances[pool.id]!.balance1,
+                  )
+                : null,
+          opening: previous?.rates[pool.id]
+            ? pool.token0 === FAME_ADDRESS
+              ? previous.rates[pool.id]!
+              : invert(previous.rates[pool.id]!)
+            : null,
+          closing: mark,
+          conversion,
+          activity: a,
+        },
+      };
+    });
   const complete = rows.every((r) => r.eventCoverage === "complete");
   return {
+    ...(scope.pools.some((p) => admissionOrigins[p.id])
+      ? { notYetCreatedPoolIds }
+      : {}),
     version: "fame-market-api-v2" as const,
     currency,
     timestamp,

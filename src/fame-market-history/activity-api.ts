@@ -7,7 +7,8 @@ import {
 import { HistoryError } from "./api.ts";
 import { digest, type Scope } from "./model.ts";
 import { sampledPolicy, type Currency } from "./sampled-market.ts";
-import { sampledReader } from "./sampled-reader.ts";
+import { historyReader } from "./history-reader.ts";
+import type { HistorySegment } from "./dataset.ts";
 import { validateSampledPublication } from "./sampled-live.ts";
 import { parseSampledRequest } from "./sampled-api.ts";
 import {
@@ -35,7 +36,7 @@ export const sizeAtoms = (s: string) => {
   return BigInt(w) * 10n ** 18n + BigInt(f.padEnd(18, "0"));
 };
 function decodeCursor(raw: string) {
-  if (raw.length > 1500 || !/^[A-Za-z0-9_-]+$/.test(raw))
+  if (raw.length > 8192 || !/^[A-Za-z0-9_-]+$/.test(raw))
     throw new HistoryError(400, "invalid-query");
   try {
     const c = JSON.parse(Buffer.from(raw, "base64url").toString());
@@ -129,9 +130,16 @@ export async function readActivity(
   scope: Scope,
   request: ActivityRequest,
   now = Date.now,
+  history: HistorySegment[] = [],
 ) {
-  const revision = sampledPolicy(scope).revision,
-    reader = sampledReader(db, table, revision, now),
+  const reader = historyReader(
+      db,
+      table,
+      sampledPolicy(scope).revision,
+      now,
+      history,
+    ),
+    revision = reader.revision,
     started = now();
   const { cursor: raw, ...filters } = request,
     query = digest(JSON.stringify(filters)),
@@ -175,7 +183,7 @@ export async function readActivity(
   };
   // A bounded metadata batch covers quiet/sparse filters without serial per-bucket reads.
   const batch = refs.slice(page, page + 16),
-    keys = batch.map((r) => activityKey(revision, r));
+    keys = batch.map((r) => activityKey(reader.revisionAt(r.timestamp), r));
   const indexes = new Map<string, ActivityIndex>();
   let pending = keys;
   for (let attempt = 0; pending.length; attempt++) {
@@ -220,7 +228,9 @@ export async function readActivity(
     maximum = request.max === undefined ? null : sizeAtoms(request.max);
   const stopPage = page + batch.length;
   outer: for (; page < stopPage; page++, chunk = 0, rowOffset = 0) {
-    const index = indexes.get(activityKey(revision, refs[page]).sk);
+    const index = indexes.get(
+      activityKey(reader.revisionAt(refs[page].timestamp), refs[page]).sk,
+    );
     if (!index) {
       gaps.push({
         timestamp: refs[page].timestamp,
@@ -248,7 +258,10 @@ export async function readActivity(
       const result = await db.send(
         new GetCommand({
           TableName: table,
-          Key: activityChunkKey(revision, c.sha256),
+          Key: activityChunkKey(
+            reader.revisionAt(refs[page].timestamp),
+            c.sha256,
+          ),
           ConsistentRead: true,
         }),
         { abortSignal: signal() },
@@ -290,7 +303,9 @@ export async function readActivity(
   }
   // Normalize an exhausted chunk/bucket without fetching it again on the next page.
   if (page < stopPage) {
-    const index = indexes.get(activityKey(revision, refs[page]).sk);
+    const index = indexes.get(
+      activityKey(reader.revisionAt(refs[page].timestamp), refs[page]).sk,
+    );
     if (!index) throw new Error("Missing current activity index");
     if (
       chunk < index.chunks.length &&

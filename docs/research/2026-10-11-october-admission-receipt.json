@@ -1,0 +1,60 @@
+{
+  "receipts": [
+    {
+      "id": "aerodrome-spx-fame",
+      "from": 1729177800,
+      "to": 1729264200,
+      "priced": {
+        "ETH": 288,
+        "USDC": 288
+      },
+      "candles": {
+        "ETH": 288,
+        "USDC": 288
+      },
+      "trades": 95,
+      "actions": 96,
+      "rawRanges": 22,
+      "native": {
+        "eventCount": 535,
+        "tradeCount": 285,
+        "parquetBytes": 78393,
+        "rebuildMatches": true
+      }
+    },
+    {
+      "id": "aerodrome-cbbtc-fame",
+      "from": 1729538400,
+      "to": 1729624800,
+      "priced": {
+        "ETH": 288,
+        "USDC": 288
+      },
+      "candles": {
+        "ETH": 288,
+        "USDC": 288
+      },
+      "trades": 7,
+      "actions": 9,
+      "rawRanges": 22,
+      "native": {
+        "eventCount": 314,
+        "tradeCount": 156,
+        "parquetBytes": 50854,
+        "rebuildMatches": true
+      }
+    }
+  ],
+  "metrics": {
+    "requests": 2999,
+    "responseBytes": 32882083,
+    "methods": {
+      "eth_getBlockByNumber": 2333,
+      "eth_chainId": 44,
+      "eth_getLogs": 44,
+      "eth_call": 578
+    }
+  },
+  "productionWrites": 0,
+  "note": "Read-only local probes. Pool trades/actions are for the admitted pool; native counts include all four direct pools. Native Parquet proof used the retained archives, no additional RPC."
+}

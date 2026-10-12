@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, GetCommand } from "@aws-sdk/lib-dynamodb";
 import { S3Client } from "@aws-sdk/client-s3";
 import { SSMClient, GetParameterCommand } from "@aws-sdk/client-ssm";
 import { candidateStore } from "./candidate-storage.ts";
@@ -10,6 +10,7 @@ import {
   prepareCandidate,
   candidateSpec,
   candidateChunks,
+  candidateScope,
   type CandidateBounds,
 } from "./candidate.ts";
 import { launchScope } from "./local-backfill.ts";
@@ -20,7 +21,9 @@ import { sampledReader } from "./sampled-rpc.ts";
 import { awsAggregation } from "./worker-storage.ts";
 import { aggregateNext } from "./worker.ts";
 import type { TokenMetadata } from "./decode.ts";
-import { activeDataset } from "./dataset.ts";
+import { octoberMetadata } from "./october-scope.ts";
+import { reusePreAdmissionSample } from "./admission-opening.ts";
+import { activeDataset, decodeDataset, datasetKey } from "./dataset.ts";
 import { failureCode } from "./failure.ts";
 
 export async function handler(
@@ -72,12 +75,12 @@ export async function handler(
       },
     });
     metrics = rpc.metrics;
-    const scope = launchScope(),
+    const scope = candidateScope(chunk),
       chain = chainReader(scope, rpc.transport, 5000, rpc.capacity);
     const bounds: CandidateBounds =
       job.bounds ?? (await prepareCandidate(chain, chunk));
     if (!job.bounds) {
-      const metadata: TokenMetadata =
+      let metadata: TokenMetadata =
         chunk === "launch-30d-v1"
           ? JSON.parse(
               await readFile(
@@ -90,14 +93,35 @@ export async function handler(
         metadata.blockNumber = bounds.launch.number;
         metadata.blockHash = bounds.launch.hash;
       }
+      if (chunk === "october-30d-v1") metadata = octoberMetadata(metadata);
       await store.initialize(owner, bounds, metadata);
     }
     const selected = await activeDataset(table, db);
-    if (selected.scope.id !== scope.id)
+    const staging =
+      chunk === "october-30d-v1" && selected.scope.id === launchScope().id
+        ? { sourceScopeId: selected.scope.id, targetScopeId: scope.id }
+        : undefined;
+    if (selected.scope.id !== scope.id && !staging)
       throw new Error("Candidate active scope changed");
-    const metadata = selected.metadata;
+    const metadata = staging
+      ? decodeDataset(
+          (
+            await db.send(
+              new GetCommand({
+                TableName: table,
+                Key: datasetKey(scope.id),
+                ConsistentRead: true,
+              }),
+            )
+          ).Item!,
+        ).metadata
+      : selected.metadata;
     const canWork = () => context.getRemainingTimeInMillis() > 40000;
-    const archive = awsArchive({ table, bucket, db, s3 });
+    const canContinue = async () =>
+      canWork() &&
+      rpc.capacity.remainingRequests() > 8 &&
+      (await store.canContinue(owner));
+    const archive = awsArchive({ table, bucket, db, s3, staging });
     const sampled = awsSampled({
       scope,
       table,
@@ -107,27 +131,64 @@ export async function handler(
       s3,
       canContinue: canWork,
     });
-    const aggregation = awsAggregation({ table, bucket, db, s3 });
-    result = await advanceCandidate({
-      chunk,
-      bounds,
-      chain,
-      archive,
-      sampled,
-      sample: sampledReader(scope, rpc.transport),
-      aggregationNext: store.aggregationNext,
-      aggregate: () =>
-        aggregateNext({
-          scope,
-          startBlock: candidateSpec().startBlock,
-          metadata,
-          store: aggregation,
-        }),
-      canContinue: async () =>
-        canWork() &&
-        rpc.capacity.remainingRequests() > 8 &&
-        (await store.canContinue(owner)),
-    });
+    const aggregation = awsAggregation({ table, bucket, db, s3, staging });
+    const aggregate = () =>
+      aggregateNext({
+        scope,
+        startBlock: bounds.captureStart?.number ?? candidateSpec().startBlock,
+        metadata,
+        store: aggregation,
+      });
+    if (staging) {
+      const previous = await candidateStore(
+        db,
+        table,
+        Date.now,
+        "september-30d-v1",
+      ).read();
+      if (!previous?.completed || !previous.bounds)
+        throw new Error("Incomplete staging source");
+      if (
+        !bounds.captureStart ||
+        bounds.captureStart.hash !== previous.bounds.endBefore.hash
+      )
+        throw new Error("Admission source boundary changed");
+      const sourceSamples = awsSampled({
+        scope: selected.scope,
+        metadata: selected.metadata,
+        table,
+        bucket,
+        db,
+        s3,
+        canContinue: canWork,
+      });
+      const opening = await sourceSamples.read(candidateSpec(chunk).from - 300);
+      const mapped = reusePreAdmissionSample(selected.scope, scope, opening);
+      await sampled.cursor({
+        startTimestamp: candidateSpec(chunk).from,
+        nextTimestamp: candidateSpec(chunk).from,
+        policyRevision: candidateSpec(chunk).policyRevision,
+        anchor: bounds.captureStart,
+      });
+      await sampled.seedOpening(mapped);
+      if (!(await canContinue())) result = { phase: "yielded" };
+      else {
+        await store.activateOctober(owner);
+        result = { phase: "candidate-activated" };
+      }
+    } else {
+      result = await advanceCandidate({
+        chunk,
+        bounds,
+        chain,
+        archive,
+        sampled,
+        sample: sampledReader(scope, rpc.transport),
+        aggregationNext: store.aggregationNext,
+        aggregate,
+        canContinue,
+      });
+    }
   } catch (e) {
     const code = failureCode(e);
     result = { phase: code === "work-limit" ? "yielded" : "failed", code };

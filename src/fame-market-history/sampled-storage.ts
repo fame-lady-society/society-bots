@@ -82,6 +82,7 @@ export function awsSampled({
   db?: DynamoDBDocumentClient;
   s3?: S3Client;
 }): SampledStore & {
+  seedOpening(evidence: SampledEvidence): Promise<void>;
   indexActivity(
     evidence: SampledEvidence,
     buckets: SampledBucket[],
@@ -343,6 +344,52 @@ export function awsSampled({
       const c = await collected();
       if (!c) throw new Error("Missing sampled cursor");
       return c;
+    },
+    seedOpening: async (e) => {
+      const cursor = await collected();
+      if (
+        !cursor ||
+        cursor.nextTimestamp !== cursor.startTimestamp ||
+        e.timestamp !== cursor.startTimestamp - 300 ||
+        e.policyRevision !== revision ||
+        e.block.hash !== cursor.anchor.hash
+      )
+        throw new Error("Invalid admission opening observation");
+      const { key, sha, bytes } = await archiveEvidence(e);
+      await db.send(
+        new TransactWriteCommand({
+          TransactItems: [
+            {
+              ConditionCheck: {
+                TableName: table,
+                Key: sampledKey(revision, "collected"),
+                ConditionExpression:
+                  "nextTimestamp = :start AND startTimestamp = :start AND anchor.#hash = :hash",
+                ExpressionAttributeNames: { "#hash": "hash" },
+                ExpressionAttributeValues: {
+                  ":start": cursor.startTimestamp,
+                  ":hash": e.block.hash,
+                },
+              },
+            },
+            {
+              Put: {
+                TableName: table,
+                Item: {
+                  ...sampledKey(revision, `observation:${e.timestamp}`),
+                  timestamp: e.timestamp,
+                  key,
+                  sha256: sha,
+                  bytes: bytes.length,
+                },
+                ConditionExpression:
+                  "attribute_not_exists(pk) OR sha256 = :sha",
+                ExpressionAttributeValues: { ":sha": sha },
+              },
+            },
+          ],
+        }),
+      );
     },
     commit: async (cursor, e) => {
       if (e.timestamp !== cursor.nextTimestamp || e.policyRevision !== revision)

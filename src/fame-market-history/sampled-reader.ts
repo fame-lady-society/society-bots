@@ -29,6 +29,7 @@ export function sampledReader(
   table: string,
   revision: string,
   now = Date.now,
+  options?: { emptyFrom: number; forceWindow: true },
 ) {
   const deadline = now() + 6500;
   const signal = () => {
@@ -82,20 +83,38 @@ export function sampledReader(
         throw new HistoryError(400, "invalid-query");
     }
     const liveRow = sources ? null : await get("published");
-    if (!sources && !liveRow)
+    if (!sources && !liveRow && !options)
       throw new HistoryError(503, "sampled-history-not-ready");
     const live = liveRow
       ? validateSampledPublication(liveRow as SampledPublication, revision)
       : null;
-    if (live && from >= live.startTimestamp) return live;
-    let horizon = live?.nextTimestamp ?? to;
+    if (!options && live && from >= live.startTimestamp) return live;
+    let horizon =
+      live?.nextTimestamp ??
+      (sources?.some((s) => s.key === "published" && s.generation === null) ||
+      !sources
+        ? (options?.emptyFrom ?? to)
+        : to);
     const selected: WindowSource[] = [];
     const refs = new Map<number, SampledPageRef>();
     const keys = sources?.map((s) => s.key) ?? [
       ...dayKeys,
-      ...(live && to > live.startTimestamp ? ["published"] : []),
+      ...((live && to > live.startTimestamp) || (!live && options)
+        ? ["published"]
+        : []),
     ];
     for (const key of keys) {
+      // A forced composite window still needs only the live manifest when it
+      // contains the entire request. Pin unused day sources as absent.
+      if (
+        !sources &&
+        live &&
+        from >= live.startTimestamp &&
+        key !== "published"
+      ) {
+        selected.push({ key, generation: null });
+        continue;
+      }
       const pinned = sources?.find((s) => s.key === key);
       if (pinned?.generation === null) {
         selected.push(pinned);

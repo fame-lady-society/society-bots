@@ -1,4 +1,5 @@
-/** Reviewed same-scope candidate chunks. Promotion and October admission are absent. */
+/** Reviewed candidate chunks. Production promotion is deliberately absent. */
+import { octoberScope } from "./october-scope.ts";
 import { DECODER_VERSION } from "./decode.ts";
 import type { Header } from "./model.ts";
 import { digest } from "./model.ts";
@@ -17,18 +18,24 @@ export const candidateChunks = [
   "launch-30d-v1",
   "august-30d-v1",
   "september-30d-v1",
+  "october-30d-v1",
 ] as const;
 export type CandidateChunk = (typeof candidateChunks)[number];
 export function candidateJobKey(chunk: CandidateChunk) {
   candidateSpec(chunk); // Runtime callers cannot introduce arbitrary chunks.
   return { pk: `candidate:${chunk}`, sk: "job" };
 }
+export const candidateScope = (chunk: CandidateChunk = "launch-30d-v1") =>
+  chunk === "october-30d-v1" ? octoberScope() : launchScope();
 export function candidateSpec(chunk: CandidateChunk = "launch-30d-v1") {
   const index = candidateChunks.indexOf(chunk);
   if (index < 0) throw new Error("Unknown candidate chunk");
-  const scope = launchScope();
+  const scope = candidateScope(chunk);
   return {
     version: chunk,
+    ...(chunk === "october-30d-v1"
+      ? { historyMode: "dated-membership-v1" }
+      : {}),
     decoderVersion: DECODER_VERSION,
     from: 1720828800 + index * 30 * 86400,
     to: 1720828800 + (index + 1) * 30 * 86400,
@@ -40,6 +47,7 @@ export function candidateSpec(chunk: CandidateChunk = "launch-30d-v1") {
 export const candidateHash = (chunk: CandidateChunk = "launch-30d-v1") =>
   digest(JSON.stringify(candidateSpec(chunk)));
 export interface CandidateBounds {
+  captureStart?: Header;
   launch: Header;
   before: Header;
   end: Header;
@@ -65,7 +73,18 @@ export async function prepareCandidate(
     head,
     chain.header,
   );
-  return { launch, before, end, endBefore };
+  const captureStart =
+    chunk === "october-30d-v1"
+      ? (await referenceBoundary(spec.from - 300, launch, end, chain.header))
+          .block
+      : undefined;
+  return {
+    launch,
+    before,
+    end,
+    endBefore,
+    ...(captureStart ? { captureStart } : {}),
+  };
 }
 export function validateCandidateBounds(
   b: CandidateBounds,
@@ -73,6 +92,10 @@ export function validateCandidateBounds(
 ) {
   const s = candidateSpec(chunk);
   if (
+    (chunk === "october-30d-v1" &&
+      (!b.captureStart ||
+        b.captureStart.timestamp >= s.from ||
+        b.captureStart.number <= b.launch.number)) ||
     b.launch.number !== s.startBlock ||
     b.launch.timestamp !== candidateSpec().from + 29 ||
     b.before.number !== s.startBlock - 1 ||
@@ -101,7 +124,7 @@ export async function advanceCandidate(args: {
 }) {
   const { bounds, chain, archive, sampled } = args,
     spec = candidateSpec(args.chunk),
-    scope = launchScope();
+    scope = candidateScope(args.chunk);
   validateCandidateBounds(bounds, args.chunk);
   const sample = args.sample;
   if (
@@ -109,22 +132,24 @@ export async function advanceCandidate(args: {
     (await chain.header(bounds.end.number)).hash !== bounds.end.hash
   )
     throw new Error("Candidate frozen boundary hash changed");
+  const startBlock = bounds.captureStart?.number ?? spec.startBlock;
+  const sampleStart = bounds.captureStart ? spec.from : candidateSpec().from;
   let steps = 0;
-  let raw = await archive.cursor(scope.id, spec.startBlock);
+  let raw = await archive.cursor(scope.id, startBlock);
   if (
-    raw.startBlock !== spec.startBlock ||
-    raw.nextBlock < spec.startBlock ||
+    raw.startBlock !== startBlock ||
+    raw.nextBlock < startBlock ||
     raw.nextBlock > bounds.end.number + 1
   )
     throw new Error("Candidate raw cursor outside chunk");
   let rawTime =
-    raw.nextBlock === spec.startBlock
-      ? bounds.before.timestamp
+    raw.nextBlock === startBlock
+      ? (bounds.captureStart ?? bounds.before).timestamp
       : (await chain.header(raw.nextBlock - 1)).timestamp;
   let parquetNext = await args.aggregationNext();
   if (
     !Number.isSafeInteger(parquetNext) ||
-    parquetNext < spec.startBlock ||
+    parquetNext < startBlock ||
     parquetNext > raw.nextBlock
   )
     throw new Error("Candidate Parquet exceeds raw coverage");
@@ -139,7 +164,7 @@ export async function advanceCandidate(args: {
       : await sampled.collected();
   if (!cursor) throw new Error("Missing predecessor samples");
   if (
-    cursor.startTimestamp !== candidateSpec().from ||
+    cursor.startTimestamp !== sampleStart ||
     cursor.nextTimestamp < spec.from ||
     cursor.nextTimestamp > spec.to ||
     cursor.policyRevision !== spec.policyRevision
@@ -163,6 +188,7 @@ export async function advanceCandidate(args: {
     const published = await sampled.publication();
     if (
       spec.version !== "launch-30d-v1" &&
+      !bounds.captureStart &&
       (!published || published.nextTimestamp < spec.from)
     )
       throw new Error("Missing predecessor publication");
@@ -184,7 +210,7 @@ export async function advanceCandidate(args: {
         scope,
         chain,
         store: archive,
-        startBlock: spec.startBlock,
+        startBlock,
         endBlock: bounds.end.number,
         maxBlocks: 2000,
         maxEvents: 5000,
@@ -192,7 +218,7 @@ export async function advanceCandidate(args: {
       steps++;
       if (result.status !== "archived")
         return { phase: "raw", steps, outcome: result.status };
-      raw = await archive.cursor(scope.id, spec.startBlock);
+      raw = await archive.cursor(scope.id, startBlock);
       rawTime = (await chain.header(raw.nextBlock - 1)).timestamp;
       continue;
     }

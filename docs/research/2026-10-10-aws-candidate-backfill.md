@@ -4,11 +4,11 @@ The first milestone collected `[2024-07-13 00:00, 2024-08-12 00:00)` UTC, starti
 Base launch block 17,019,741. It contains only Uniswap V2 and V3 FAME/WETH. The
 reviewed WETH/USDC pool supplies bucket-end conversion samples. The other current
 FAME pools launched later; cbBTC/SPX remain excluded until a separately planned
-chunk. There is no dataset promotion operation in this implementation.
+chunk. There is no production dataset promotion operation in this implementation.
 
 ## Reviewed continuation jobs
 
-The runner now recognizes exactly three immutable jobs:
+The first three immutable jobs retain the same scope:
 
 | Job | UTC interval (end exclusive) |
 | --- | --- |
@@ -16,8 +16,9 @@ The runner now recognizes exactly three immutable jobs:
 | `august-30d-v1` | August 12–September 11, 2024 |
 | `september-30d-v1` | September 11–October 11, 2024 |
 
-All use the same two pools, dataset, conversion policy and metadata. October
-admissions are not enabled by this change. The original job key/specification
+These three use the same two pools, dataset, conversion policy and metadata.
+The fourth job, October 11–November 10, adds a dated four-pool definition while retaining earlier pages in place; see
+[October candidate admission](2026-10-11-october-candidate-admission.md). The original job key/specification
 and completed receipt are preserved; no migration or progress reset is needed.
 
 The worker selects the earliest incomplete reviewed job. Missing or paused jobs

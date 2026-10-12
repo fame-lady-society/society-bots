@@ -11,6 +11,7 @@ export interface DayPublication {
   generation: string;
 }
 export interface WindowSource {
+  revision?: string;
   key: string;
   generation: string | null;
 }
@@ -31,11 +32,13 @@ export function validateSources(
   if (
     !Array.isArray(value) ||
     value.length < 1 ||
-    value.length > 3 ||
-    new Set(value.map((s) => s?.key)).size !== value.length ||
+    value.length > 24 ||
+    new Set(value.map((s) => `${s?.revision ?? ""}:${s?.key}`)).size !==
+      value.length ||
     value.some(
       (s) =>
         !s ||
+        (s.revision !== undefined && !sha(s.revision)) ||
         !/^(published|day:(0|[1-9][0-9]{0,12}))$/.test(s.key) ||
         (s.key !== "published" && Number(s.key.slice(4)) % 86400 !== 0) ||
         (s.generation !== null && !sha(s.generation)),

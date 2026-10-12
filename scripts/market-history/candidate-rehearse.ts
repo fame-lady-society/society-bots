@@ -13,6 +13,9 @@ import {
   DynamoDBDocumentClient,
   GetCommand,
   UpdateCommand,
+  PutCommand,
+  DeleteCommand,
+  ScanCommand,
 } from "@aws-sdk/lib-dynamodb";
 import {
   S3Client,
@@ -31,6 +34,19 @@ import {
   candidateKey,
   prepareCandidate,
 } from "../../src/fame-market-history/candidate.ts";
+import {
+  octoberScope,
+  octoberMetadata,
+} from "../../src/fame-market-history/october-scope.ts";
+import {
+  dataset,
+  datasetKey,
+  decodeDataset,
+  closeHistory,
+} from "../../src/fame-market-history/dataset.ts";
+import { reusePreAdmissionSample } from "../../src/fame-market-history/admission-opening.ts";
+import { collect } from "../../src/fame-market-history/collector.ts";
+import { publishSampled } from "../../src/fame-market-history/sampled-live.ts";
 import { launchScope } from "../../src/fame-market-history/local-backfill.ts";
 import { awsArchive } from "../../src/fame-market-history/storage.ts";
 import { cursorKey } from "../../src/fame-market-history/storage.ts";
@@ -336,6 +352,209 @@ try {
   );
   assert.equal(availability.earliestAvailableTimestamp, spec.from);
   assert.equal(availability.hasEarlier, false);
+  // Real storage boundary proof: keep all retained rows and objects untouched,
+  // collect only two new buckets, and serve one chart across both definitions.
+  const snapshot = async () => {
+    const rows = new Map<string, any>();
+    let last: Record<string, any> | undefined;
+    do {
+      const page = await db.send(
+        new ScanCommand({
+          TableName: table,
+          ConsistentRead: true,
+          ...(last ? { ExclusiveStartKey: last } : {}),
+        }),
+      );
+      for (const row of page.Items ?? []) rows.set(`${row.pk}|${row.sk}`, row);
+      last = page.LastEvaluatedKey;
+    } while (last);
+    return rows;
+  };
+  const retainedRows = await snapshot(),
+    retainedObjects = new Map([...objects].map(([k, v]) => [k, digest(v)]));
+  const boundary = status.publishedNextTimestamp,
+    target = octoberScope(),
+    targetMetadata = octoberMetadata(metadata);
+  const sourceSamples = awsSampled({
+    scope,
+    table,
+    bucket: "local",
+    metadata,
+    db,
+    s3,
+  });
+  const opening = await sourceSamples.read(boundary - 300);
+  const history = closeHistory(
+    decodeDataset(dataset(scope, metadata)),
+    boundary,
+  );
+  await db.send(
+    new PutCommand({
+      TableName: table,
+      Item: {
+        ...datasetKey(target.id),
+        ...dataset(target, targetMetadata, history),
+      },
+    }),
+  );
+  const targetSamples = awsSampled({
+    scope: target,
+    table,
+    bucket: "local",
+    metadata: targetMetadata,
+    db,
+    s3,
+  });
+  let targetCursor = await targetSamples.cursor({
+    startTimestamp: boundary,
+    nextTimestamp: boundary,
+    anchor: opening.block,
+    policyRevision: candidateSpec("october-30d-v1").policyRevision,
+  });
+  const mapped = reusePreAdmissionSample(scope, target, opening);
+  loseUploadResponse = true;
+  await assert.rejects(
+    targetSamples.seedOpening(mapped),
+    /Simulated lost upload response/,
+  );
+  await targetSamples.seedOpening(mapped);
+  await targetSamples.seedOpening(mapped);
+  assert.equal((await targetSamples.collected())?.nextTimestamp, boundary);
+  assert.equal(await targetSamples.publication(), null);
+  await db.send(
+    new UpdateCommand({
+      TableName: table,
+      Key: activeScopeKey,
+      UpdateExpression: "SET scopeId = :s",
+      ExpressionAttributeValues: { ":s": target.id },
+    }),
+  );
+  const seamQuery = new URLSearchParams({
+    view: "chart",
+    resolution: "300",
+    currency: "ETH",
+    from: String(boundary - 600),
+    to: String(boundary + 600),
+  });
+  const emptySeam = await call(seamQuery);
+  assert.deepEqual(
+    emptySeam.upserts.map((b: any) => b.publicationStatus),
+    ["published", "published", "not-yet-published", "not-yet-published"],
+  );
+  const captureStart = opening.block.number,
+    endBlock = captureStart + 301;
+  // Put a swap in the first block of the new interval, already present in the
+  // predecessor's edge capture. It must appear exactly once in the logical view.
+  logs.push(
+    ...logs
+      .slice(0, 2)
+      .map((l) => ({
+        ...l,
+        blockNumber: opening.after.number,
+        blockHash: opening.after.hash,
+        transactionHash: h(2).hash,
+      })),
+  );
+  const targetArchive = awsArchive({ table, bucket: "local", db, s3 });
+  assert.equal(
+    (
+      await collect({
+        scope: target,
+        chain,
+        store: targetArchive,
+        startBlock: captureStart,
+        endBlock,
+        maxBlocks: 2000,
+        maxEvents: 5000,
+      })
+    ).status,
+    "archived",
+  );
+  assert.equal(
+    (
+      await aggregateNext({
+        scope: target,
+        startBlock: captureStart,
+        metadata: targetMetadata,
+        store: awsAggregation({ table, bucket: "local", db, s3 }),
+      })
+    ).status,
+    "published",
+  );
+  for (let t = boundary; t < boundary + 600; t += 300) {
+    const b = h(captureStart + (t - boundary) / 2 + 150),
+      a = h(b.number + 1);
+    await targetSamples.commit(targetCursor, {
+      ...sampledFixture(t, target),
+      block: b,
+      after: a,
+    });
+    targetCursor = { ...targetCursor, nextTimestamp: t + 300, anchor: b };
+  }
+  assert.equal(
+    (await publishSampled(target, targetSamples, () => true, 2)).published,
+    2,
+  );
+  for (const currency of ["ETH", "USDC"]) {
+    seamQuery.set("currency", currency);
+    seamQuery.delete("cursor");
+    const seam = await call(seamQuery);
+    assert.equal(
+      seam.upserts.reduce((n: number, b: any) => n + (b.tradeCount ?? 0), 0),
+      1,
+    );
+    assert(seam.upserts.every((b: any) => b.publicationStatus === "published"));
+    seamQuery.set("cursor", seam.cursor);
+    assert.deepEqual((await call(seamQuery)).upserts, []);
+    const old = await call(
+      new URLSearchParams({
+        view: "chart",
+        resolution: "300",
+        currency,
+        from: String(spec.from),
+        to: String(spec.from + 86400),
+      }),
+    );
+    assert.equal(old.upserts.length, 288);
+    assert.equal(old.upserts[0].tradeCount, 1);
+    const tx = await call(
+      new URLSearchParams({
+        view: "activity",
+        resolution: "300",
+        currency,
+        from: String(spec.from),
+        to: String(spec.from + 300),
+      }),
+    );
+    assert.equal(tx.rows.length, 1);
+  }
+  seamQuery.set("currency", "ETH");
+  seamQuery.set("cursor", emptySeam.cursor);
+  assert.equal((await call(seamQuery)).upserts.length, 2);
+  const afterRows = await snapshot();
+  for (const [k, row] of retainedRows)
+    if (row.sk !== "active-scope")
+      assert.deepEqual(afterRows.get(k), row, `Old row changed: ${k}`);
+  for (const [k, sha] of retainedObjects)
+    assert.equal(digest(objects.get(k)!), sha, `Old object changed: ${k}`);
+  // Remove only this synthetic target fixture before testing the real October
+  // activation transaction below. No remote table or object is ever used.
+  for (const [k, row] of afterRows)
+    if (!retainedRows.has(k))
+      await db.send(
+        new DeleteCommand({
+          TableName: table,
+          Key: { pk: row.pk, sk: row.sk },
+        }),
+      );
+  await db.send(
+    new UpdateCommand({
+      TableName: table,
+      Key: activeScopeKey,
+      UpdateExpression: "SET scopeId = :s",
+      ExpressionAttributeValues: { ":s": scope.id },
+    }),
+  );
   await store.control("pause");
   assert.equal(await store.acquire("after-pause"), null);
   assert.deepEqual(
@@ -460,9 +679,101 @@ try {
     { phase: "idle" },
   );
   assert.equal((await september.read())?.predecessor, "august-30d-v1");
+  // Guarded October activation uses a completed predecessor fixture; this does
+  // not claim that the intervening 90 days were collected in this local test.
+  await september.control("resume");
+  assert(await september.acquire("sep-proof"));
+  chain.finalized = async () => h(spec.startBlock + 120 * 43200 + 100);
+  const sepBounds = await prepareCandidate(chain, "september-30d-v1");
+  await september.initialize("sep-proof", sepBounds, metadata);
+  for (const k of [cursorKey(scope.id), progressKey(scope.id)])
+    await set(k, "nextBlock", sepBounds.end.number + 1);
+  for (const kind of ["collected", "published"])
+    await set(
+      sampledKey(spec.policyRevision, kind),
+      "nextTimestamp",
+      candidateSpec("october-30d-v1").from,
+    );
+  await september.finish("sep-proof", { phase: "complete" }, zero);
+  const completedSeptember = await september.read();
+  const october = candidateStore(db, table, () => now, "october-30d-v1");
+  await october.control("start");
+  assert(await october.acquire("oct-proof"));
+  const octBounds = await prepareCandidate(chain, "october-30d-v1");
+  await october.initialize("oct-proof", octBounds, targetMetadata);
+  await assert.rejects(
+    october.activateOctober("oct-proof"),
+    /opening observation/,
+  );
+  const octStart = candidateSpec("october-30d-v1").from;
+  const newSamples = awsSampled({
+    scope: target,
+    table,
+    bucket: "local",
+    metadata: targetMetadata,
+    db,
+    s3,
+  });
+  await newSamples.cursor({
+    startTimestamp: octStart,
+    nextTimestamp: octStart,
+    anchor: octBounds.captureStart!,
+    policyRevision: candidateSpec("october-30d-v1").policyRevision,
+  });
+  await newSamples.seedOpening(
+    reusePreAdmissionSample(scope, target, {
+      ...sampledFixture(octStart - 300, scope),
+      block: octBounds.captureStart!,
+      after: sepBounds.end,
+    }),
+  );
+  await october.control("pause");
+  await assert.rejects(october.activateOctober("oct-proof"));
+  await october.control("resume");
+  await assert.rejects(october.activateOctober("wrong-owner"));
+  await october.activateOctober("oct-proof");
+  assert.deepEqual(await september.read(), completedSeptember);
+  assert.equal(
+    (await db.send(new GetCommand({ TableName: table, Key: activeScopeKey })))
+      .Item?.scopeId,
+    target.id,
+  );
+  assert.equal(
+    ((await october.status()) as any).rawNextBlock,
+    octBounds.captureStart!.number,
+  );
+  // Exercise the real October coordinator after activation: no July replay.
+  const next = await advanceCandidate({
+    chunk: "october-30d-v1",
+    bounds: octBounds,
+    chain,
+    archive: awsArchive({ table, bucket: "local", db, s3 }),
+    sampled: newSamples,
+    sample: async (t, b, a) => ({
+      ...sampledFixture(t, target),
+      block: b,
+      after: a,
+    }),
+    aggregate: () =>
+      aggregateNext({
+        scope: target,
+        startBlock: octBounds.captureStart!.number,
+        metadata: targetMetadata,
+        store: awsAggregation({ table, bucket: "local", db, s3 }),
+      }),
+    aggregationNext: october.aggregationNext,
+    canContinue: async () => true,
+    maxSteps: 6,
+  });
+  assert.equal(next.phase, "yielded");
+  assert((await newSamples.publication())!.nextTimestamp > octStart);
+  await october.finish("oct-proof", next, zero);
   console.log(
     JSON.stringify({
       proof: "candidate-pipeline",
+      retainedHistoryUnchanged: true,
+      datedMembershipBoundary: true,
+      octoberStartsAtBoundary: true,
       invocations,
       samples,
       oldDayBuckets: 288,

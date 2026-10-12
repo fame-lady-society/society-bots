@@ -6,7 +6,8 @@ import {
   type Currency,
 } from "./sampled-market.ts";
 import { HistoryError } from "./api.ts";
-import { sampledReader } from "./sampled-reader.ts";
+import { historyReader } from "./history-reader.ts";
+import type { HistorySegment } from "./dataset.ts";
 export function parseSampledRequest(raw: string, now = Date.now()) {
   const q = new URLSearchParams(raw),
     allowed = new Set(["view", "currency", "from", "to", "resolution"]);
@@ -38,8 +39,15 @@ export async function readSampledMarket(
   scope: Scope,
   request: ReturnType<typeof parseSampledRequest>,
   now = Date.now,
+  history: HistorySegment[] = [],
 ) {
-  const reader = sampledReader(db, table, sampledPolicy(scope).revision, now);
+  const reader = historyReader(
+    db,
+    table,
+    sampledPolicy(scope).revision,
+    now,
+    history,
+  );
   const p = await reader.window(request.from, request.to);
   const generation = p.generation;
   const buckets = await reader.pages(
