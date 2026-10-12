@@ -5,7 +5,7 @@ import { parseAvailabilityRequest } from "./availability-api.ts";
 import { parseActivityRequest, readActivity } from "./activity-api.ts";
 import { digest } from "./model.ts";
 import { sampledPolicy } from "./sampled-market.ts";
-import { sampledReader } from "./sampled-reader.ts";
+import { historyReader as datedReader } from "./history-reader.ts";
 import { gzipSync } from "node:zlib";
 import { parseChartRequest, readChart } from "./chart-api.ts";
 import type { APIGatewayProxyEventV2 } from "aws-lambda";
@@ -52,10 +52,12 @@ export async function handler(event: APIGatewayProxyEventV2) {
         db,
         AbortSignal.timeout(1500),
       );
-      const body = await sampledReader(
+      const body = await datedReader(
         db,
         table,
         sampledPolicy(selected.scope).revision,
+        Date.now,
+        selected.history,
       ).availability(before);
       return { statusCode: 200, headers, body: JSON.stringify(body) };
     }
@@ -92,10 +94,13 @@ export async function handler(event: APIGatewayProxyEventV2) {
     else if (chart) parseChartRequest(event.rawQueryString, scope);
     else if (!sampled) parseHistoryRequest(event.rawQueryString, scope);
     const publication = chart
-      ? await sampledReader(db, table, sampledPolicy(scope).revision).window(
-          chartRequest!.from,
-          chartRequest!.to,
-        )
+      ? await datedReader(
+          db,
+          table,
+          sampledPolicy(scope).revision,
+          Date.now,
+          selected.history,
+        ).window(chartRequest!.from, chartRequest!.to)
       : undefined;
     const etag =
       chart && !chartRequest!.cursor
@@ -115,7 +120,14 @@ export async function handler(event: APIGatewayProxyEventV2) {
     )
       return { statusCode: 304, headers: chartHeaders, body: "" };
     const body = activity
-      ? await readActivity(db, table, scope, activityRequest!)
+      ? await readActivity(
+          db,
+          table,
+          scope,
+          activityRequest!,
+          Date.now,
+          selected.history,
+        )
       : chart
         ? await readChart(
             db,
@@ -124,9 +136,17 @@ export async function handler(event: APIGatewayProxyEventV2) {
             chartRequest!,
             Date.now,
             publication,
+            selected.history,
           )
         : sampled
-          ? await readSampledMarket(db, table, scope, sampledRequest!)
+          ? await readSampledMarket(
+              db,
+              table,
+              scope,
+              sampledRequest!,
+              Date.now,
+              selected.history,
+            )
           : await historyReader({
               db,
               table,

@@ -15,7 +15,7 @@ import {
   validateCandidateBounds,
   type CandidateBounds,
 } from "./candidate.ts";
-import { dataset, datasetKey, decodeDataset } from "./dataset.ts";
+import { dataset, datasetKey, decodeDataset, closeHistory } from "./dataset.ts";
 import { activeScopeKey, progressKey, sampledKey } from "./keys.ts";
 import { cursorKey } from "./storage.ts";
 import type { TokenMetadata } from "./decode.ts";
@@ -227,6 +227,29 @@ export function candidateStore(
     ) => {
       validateCandidateBounds(bounds, chunk);
       const scope = candidateScope(chunk);
+      const source =
+        chunk === "october-30d-v1"
+          ? await get(datasetKey(candidateSpec("september-30d-v1").scopeId))
+          : null;
+      const history = source
+        ? closeHistory(decodeDataset(source), spec.from)
+        : [];
+      if (chunk === "october-30d-v1") {
+        const previous = await candidateStore(
+          db,
+          table,
+          now,
+          "september-30d-v1",
+        ).read();
+        if (
+          !source ||
+          !previous?.completed ||
+          !(["number", "hash", "parentHash", "timestamp"] as const).every(
+            (k) => bounds.captureStart?.[k] === previous.bounds?.endBefore?.[k],
+          )
+        )
+          throw new Error("Admission boundary does not match retained history");
+      }
       await db.send(
         new TransactWriteCommand({
           TransactItems: [
@@ -262,7 +285,7 @@ export function candidateStore(
                       TableName: table,
                       Item: {
                         ...datasetKey(scope.id),
-                        ...dataset(scope, metadata),
+                        ...dataset(scope, metadata, history),
                       },
                       ConditionExpression: "attribute_not_exists(pk)",
                     },
@@ -286,9 +309,29 @@ export function candidateStore(
         throw new Error("Missing completed predecessor");
       validateCandidateBounds(previous.bounds, "september-30d-v1");
       const nextBlock = previous.bounds.end.number + 1;
+      const job = await read();
+      if (
+        !job?.bounds?.captureStart ||
+        job.bounds.captureStart.hash !== previous.bounds.endBefore.hash
+      )
+        throw new Error("Missing admission capture boundary");
       const definition = await get(datasetKey(spec.scopeId));
       if (!definition || decodeDataset(definition).scope.id !== spec.scopeId)
         throw new Error("Missing staged dataset definition");
+      const expectedHistory = closeHistory(
+        decodeDataset((await get(datasetKey(source.scopeId)))!),
+        spec.from,
+      );
+      if (
+        JSON.stringify(decodeDataset(definition).history) !==
+        JSON.stringify(expectedHistory)
+      )
+        throw new Error("Admission history lineage mismatch");
+      const opening = await get(
+        sampledKey(spec.policyRevision, `observation:${spec.from - 300}`),
+      );
+      if (!opening?.sha256)
+        throw new Error("Missing admission opening observation");
       await db.send(
         new TransactWriteCommand({
           TransactItems: [
@@ -328,7 +371,7 @@ export function candidateStore(
                 },
               },
             },
-            ...[source, spec].flatMap((s) => [
+            ...[source].flatMap((s) => [
               {
                 ConditionCheck: {
                   TableName: table,
@@ -354,6 +397,41 @@ export function candidateStore(
                 },
               })),
             ]),
+            {
+              ConditionCheck: {
+                TableName: table,
+                Key: sampledKey(spec.policyRevision, "collected"),
+                ConditionExpression:
+                  "startTimestamp = :start AND nextTimestamp = :start AND anchor.#hash = :hash",
+                ExpressionAttributeNames: { "#hash": "hash" },
+                ExpressionAttributeValues: {
+                  ":start": spec.from,
+                  ":hash": job.bounds.captureStart.hash,
+                },
+              },
+            },
+            {
+              ConditionCheck: {
+                TableName: table,
+                Key: sampledKey(
+                  spec.policyRevision,
+                  `observation:${spec.from - 300}`,
+                ),
+                ConditionExpression: "sha256 = :sha",
+                ExpressionAttributeValues: { ":sha": opening.sha256 },
+              },
+            },
+            ...[
+              cursorKey(spec.scopeId),
+              progressKey(spec.scopeId),
+              sampledKey(spec.policyRevision, "published"),
+            ].map((Key) => ({
+              ConditionCheck: {
+                TableName: table,
+                Key,
+                ConditionExpression: "attribute_not_exists(pk)",
+              },
+            })),
             {
               Update: {
                 TableName: table,
@@ -406,18 +484,20 @@ export function candidateStore(
       ]);
       return {
         job,
-        rawNextBlock: raw?.nextBlock ?? s.startBlock,
-        parquetNextBlock: aggregation?.nextBlock ?? s.startBlock,
-        sampleNextTimestamp:
-          collected?.nextTimestamp ??
-          (chunk === "october-30d-v1" ? candidateSpec().from : s.from),
-        publishedNextTimestamp:
-          published?.nextTimestamp ??
-          (chunk === "october-30d-v1" ? candidateSpec().from : s.from),
+        rawNextBlock:
+          raw?.nextBlock ?? job.bounds?.captureStart?.number ?? s.startBlock,
+        parquetNextBlock:
+          aggregation?.nextBlock ??
+          job.bounds?.captureStart?.number ??
+          s.startBlock,
+        sampleNextTimestamp: collected?.nextTimestamp ?? s.from,
+        publishedNextTimestamp: published?.nextTimestamp ?? s.from,
         leaseActive: !!job.leaseOwner && job.leaseUntil > now(),
       };
     },
     aggregationNext: async () =>
-      (await get(progressKey(spec.scopeId)))?.nextBlock ?? spec.startBlock,
+      (await get(progressKey(spec.scopeId)))?.nextBlock ??
+      (await read())?.bounds?.captureStart?.number ??
+      spec.startBlock,
   };
 }

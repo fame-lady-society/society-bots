@@ -22,9 +22,7 @@ import { awsAggregation } from "./worker-storage.ts";
 import { aggregateNext } from "./worker.ts";
 import type { TokenMetadata } from "./decode.ts";
 import { octoberMetadata } from "./october-scope.ts";
-import { replayCandidate } from "./candidate-replay.ts";
-import { rangeKey } from "./keys.ts";
-import type { Manifest } from "./model.ts";
+import { reusePreAdmissionSample } from "./admission-opening.ts";
 import { activeDataset, decodeDataset, datasetKey } from "./dataset.ts";
 import { failureCode } from "./failure.ts";
 
@@ -137,7 +135,7 @@ export async function handler(
     const aggregate = () =>
       aggregateNext({
         scope,
-        startBlock: candidateSpec().startBlock,
+        startBlock: bounds.captureStart?.number ?? candidateSpec().startBlock,
         metadata,
         store: aggregation,
       });
@@ -150,48 +148,31 @@ export async function handler(
       ).read();
       if (!previous?.completed || !previous.bounds)
         throw new Error("Incomplete staging source");
-      result = await replayCandidate({
-        source: selected.scope,
-        target: scope,
-        startBlock: candidateSpec().startBlock,
-        from: candidateSpec().from,
-        to: candidateSpec(chunk).from,
-        before: bounds.before,
-        end: previous.bounds.end,
-        archive,
-        sourceSamples: awsSampled({
-          scope: selected.scope,
-          metadata: selected.metadata,
-          table,
-          bucket,
-          db,
-          s3,
-          canContinue: canWork,
-        }),
-        targetSamples: sampled,
-        maxSteps: 2048, // Replay is RPC-free; time/lease checks remain the primary bound.
-        aggregate,
-        aggregationNext: store.aggregationNext,
-        canContinue,
-        sourceRange: async (nextBlock) => {
-          const row = (
-            await db.send(
-              new GetCommand({
-                TableName: table,
-                Key: {
-                  pk: `scope:${selected.scope.id}`,
-                  sk: rangeKey(nextBlock),
-                },
-                ConsistentRead: true,
-              }),
-            )
-          ).Item;
-          if (!row) throw new Error("Missing retained source archive");
-          const manifest = row as Manifest;
-          return { manifest, bytes: await aggregation.read(manifest) };
-        },
+      if (
+        !bounds.captureStart ||
+        bounds.captureStart.hash !== previous.bounds.endBefore.hash
+      )
+        throw new Error("Admission source boundary changed");
+      const sourceSamples = awsSampled({
+        scope: selected.scope,
+        metadata: selected.metadata,
+        table,
+        bucket,
+        db,
+        s3,
+        canContinue: canWork,
       });
-      if (result.phase === "staged") {
+      const opening = await sourceSamples.read(candidateSpec(chunk).from - 300);
+      const mapped = reusePreAdmissionSample(selected.scope, scope, opening);
+      await sampled.cursor({
+        startTimestamp: candidateSpec(chunk).from,
+        nextTimestamp: candidateSpec(chunk).from,
+        policyRevision: candidateSpec(chunk).policyRevision,
+        anchor: bounds.captureStart,
+      });
+      await sampled.seedOpening(mapped);
+      if (!(await canContinue())) result = { phase: "yielded" };
+      else {
         await store.activateOctober(owner);
         result = { phase: "candidate-activated" };
       }

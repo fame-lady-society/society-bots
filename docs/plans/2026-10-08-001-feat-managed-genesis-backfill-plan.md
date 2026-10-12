@@ -333,22 +333,23 @@ evidence, not new on-chain checks performed on October 11.
    sample it or its otherwise-unused conversion route. Within its launch bucket,
    include only post-creation observations, expose partial coverage, and never
    invent a pre-launch opening price. Deduplicate conversion reads per block.
-5. Treat expanded membership as a new immutable scope/policy generation. Do not
-   mutate the existing two-pool definition or relabel its published pages. Reuse
-   validated raw/sample evidence with provenance; deterministically rederive the
-   earlier pages under lifecycle-aware membership without new chain collection
-   where existing evidence suffices. Candidate reads must expose one coherent
-   history across the transition, with a generation change invalidating old delta
-   cursors. Keep the old candidate generation until the rebuilt one is verified.
-   Prove that pre-admission prices, candles and volumes remain numerically equal.
+5. Preserve historical pages in place using an immutable dated membership catalog
+   (October 12 correction). Point earlier intervals at their existing scope/policy;
+   start the four-pool definition at October 11. Carry one prior observation for
+   opening weights and reread only the two boundary blocks needed for complete
+   new-bucket coverage. Do not replay July–September or rewrite completed receipts.
+   Compose chart, activity and availability reads across the boundary, with one
+   cursor and global pagination limits. A changed catalog resets prior cursors.
+   Prove old bytes remain unchanged and both currencies retain the same values.
 6. Rehearse each October creation bucket plus the following 24 hours, using the
    actual historical sampler and both currency paths. Only then run the October
    chunk. Capture all direct-pool events, including native unpriced amounts;
    continue using five-minute state reads for busy conversion pools, not their
    complete swap streams. Preserve multiple events within the same transaction.
 
-The generation transition in step 5 is a prerequisite for the October chunk,
-not for the same-scope August/September continuation. Do not couple an earlier
+The dated-reader transition in step 5 precedes the October chunk. Per the October
+12 operator instruction, hold PR #64 and deploy this fix before resuming September
+or starting October. Do not couple an earlier
 chunk to production activation or a redesign of the public chart.
 
 ### Tests, execution and operator boundaries

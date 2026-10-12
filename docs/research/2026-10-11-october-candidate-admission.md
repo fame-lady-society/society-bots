@@ -14,46 +14,54 @@ admission evidence. PR #58 was merged into an old parent branch rather than
 `main`; this PR carries its reviewed decoder, registry and route work forward.
 It does not admit the later November pools.
 
-## Generation staging and activation
+## Dated membership and activation (revised October 12)
 
-October has a distinct scope and price-policy revision. The deployed first three
-job hashes, completed receipts, and two-pool policy remain unchanged. Deployment
-never starts a job. Starting October requires completed, unleased September,
-aligned raw/Parquet/sample/publication frontiers and the expected old candidate
-active pointer.
+PR #64 is held. Its full-history replay has been removed from the replacement.
+October uses a new scope/policy only for **October 11 onward**. The immutable
+candidate definition contains closed history intervals pointing to their original
+scope and policy. Existing raw archives, Parquet, observations, chart pages,
+activity indexes, job hashes and completed receipts stay at their original keys.
+The first interval points to the retained two-pool history; later expansions append
+another dated interval rather than rewriting earlier intervals.
 
-After start, the worker first rebuilds July 13–October 11 into the new generation:
+Starting October still requires completed, unleased September and aligned source
+raw/Parquet/sample/publication frontiers. Deployment never starts a job.
 
-1. Validate each retained source archive and copy its native events and headers
-   to a new scope, with source checksum lineage. No RPC log scan occurs: the new
-   direct pools did not exist anywhere in this interval. Archive reuse refuses
-   a range crossing either pool's creation block. Source storage keys are not
-   copied into new manifests.
-2. Run the existing bounded DuckDB/Parquet pipeline on the staged archives.
-3. Remap retained sampled contract responses by full call identity. Preserve
-   failures and block anchors; unsampled future pools/routes remain unavailable.
-   No price is interpolated or fetched from a later block. Each reused sample
-   records its source policy and evidence checksum.
-4. Compare both currencies' market, pool series and totals against the source
-   evidence before committing. Publish dated chart pages and activity indexes
-   under the new policy. The private reader continues serving the old generation.
-5. Atomically switch **only the candidate** active pointer after source and target
-   frontiers align at October 11. The transaction also checks the unleased completed
-   predecessor, current running job lease and target definition. A lost activation
-   response is recovered by reading the active pointer on the next invocation.
-6. Continue ordinary bounded collection from the retained edge block plus one,
-   sampling and publishing through November 10. The October opening bucket uses
-   the staged prior sample. Keep old objects, dataset definitions and receipts.
+1. Freeze October's start at September's final sample block (the last block before
+   October 11). Record the new definition with its retained-history interval.
+2. Map **one** previous observation to the new policy by complete contract-call
+   identity, preserving failures and provenance. This supplies opening weights.
+   Unborn pools/routes are not fetched or invented. Seeding is idempotent and does
+   not advance either the collection or publication cursor.
+3. Atomically change only the candidate active pointer. Check the running lease,
+   predecessor completion/frontiers, target definition, opening observation and
+   empty target raw/Parquet/publication state. A lost response resumes from the
+   pointer. The reader immediately serves retained history even before the first
+   new bucket is published.
+4. Collect from the frozen boundary block. This deliberately rereads two edge
+   blocks already captured by September, so the new bucket has complete coverage
+   and the event at its first block is included. Timestamp ownership prevents
+   double counting across the two history intervals. No earlier logs are fetched.
+5. Sample, aggregate and publish October normally. Its own cursors begin at
+   October 11; they do not start at July 13. Keep all source data and receipts.
 
-Replay is resumable using separate target raw, Parquet, collected and published
-cursors, at most 2,048 steps per invocation plus the existing remaining-time and
-lease checks. Collection retains its 256-step bound and existing RPC/byte limits.
-Pause/resume works throughout; no daily spending cutoff exists. The replay uses
-S3/DynamoDB/Lambda work and therefore is not free, despite requiring no new RPC
-reads. There are 25,920 old five-minute buckets to republish. Its wall time depends
-on actual AWS request latency and the five-minute worker schedule; do not reuse the
-six-hour RPC ingestion estimate for this extra staging phase. Job counters remain
-observed RPC requests/bytes, not billing credits or an AWS cost estimate.
+Chart, sampled-market, activity and availability requests use this dated catalog.
+A request crossing a boundary returns one ordered result. Activity pagination and
+filters retain their global read limits. Chart deltas pin the contributing
+manifests with their original policies; a changed catalog resets old cursors.
+The earliest-history signal continues to point to the original retained history.
+Queries remain bounded to 24 hours, 288 buckets, eight intersecting membership
+intervals, and the existing byte/time budgets. There is no historical-copy phase,
+new paid monitoring or daily cutoff. Legacy execution-only `market`/`pool` views
+remain scoped to their own dataset; the comprehensive contract is `chart`,
+`sampled-market`, `activity` and `availability`.
+
+Adding a future pool at a future membership boundary requires only new data from
+that boundary. Adding a previously omitted pool retrospectively still requires
+collecting its missing events and rebuilding the **affected** interval; dated
+membership cannot manufacture missing history. Raw capture remains batched by
+scope for efficient RPC reads, but a logical market history can reference many
+such immutable batches without copying them.
 
 ## Lifecycle and pricing assumptions
 
@@ -93,8 +101,8 @@ yarn nodets scripts/market-history/candidate-control.ts start fls-power october-
 # same job argument for pause/resume/status
 ```
 
-`query` uses the candidate's active dataset. During staging it still exposes the
-old corpus. After activation, verify July history and the October seam in both
+`query` uses the candidate's active dataset. After activation it reads the old
+corpus in place. Verify July history and the October seam in both
 currencies, then each pool's creation bucket and following day, native event
 identity/counts, volume, and quiet prices. API cursors tied to the old policy reset
 when the candidate pointer changes. Production promotion remains separate work;
@@ -104,11 +112,13 @@ this PR has no production promotion command.
 
 - Unit tests cover exact origins, active calls at each boundary, unchanged old
   job identity, pre-admission price/volume equivalence, unborn chart responses,
-  opening-zero weights, corrupt/overlapping archives and storage-key stripping.
+  opening-zero weights, invalid membership boundaries, cross-boundary chart deltas,
+  activity pagination/filters, cursor policy tampering and earliest-history signals.
 - `candidate-rehearse.ts` uses real DynamoDB Local and DuckDB with deterministic
-  chain evidence and in-memory S3. It collects/publishes 297 samples, stages them
-  through the actual adapters, queries dated chart/activity APIs in ETH/USDC,
-  verifies source receipts/cursors are unchanged, and exercises lost upload
+  chain evidence and in-memory S3. It collects/publishes 297 samples, appends a
+  dated definition, captures two new buckets through the actual adapters, and
+  queries chart/activity APIs in ETH/USDC. It verifies old database rows and object
+  checksums are unchanged, and exercises lost upload
   responses, resume, lease ownership, pause and incomplete-activation rejection.
   The month-frontier activation test seeds checkpoints explicitly; it is a
   transaction test, not proof of a locally replayed 90-day corpus.
@@ -120,8 +130,9 @@ this PR has no production promotion command.
   permissions. The Linux runtime packaging check imports the bundled handler and
   executes DuckDB independently of macOS native bindings.
 
-The full AWS 90-day staging and October collection are deliberately not run as
-part of local validation. Those remain post-deployment candidate verification.
+October collection on AWS has not run as part of this fix. Merge and deploy the
+replacement first; then explicitly resume/start reviewed chunks. There is no
+90-day staging step. Production collection, storage and active pointer are unchanged.
 
 Provider-backed proof completed locally: each admitted pool has 288/288 prices and
 candles in both ETH and USDC. The SPX day contains 95 swaps / 96 activity events;

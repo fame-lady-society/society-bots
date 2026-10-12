@@ -17,7 +17,7 @@ The first three immutable jobs retain the same scope:
 | `september-30d-v1` | September 11–October 11, 2024 |
 
 These three use the same two pools, dataset, conversion policy and metadata.
-The fourth job, October 11–November 10, stages a new four-pool generation; see
+The fourth job, October 11–November 10, adds a dated four-pool definition while retaining earlier pages in place; see
 [October candidate admission](2026-10-11-october-candidate-admission.md). The original job key/specification
 and completed receipt are preserved; no migration or progress reset is needed.
 

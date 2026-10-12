@@ -10,14 +10,9 @@ import {
 } from "./sampled-rpc.ts";
 import { sampledFixture } from "./sampled-fixture.ts";
 import { sampledMarketBucket, type PoolActivity } from "./sampled-market.ts";
-import {
-  reusePreAdmissionSample,
-  reusePreAdmissionArchive,
-} from "./candidate-replay.ts";
+import { reusePreAdmissionSample } from "./admission-opening.ts";
 import { projectChartBucket } from "./chart-api.ts";
-import { collect, type ArchiveStore } from "./collector.ts";
-import { readArchive } from "./archive.ts";
-import type { Cursor, Manifest, Header } from "./model.ts";
+import type { Header } from "./model.ts";
 const source = launchScope(),
   target = octoberScope();
 const header = (number: number, timestamp: number): Header => ({
@@ -175,63 +170,6 @@ test("retained samples cannot be reused across the earliest added pool launch", 
       source,
       target,
       evidence(Math.floor(o.timestamp / 300) * 300, o.block, source),
-    ),
-  ).toThrow("crosses pool admission");
-});
-test("raw reuse preserves identities and refuses admission overlap or corrupt source bytes", async () => {
-  let cursor: Cursor = {
-    startBlock: 17019741,
-    nextBlock: 17019741,
-    previousHash: null,
-  };
-  let bytes!: Uint8Array, manifest!: Manifest;
-  const store: ArchiveStore = {
-    cursor: async () => cursor,
-    upload: async (_, b) => {
-      bytes = b;
-    },
-    commit: async (m) => {
-      manifest = m;
-    },
-    reduceRange: async () => {},
-  };
-  const t = candidateSpec().from;
-  await collect({
-    scope: source,
-    store,
-    startBlock: cursor.startBlock,
-    maxBlocks: 3,
-    maxEvents: 10,
-    chain: {
-      header: async (n) => header(n, t + (n - cursor.startBlock) * 2 + 29),
-      finalized: async () => header(cursor.startBlock + 2, t + 33),
-      logs: async (_, to) => ({ logs: [], throughBlock: to }),
-    },
-  });
-  const reused = reusePreAdmissionArchive(
-    source,
-    target,
-    { ...manifest, pk: `scope:${source.id}`, sk: "range:old" } as Manifest,
-    bytes,
-  );
-  expect(reused.manifest).not.toHaveProperty("pk");
-  expect(readArchive(reused.manifest, reused.bytes).events).toEqual(
-    readArchive(manifest, bytes).events,
-  );
-  expect(reused.manifest.eventIdentityDigest).toBe(
-    manifest.eventIdentityDigest,
-  );
-  expect(reused.manifest.sourceArchive?.sha256).toBe(manifest.sha256);
-  expect(reused.manifest.key).not.toBe(manifest.key);
-  expect(() =>
-    reusePreAdmissionArchive(source, target, manifest, new Uint8Array()),
-  ).toThrow("checksum");
-  expect(() =>
-    reusePreAdmissionArchive(
-      source,
-      target,
-      { ...manifest, toBlock: admissionOrigins["aerodrome-spx-fame"].block },
-      bytes,
     ),
   ).toThrow("crosses pool admission");
 });

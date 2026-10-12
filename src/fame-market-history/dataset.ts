@@ -6,14 +6,73 @@ import { digest, historyScope, type Scope } from "./model.ts";
 import { activeScopeKey } from "./keys.ts";
 import { sampledPolicy } from "./sampled-market.ts";
 
+/** Immutable closed intervals. The current definition owns everything after
+ * the final boundary; older bytes remain under their original scope/policy. */
+export interface HistorySegment {
+  from: number;
+  to: number;
+  scopeId: string;
+  policyRevision: string;
+}
+export function validateHistory(history: HistorySegment[]) {
+  if (
+    !Array.isArray(history) ||
+    history.length > 128 ||
+    new Set(history.map((s) => s?.policyRevision)).size !== history.length ||
+    history.some(
+      (s, i) =>
+        !s ||
+        ![s.from, s.to].every(
+          (t) => Number.isSafeInteger(t) && t >= 0 && t % 300 === 0,
+        ) ||
+        s.to <= s.from ||
+        s.from !== (i ? history[i - 1].to : 0) ||
+        ![s.scopeId, s.policyRevision].every(
+          (v) => typeof v === "string" && /^[a-f0-9]{64}$/.test(v),
+        ),
+    )
+  )
+    throw new Error("Invalid history membership boundaries");
+}
+export function closeHistory(
+  source: ReturnType<typeof decodeDataset>,
+  to: number,
+): HistorySegment[] {
+  const history = [
+    ...source.history,
+    {
+      from: source.history.at(-1)?.to ?? 0,
+      to,
+      scopeId: source.scope.id,
+      policyRevision: sampledPolicy(source.scope).revision,
+    },
+  ];
+  validateHistory(history);
+  return history;
+}
+
 /** Deployment changes available code; this record selects the prepared dataset.
  * Store JSON as a string so DynamoDB map ordering cannot change its digest. */
-export function dataset(scope: Scope, metadata: TokenMetadata) {
+export function dataset(
+  scope: Scope,
+  metadata: TokenMetadata,
+  history: HistorySegment[] = [],
+) {
   validateMetadata(scope, metadata);
+  validateHistory(history);
+  if (
+    history.some(
+      (s) =>
+        s.scopeId === scope.id ||
+        s.policyRevision === sampledPolicy(scope).revision,
+    )
+  )
+    throw new Error("Current dataset repeats historical membership");
   const body = JSON.stringify({
     version: "fame-history-dataset-v1",
     registry: scope.registry,
     metadata,
+    ...(history.length ? { history } : {}),
   });
   return { scopeId: scope.id, definition: body, definitionHash: digest(body) };
 }
@@ -33,7 +92,17 @@ export function decodeDataset(row: Record<string, unknown>) {
     throw new Error("History dataset scope mismatch");
   validateMetadata(scope, value.metadata);
   sampledPolicy(scope); // Reject unsupported routes before collection or serving.
-  return { scope, metadata: value.metadata as TokenMetadata };
+  const history: HistorySegment[] = value.history ?? [];
+  validateHistory(history);
+  if (
+    history.some(
+      (s) =>
+        s.scopeId === scope.id ||
+        s.policyRevision === sampledPolicy(scope).revision,
+    )
+  )
+    throw new Error("Current dataset repeats historical membership");
+  return { scope, metadata: value.metadata as TokenMetadata, history };
 }
 export const datasetKey = (scopeId: string) => ({
   pk: `dataset:${scopeId}`,
