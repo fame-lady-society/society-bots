@@ -99,7 +99,8 @@ export function candidateStore(
               ConditionExpression: "nextBlock = :block AND startBlock = :start",
               ExpressionAttributeValues: {
                 ":block": nextBlock,
-                ":start": spec.startBlock,
+                ":start":
+                  previous.bounds.captureStart?.number ?? source.startBlock,
               },
             },
             {
@@ -249,6 +250,23 @@ export function candidateStore(
           )
         )
           throw new Error("Admission boundary does not match retained history");
+      }
+      if (chunk === "november-30d-v1") {
+        const previous = await candidateStore(
+          db,
+          table,
+          now,
+          "october-30d-v1",
+        ).read();
+        if (
+          !previous?.completed ||
+          previous.leaseOwner ||
+          !(["number", "hash", "parentHash", "timestamp"] as const).every(
+            (k) =>
+              bounds.captureStart?.[k] === previous.bounds?.captureStart?.[k],
+          )
+        )
+          throw new Error("Continuation dataset boundary changed");
       }
       await db.send(
         new TransactWriteCommand({

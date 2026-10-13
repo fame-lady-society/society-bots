@@ -46,7 +46,12 @@ import {
 } from "../../src/fame-market-history/dataset.ts";
 import { reusePreAdmissionSample } from "../../src/fame-market-history/admission-opening.ts";
 import { collect } from "../../src/fame-market-history/collector.ts";
-import { publishSampled } from "../../src/fame-market-history/sampled-live.ts";
+import { sampledMarketBucket } from "../../src/fame-market-history/sampled-market.ts";
+import { deriveSampledObservation } from "../../src/fame-market-history/sampled-rpc.ts";
+import {
+  publishSampled,
+  nextSampledPublication,
+} from "../../src/fame-market-history/sampled-live.ts";
 import { launchScope } from "../../src/fame-market-history/local-backfill.ts";
 import { awsArchive } from "../../src/fame-market-history/storage.ts";
 import { cursorKey } from "../../src/fame-market-history/storage.ts";
@@ -446,14 +451,12 @@ try {
   // Put a swap in the first block of the new interval, already present in the
   // predecessor's edge capture. It must appear exactly once in the logical view.
   logs.push(
-    ...logs
-      .slice(0, 2)
-      .map((l) => ({
-        ...l,
-        blockNumber: opening.after.number,
-        blockHash: opening.after.hash,
-        transactionHash: h(2).hash,
-      })),
+    ...logs.slice(0, 2).map((l) => ({
+      ...l,
+      blockNumber: opening.after.number,
+      blockHash: opening.after.hash,
+      transactionHash: h(2).hash,
+    })),
   );
   const targetArchive = awsArchive({ table, bucket: "local", db, s3 });
   assert.equal(
@@ -768,12 +771,150 @@ try {
   assert.equal(next.phase, "yielded");
   assert((await newSamples.publication())!.nextTimestamp > octStart);
   await october.finish("oct-proof", next, zero);
+  const november = candidateStore(db, table, () => now, "november-30d-v1");
+  await assert.rejects(november.control("start"), /must be complete/);
+  assert(await october.acquire("oct-complete"));
+  // Seed only the month-end fixture, not an invented claim of a full local month.
+  // Retain a real adjacent archive and opening observation so November executes
+  // the actual raw -> Parquet -> sample -> publication adapters across the seam.
+  const lastFrom = octBounds.end.number - 1999;
+  await db.send(
+    new UpdateCommand({
+      TableName: table,
+      Key: cursorKey(target.id),
+      UpdateExpression: "SET nextBlock = :n, previousHash = :h",
+      ExpressionAttributeValues: { ":n": lastFrom, ":h": h(lastFrom - 1).hash },
+    }),
+  );
+  await collect({
+    scope: target,
+    chain,
+    store: awsArchive({ table, bucket: "local", db, s3 }),
+    startBlock: octBounds.captureStart!.number,
+    endBlock: octBounds.end.number,
+    maxBlocks: 2000,
+    maxEvents: 5000,
+  });
+  await set(progressKey(target.id), "nextBlock", octBounds.end.number + 1);
+  const novStart = candidateSpec("november-30d-v1").from;
+  const anchor = h(octBounds.endBefore.number - 150);
+  await db.send(
+    new UpdateCommand({
+      TableName: table,
+      Key: sampledKey(
+        candidateSpec("october-30d-v1").policyRevision,
+        "collected",
+      ),
+      UpdateExpression: "SET nextTimestamp = :n, anchor = :a",
+      ExpressionAttributeValues: { ":n": novStart - 300, ":a": anchor },
+    }),
+  );
+  const finalEvidence = {
+    ...sampledFixture(novStart - 300, target),
+    block: octBounds.endBefore,
+    after: octBounds.end,
+  };
+  await newSamples.commit((await newSamples.collected())!, finalEvidence);
+  const finalBuckets = (["ETH", "USDC"] as const).map((c) =>
+    sampledMarketBucket(
+      target,
+      c,
+      novStart - 300,
+      deriveSampledObservation(target, finalEvidence),
+      [],
+    ),
+  );
+  const finalPublication = nextSampledPublication(
+    null,
+    finalEvidence,
+    finalBuckets,
+  );
+  await db.send(
+    new PutCommand({
+      TableName: table,
+      Item: {
+        ...sampledKey(finalEvidence.policyRevision, "published"),
+        ...finalPublication,
+      },
+    }),
+  );
+  await october.finish("oct-complete", { phase: "complete" }, zero);
+  const completedOctober = await october.read();
+  const activeAndDefinition = async () =>
+    Promise.all(
+      [activeScopeKey, datasetKey(target.id)].map(
+        async (Key) =>
+          (await db.send(new GetCommand({ TableName: table, Key }))).Item,
+      ),
+    );
+  const beforeNovember = await activeAndDefinition();
+  assert.equal(await november.read(), undefined);
+  await november.control("start");
+  await november.control("start");
+  assert(await november.acquire("nov-proof"));
+  chain.finalized = async () => h(spec.startBlock + 150 * 43200 + 100);
+  const novBounds = await prepareCandidate(chain, "november-30d-v1");
+  assert.deepEqual(novBounds.captureStart, octBounds.captureStart);
+  await assert.rejects(
+    november.initialize(
+      "nov-proof",
+      {
+        ...novBounds,
+        captureStart: { ...novBounds.captureStart!, hash: h(1).hash },
+      },
+      targetMetadata,
+    ),
+    /boundary changed/,
+  );
+  await november.initialize("nov-proof", novBounds, targetMetadata);
+  assert.deepEqual(await activeAndDefinition(), beforeNovember);
+  await november.control("pause");
+  assert.equal(await november.canContinue("nov-proof"), false);
+  await november.control("resume");
+  const novResult = await advanceCandidate({
+    chunk: "november-30d-v1",
+    bounds: novBounds,
+    chain,
+    archive: awsArchive({ table, bucket: "local", db, s3 }),
+    sampled: newSamples,
+    sample: async (t, b, a) => ({
+      ...sampledFixture(t, target),
+      block: b,
+      after: a,
+    }),
+    aggregate: () =>
+      aggregateNext({
+        scope: target,
+        startBlock: novBounds.captureStart!.number,
+        metadata: targetMetadata,
+        store: awsAggregation({ table, bucket: "local", db, s3 }),
+      }),
+    aggregationNext: november.aggregationNext,
+    canContinue: () => november.canContinue("nov-proof"),
+    maxSteps: 6,
+  });
+  assert.equal(novResult.phase, "yielded");
+  assert((await newSamples.publication())!.nextTimestamp > novStart);
+  assert.equal((await newSamples.collected())!.startTimestamp, octStart);
+  assert.equal(
+    (
+      await awsArchive({ table, bucket: "local", db, s3 }).cursor(
+        target.id,
+        novBounds.captureStart!.number,
+      )
+    ).startBlock,
+    octBounds.captureStart!.number,
+  );
+  assert.deepEqual(await activeAndDefinition(), beforeNovember);
+  assert.deepEqual(await october.read(), completedOctober);
+  await november.finish("nov-proof", novResult, zero);
   console.log(
     JSON.stringify({
       proof: "candidate-pipeline",
       retainedHistoryUnchanged: true,
       datedMembershipBoundary: true,
       octoberStartsAtBoundary: true,
+      novemberPreservesDatasetAndOpening: true,
       invocations,
       samples,
       oldDayBuckets: 288,

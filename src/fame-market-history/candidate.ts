@@ -19,14 +19,17 @@ export const candidateChunks = [
   "august-30d-v1",
   "september-30d-v1",
   "october-30d-v1",
+  "november-30d-v1",
 ] as const;
 export type CandidateChunk = (typeof candidateChunks)[number];
 export function candidateJobKey(chunk: CandidateChunk) {
   candidateSpec(chunk); // Runtime callers cannot introduce arbitrary chunks.
   return { pk: `candidate:${chunk}`, sk: "job" };
 }
+const expanded = (chunk: CandidateChunk) =>
+  chunk === "october-30d-v1" || chunk === "november-30d-v1";
 export const candidateScope = (chunk: CandidateChunk = "launch-30d-v1") =>
-  chunk === "october-30d-v1" ? octoberScope() : launchScope();
+  expanded(chunk) ? octoberScope() : launchScope();
 export function candidateSpec(chunk: CandidateChunk = "launch-30d-v1") {
   const index = candidateChunks.indexOf(chunk);
   if (index < 0) throw new Error("Unknown candidate chunk");
@@ -44,6 +47,9 @@ export function candidateSpec(chunk: CandidateChunk = "launch-30d-v1") {
     policyRevision: sampledPolicy(scope).revision,
   };
 }
+/** Scope cursors retain their original start across later chunks. */
+export const candidateSampleStart = (chunk: CandidateChunk = "launch-30d-v1") =>
+  candidateSpec(expanded(chunk) ? "october-30d-v1" : "launch-30d-v1").from;
 export const candidateHash = (chunk: CandidateChunk = "launch-30d-v1") =>
   digest(JSON.stringify(candidateSpec(chunk)));
 export interface CandidateBounds {
@@ -73,11 +79,16 @@ export async function prepareCandidate(
     head,
     chain.header,
   );
-  const captureStart =
-    chunk === "october-30d-v1"
-      ? (await referenceBoundary(spec.from - 300, launch, end, chain.header))
-          .block
-      : undefined;
+  const captureStart = expanded(chunk)
+    ? (
+        await referenceBoundary(
+          candidateSampleStart(chunk) - 300,
+          launch,
+          end,
+          chain.header,
+        )
+      ).block
+    : undefined;
   return {
     launch,
     before,
@@ -92,9 +103,9 @@ export function validateCandidateBounds(
 ) {
   const s = candidateSpec(chunk);
   if (
-    (chunk === "october-30d-v1" &&
+    (expanded(chunk) &&
       (!b.captureStart ||
-        b.captureStart.timestamp >= s.from ||
+        b.captureStart.timestamp >= candidateSampleStart(chunk) ||
         b.captureStart.number <= b.launch.number)) ||
     b.launch.number !== s.startBlock ||
     b.launch.timestamp !== candidateSpec().from + 29 ||
@@ -133,7 +144,7 @@ export async function advanceCandidate(args: {
   )
     throw new Error("Candidate frozen boundary hash changed");
   const startBlock = bounds.captureStart?.number ?? spec.startBlock;
-  const sampleStart = bounds.captureStart ? spec.from : candidateSpec().from;
+  const sampleStart = candidateSampleStart(args.chunk);
   let steps = 0;
   let raw = await archive.cursor(scope.id, startBlock);
   if (
@@ -188,7 +199,7 @@ export async function advanceCandidate(args: {
     const published = await sampled.publication();
     if (
       spec.version !== "launch-30d-v1" &&
-      !bounds.captureStart &&
+      spec.version !== "october-30d-v1" &&
       (!published || published.nextTimestamp < spec.from)
     )
       throw new Error("Missing predecessor publication");

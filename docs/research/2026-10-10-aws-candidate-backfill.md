@@ -21,6 +21,25 @@ The fourth job, October 11–November 10, adds a dated four-pool definition whil
 [October candidate admission](2026-10-11-october-candidate-admission.md). The original job key/specification
 and completed receipt are preserved; no migration or progress reset is needed.
 
+`november-30d-v1` continues November 10–December 10, 2024 (UTC, end exclusive)
+with the same four pools, including SPX and cbBTC. It retains October's scope,
+policy, dataset definition, October 11 sample start and capture-start block.
+Only its ending boundary advances. It does not replay older archives, create a
+new dataset definition or switch a reader pointer. The prior four job hashes
+remain unchanged.
+
+After operator merge and **History candidate** deployment, verify the deployed
+revision and explicitly start `november-30d-v1` using the control command below.
+November start requires October's completed receipt and aligned checkpoints.
+Its initialization also verifies the original dataset boundary against October.
+Production remains on its existing dataset.
+
+The [October verification receipt](2026-10-12-october-candidate-verification.json)
+records all 30 daily chart responses in each currency: 8,640 priced market
+buckets per currency, plus all post-creation SPX/cbBTC pool buckets. Activity
+pagination was sampled at the beginning, middle and end, rather than exhaustively
+reconciled against chain logs.
+
 The worker selects the earliest incomplete reviewed job. Missing or paused jobs
 stop selection, so deployment/completion never automatically queues another
 month. Starting a successor transactionally requires its predecessor to be
@@ -190,3 +209,11 @@ tests passed. The real DynamoDB Local/DuckDB rehearsal passed for both successor
 admissions and the retained chart/activity API; it made no AWS writes or RPC
 calls. The candidate Linux image imported its handler and executed native DuckDB
 with networking disabled. No candidate job was started during implementation.
+
+November continuation validation: TypeScript and 269 history/operator tests pass.
+The DynamoDB Local/DuckDB rehearsal seeds a completed October boundary, then
+executes November capture, Parquet aggregation, sampling and publication. It
+checks the unchanged dataset pointer/definition, October receipt and original
+cursor starts, rejects an incomplete predecessor and changed dataset boundary,
+and exercises idempotent start and pause/resume. This made no AWS writes or RPC
+calls; it is not a claim that a full month was captured locally.

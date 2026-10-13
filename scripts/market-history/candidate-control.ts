@@ -22,7 +22,7 @@ if (
         !candidateChunks.includes(query as CandidateChunk)))
 )
   throw new Error(
-    "Usage: candidate-control.ts start|pause|resume|status <AWS profile> [launch-30d-v1|august-30d-v1|september-30d-v1|october-30d-v1]; query <AWS profile> <query string>",
+    "Usage: candidate-control.ts start|pause|resume|status <AWS profile> [launch-30d-v1|august-30d-v1|september-30d-v1|october-30d-v1|november-30d-v1]; query <AWS profile> <query string>",
   );
 const aws = (args: string[]) =>
   JSON.parse(
