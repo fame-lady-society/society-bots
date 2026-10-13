@@ -46,6 +46,11 @@ import {
 } from "../../src/fame-market-history/dataset.ts";
 import { reusePreAdmissionSample } from "../../src/fame-market-history/admission-opening.ts";
 import { collect } from "../../src/fame-market-history/collector.ts";
+import { candidateRun } from "../../src/fame-market-history/candidate-run.ts";
+import {
+  fullScope,
+  fullMetadata,
+} from "../../src/fame-market-history/full-scope.ts";
 import { sampledMarketBucket } from "../../src/fame-market-history/sampled-market.ts";
 import { deriveSampledObservation } from "../../src/fame-market-history/sampled-rpc.ts";
 import {
@@ -573,6 +578,14 @@ try {
     }),
   );
   await assert.rejects(store.acquire("wrong-spec"), /specification changed/);
+  const retainedLaunchPublication = (
+    await db.send(
+      new GetCommand({
+        TableName: table,
+        Key: sampledKey(spec.policyRevision, "published"),
+      }),
+    )
+  ).Item;
   // Transaction-only continuation fixture: move the durable frontiers to the
   // completed boundary. This does NOT claim the intervening month was replayed.
   await db.send(
@@ -705,7 +718,7 @@ try {
   const octBounds = await prepareCandidate(chain, "october-30d-v1");
   await october.initialize("oct-proof", octBounds, targetMetadata);
   await assert.rejects(
-    october.activateOctober("oct-proof"),
+    october.activateAdmission("oct-proof"),
     /opening observation/,
   );
   const octStart = candidateSpec("october-30d-v1").from;
@@ -731,10 +744,10 @@ try {
     }),
   );
   await october.control("pause");
-  await assert.rejects(october.activateOctober("oct-proof"));
+  await assert.rejects(october.activateAdmission("oct-proof"));
   await october.control("resume");
-  await assert.rejects(october.activateOctober("wrong-owner"));
-  await october.activateOctober("oct-proof");
+  await assert.rejects(october.activateAdmission("wrong-owner"));
+  await october.activateAdmission("oct-proof");
   assert.deepEqual(await september.read(), completedSeptember);
   assert.equal(
     (await db.send(new GetCommand({ TableName: table, Key: activeScopeKey })))
@@ -771,7 +784,7 @@ try {
   assert.equal(next.phase, "yielded");
   assert((await newSamples.publication())!.nextTimestamp > octStart);
   await october.finish("oct-proof", next, zero);
-  const november = candidateStore(db, table, () => now, "november-30d-v1");
+  const november = candidateStore(db, table, () => now, "catchup-4-1733788800");
   await assert.rejects(november.control("start"), /must be complete/);
   assert(await october.acquire("oct-complete"));
   // Seed only the month-end fixture, not an invented claim of a full local month.
@@ -796,7 +809,7 @@ try {
     maxEvents: 5000,
   });
   await set(progressKey(target.id), "nextBlock", octBounds.end.number + 1);
-  const novStart = candidateSpec("november-30d-v1").from;
+  const novStart = candidateSpec("catchup-4-1733788800").from;
   const anchor = h(octBounds.endBefore.number - 150);
   await db.send(
     new UpdateCommand({
@@ -848,13 +861,25 @@ try {
       ),
     );
   const beforeNovember = await activeAndDefinition();
+  const run = candidateRun(db, table, () => Date.parse("2024-12-11T12:00:00Z"));
+  await run.control("start");
+  const frozen = await run.read();
+  await candidateRun(db, table, () =>
+    Date.parse("2025-01-01T00:00:00Z"),
+  ).control("start");
+  assert.deepEqual(await run.read(), frozen);
+  await run.control("pause");
+  assert.equal(await run.select(), undefined);
+  await assert.rejects(november.control("start"), /continuation requires/);
+  await run.control("resume");
+
   assert.equal(await november.read(), undefined);
-  await november.control("start");
+  assert.equal(await run.select(), "catchup-4-1733788800");
   await november.control("start");
   assert(await november.acquire("nov-proof"));
   chain.finalized = async () => h(spec.startBlock + 150 * 43200 + 100);
-  const novBounds = await prepareCandidate(chain, "november-30d-v1");
-  assert.deepEqual(novBounds.captureStart, octBounds.captureStart);
+  const novBounds = await prepareCandidate(chain, "catchup-4-1733788800");
+  assert.deepEqual(novBounds.captureStart, octBounds.endBefore);
   await assert.rejects(
     november.initialize(
       "nov-proof",
@@ -864,29 +889,56 @@ try {
       },
       targetMetadata,
     ),
-    /boundary changed/,
+    /boundary does not match/,
   );
-  await november.initialize("nov-proof", novBounds, targetMetadata);
-  assert.deepEqual(await activeAndDefinition(), beforeNovember);
+  const full = fullScope(),
+    fullMeta = fullMetadata(targetMetadata);
+  await november.initialize("nov-proof", novBounds, fullMeta);
+  const fullSamples = awsSampled({
+    scope: full,
+    metadata: fullMeta,
+    table,
+    bucket: "local",
+    db,
+    s3,
+  });
+  await fullSamples.cursor({
+    startTimestamp: novStart,
+    nextTimestamp: novStart,
+    policyRevision: candidateSpec("catchup-4-1733788800").policyRevision,
+    anchor: novBounds.captureStart!,
+  });
+  await fullSamples.seedOpening(
+    reusePreAdmissionSample(target, full, finalEvidence),
+  );
+  await november.activateAdmission("nov-proof");
+  const fullDefinition = (
+    await db.send(
+      new GetCommand({ TableName: table, Key: datasetKey(full.id) }),
+    )
+  ).Item;
+  assert.equal(decodeDataset(fullDefinition!).history.length, 2);
+  const oldDefinition = (await activeAndDefinition())[1];
+  assert.deepEqual(oldDefinition, beforeNovember[1]);
   await november.control("pause");
   assert.equal(await november.canContinue("nov-proof"), false);
   await november.control("resume");
   const novResult = await advanceCandidate({
-    chunk: "november-30d-v1",
+    chunk: "catchup-4-1733788800",
     bounds: novBounds,
     chain,
     archive: awsArchive({ table, bucket: "local", db, s3 }),
-    sampled: newSamples,
+    sampled: fullSamples,
     sample: async (t, b, a) => ({
-      ...sampledFixture(t, target),
+      ...sampledFixture(t, full),
       block: b,
       after: a,
     }),
     aggregate: () =>
       aggregateNext({
-        scope: target,
+        scope: full,
         startBlock: novBounds.captureStart!.number,
-        metadata: targetMetadata,
+        metadata: fullMeta,
         store: awsAggregation({ table, bucket: "local", db, s3 }),
       }),
     aggregationNext: november.aggregationNext,
@@ -894,27 +946,88 @@ try {
     maxSteps: 6,
   });
   assert.equal(novResult.phase, "yielded");
-  assert((await newSamples.publication())!.nextTimestamp > novStart);
-  assert.equal((await newSamples.collected())!.startTimestamp, octStart);
+  assert((await fullSamples.publication())!.nextTimestamp > novStart);
+  assert.equal((await fullSamples.collected())!.startTimestamp, novStart);
   assert.equal(
     (
       await awsArchive({ table, bucket: "local", db, s3 }).cursor(
-        target.id,
+        full.id,
         novBounds.captureStart!.number,
       )
     ).startBlock,
-    octBounds.captureStart!.number,
+    novBounds.captureStart!.number,
   );
-  assert.deepEqual(await activeAndDefinition(), beforeNovember);
+
   assert.deepEqual(await october.read(), completedOctober);
   await november.finish("nov-proof", novResult, zero);
+  // Undo the transaction fixture's synthetic launch horizon before reader checks;
+  // its generation was intentionally not regenerated while seeding checkpoints.
+  await db.send(
+    new PutCommand({ TableName: table, Item: retainedLaunchPublication! }),
+  );
+  for (const currency of ["ETH", "USDC"]) {
+    for (const from of [spec.from, octStart, novStart]) {
+      const q = new URLSearchParams({
+        view: "chart",
+        series: "market",
+        currency,
+        resolution: "300",
+        from: String(from),
+        to: String(from + 300),
+      });
+      const chart = await call(q);
+      assert.equal(chart.upserts.length, 1);
+      assert.equal(chart.upserts[0].publicationStatus, "published");
+    }
+  }
+  // Seed aligned completion to test automatic successor admission and final cutoff.
+  assert(await november.acquire("nov-complete"));
+  for (const key of [cursorKey(full.id), progressKey(full.id)])
+    await set(key, "nextBlock", novBounds.end.number + 1);
+  for (const kind of ["collected", "published"] as const)
+    await set(
+      sampledKey(candidateSpec("catchup-4-1733788800").policyRevision, kind),
+      "nextTimestamp",
+      1733788800,
+    );
+  await november.finish("nov-complete", { phase: "complete" }, zero);
+  await run.control("pause");
+  assert.equal(await run.select(), undefined);
+  await run.control("resume");
+  const lastChunk = "catchup-5-1733875200" as const;
+  assert.equal(await run.select(), lastChunk);
+  const last = candidateStore(db, table, () => now, lastChunk);
+  assert.equal(
+    candidateSpec(lastChunk).to - candidateSpec(lastChunk).from,
+    86400,
+  );
+  assert(await last.acquire("last-proof"));
+  chain.finalized = async () => h(spec.startBlock + 160 * 43200);
+  const lastBounds = await prepareCandidate(chain, lastChunk);
+  assert.deepEqual(lastBounds.captureStart, novBounds.captureStart);
+  await last.initialize("last-proof", lastBounds, fullMeta);
+  await run.control("pause");
+  assert.equal(await last.canContinue("last-proof"), false);
+  await run.control("resume");
+  assert.equal(await last.canContinue("last-proof"), true);
+  assert.deepEqual(
+    (
+      await db.send(
+        new GetCommand({ TableName: table, Key: datasetKey(full.id) }),
+      )
+    ).Item,
+    fullDefinition,
+  );
+  await last.finish("last-proof", { phase: "complete" }, zero);
+  assert.equal(await run.select(), undefined);
+  assert.equal((await run.read())!.to, 1733875200);
   console.log(
     JSON.stringify({
       proof: "candidate-pipeline",
       retainedHistoryUnchanged: true,
       datedMembershipBoundary: true,
       octoberStartsAtBoundary: true,
-      novemberPreservesDatasetAndOpening: true,
+      fullRunAdmissionAndFrozenCutoff: true,
       invocations,
       samples,
       oldDayBuckets: 288,

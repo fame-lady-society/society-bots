@@ -1,4 +1,5 @@
 /** Reviewed candidate chunks. Production promotion is deliberately absent. */
+import { fullScope } from "./full-scope.ts";
 import { octoberScope } from "./october-scope.ts";
 import { DECODER_VERSION } from "./decode.ts";
 import type { Header } from "./model.ts";
@@ -10,6 +11,7 @@ import {
   type SampledEvidence,
 } from "./sampled-rpc.ts";
 import { referenceBoundary } from "./reference-collector.ts";
+import { MAX_PUBLISHED_CANDLES } from "./worker.ts";
 import { collect, type ArchiveStore, type ChainReader } from "./collector.ts";
 import { publishSampled, type SampledStore } from "./sampled-live.ts";
 
@@ -19,37 +21,103 @@ export const candidateChunks = [
   "august-30d-v1",
   "september-30d-v1",
   "october-30d-v1",
-  "november-30d-v1",
 ] as const;
-export type CandidateChunk = (typeof candidateChunks)[number];
+export type CandidateChunk =
+  | (typeof candidateChunks)[number]
+  | `catchup-${number}-${number}`;
+const DAY = 86400,
+  MONTH = 30 * DAY,
+  START = 1720828800;
+export const catchupStart = START + 4 * MONTH;
+export function candidatePlan(to: number): CandidateChunk[] {
+  if (
+    !Number.isSafeInteger(to) ||
+    to % DAY ||
+    to <= catchupStart ||
+    to > 4102444800
+  )
+    throw new Error("Invalid candidate cutoff");
+  const chunks: CandidateChunk[] = [...candidateChunks];
+  for (let from = catchupStart, i = 4; from < to; from += MONTH, i++)
+    chunks.push(`catchup-${i}-${Math.min(from + MONTH, to)}`);
+  return chunks;
+}
+function interval(chunk: CandidateChunk) {
+  const old = candidateChunks.indexOf(
+    chunk as (typeof candidateChunks)[number],
+  );
+  if (old >= 0)
+    return {
+      index: old,
+      from: START + old * MONTH,
+      to: START + (old + 1) * MONTH,
+    };
+  const match = /^catchup-([0-9]+)-([0-9]+)$/.exec(chunk);
+  const index = Number(match?.[1]),
+    to = Number(match?.[2]),
+    from = START + index * MONTH;
+  if (
+    !match ||
+    !Number.isSafeInteger(index) ||
+    index < 4 ||
+    !Number.isSafeInteger(to) ||
+    to > 4102444800 ||
+    to % DAY ||
+    to <= from ||
+    to > from + MONTH ||
+    chunk !== `catchup-${index}-${to}`
+  )
+    throw new Error("Unknown candidate chunk");
+  return { index, from, to };
+}
+export function candidatePrevious(
+  chunk: CandidateChunk,
+): CandidateChunk | undefined {
+  const { index, from } = interval(chunk);
+  return index === 0
+    ? undefined
+    : index <= 4
+      ? candidateChunks[index - 1]
+      : `catchup-${index - 1}-${from}`;
+}
+export const candidateAdmission = (chunk: CandidateChunk) =>
+  interval(chunk).index === 3 || interval(chunk).index === 4;
+export const fullCandidate = (chunk: CandidateChunk) =>
+  interval(chunk).index >= 4;
 export function candidateJobKey(chunk: CandidateChunk) {
   candidateSpec(chunk); // Runtime callers cannot introduce arbitrary chunks.
   return { pk: `candidate:${chunk}`, sk: "job" };
 }
-const expanded = (chunk: CandidateChunk) =>
-  chunk === "october-30d-v1" || chunk === "november-30d-v1";
+const expanded = (chunk: CandidateChunk) => interval(chunk).index >= 3;
 export const candidateScope = (chunk: CandidateChunk = "launch-30d-v1") =>
-  expanded(chunk) ? octoberScope() : launchScope();
+  fullCandidate(chunk)
+    ? fullScope()
+    : expanded(chunk)
+      ? octoberScope()
+      : launchScope();
 export function candidateSpec(chunk: CandidateChunk = "launch-30d-v1") {
-  const index = candidateChunks.indexOf(chunk);
-  if (index < 0) throw new Error("Unknown candidate chunk");
+  const { from, to } = interval(chunk);
   const scope = candidateScope(chunk);
   return {
     version: chunk,
-    ...(chunk === "october-30d-v1"
+    ...(candidateAdmission(chunk)
       ? { historyMode: "dated-membership-v1" }
       : {}),
     decoderVersion: DECODER_VERSION,
-    from: 1720828800 + index * 30 * 86400,
-    to: 1720828800 + (index + 1) * 30 * 86400,
+    from,
+    to,
     startBlock: 17019741,
     scopeId: scope.id,
     policyRevision: sampledPolicy(scope).revision,
   };
 }
 /** Scope cursors retain their original start across later chunks. */
-export const candidateSampleStart = (chunk: CandidateChunk = "launch-30d-v1") =>
-  candidateSpec(expanded(chunk) ? "october-30d-v1" : "launch-30d-v1").from;
+export const candidateSampleStart = (
+  chunk: CandidateChunk = "launch-30d-v1",
+) =>
+  fullCandidate(chunk)
+    ? catchupStart
+    : candidateSpec(expanded(chunk) ? "october-30d-v1" : "launch-30d-v1").from;
 export const candidateHash = (chunk: CandidateChunk = "launch-30d-v1") =>
   digest(JSON.stringify(candidateSpec(chunk)));
 export interface CandidateBounds {
@@ -199,7 +267,7 @@ export async function advanceCandidate(args: {
     const published = await sampled.publication();
     if (
       spec.version !== "launch-30d-v1" &&
-      spec.version !== "october-30d-v1" &&
+      !candidateAdmission(spec.version) &&
       (!published || published.nextTimestamp < spec.from)
     )
       throw new Error("Missing predecessor publication");
@@ -223,7 +291,13 @@ export async function advanceCandidate(args: {
         store: archive,
         startBlock,
         endBlock: bounds.end.number,
-        maxBlocks: 2000,
+        // Base has two-second blocks. Reserve two bucket slots for boundary
+        // context so all pool candles plus the market fit the atomic publish.
+        maxBlocks: Math.min(
+          2000,
+          (Math.floor(MAX_PUBLISHED_CANDLES / (scope.pools.length + 1)) - 2) *
+            150,
+        ),
         maxEvents: 5000,
       });
       steps++;

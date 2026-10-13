@@ -9,11 +9,14 @@ import {
   advanceCandidate,
   prepareCandidate,
   candidateSpec,
-  candidateChunks,
+  candidateAdmission,
+  candidatePrevious,
+  fullCandidate,
   candidateScope,
   type CandidateBounds,
 } from "./candidate.ts";
-import { launchScope } from "./local-backfill.ts";
+import { candidateRun } from "./candidate-run.ts";
+import { fullMetadata } from "./full-scope.ts";
 import { boundedTransport, chainReader, type RpcMetrics } from "./rpc.ts";
 import { awsArchive } from "./storage.ts";
 import { awsSampled } from "./sampled-storage.ts";
@@ -40,14 +43,8 @@ export async function handler(
     ),
     s3 = new S3Client({ maxAttempts: 2 });
   const owner = randomUUID();
-  // Never create/queue the next chunk automatically. A paused predecessor blocks
-  // later chunks, and completed jobs remain immutable audit records.
-  let chunk = candidateChunks[0] as (typeof candidateChunks)[number];
-  for (const id of candidateChunks) {
-    const existing = await candidateStore(db, table, Date.now, id).read();
-    chunk = id;
-    if (!existing?.completed) break;
-  }
+  const chunk = await candidateRun(db, table).select();
+  if (!chunk) return { phase: "idle" };
   const store = candidateStore(db, table, Date.now, chunk),
     job = await store.acquire(owner);
   if (!job) return { phase: "idle" }; // No SSM or RPC access before explicit start, after pause/completion, or while leased.
@@ -93,12 +90,16 @@ export async function handler(
         metadata.blockNumber = bounds.launch.number;
         metadata.blockHash = bounds.launch.hash;
       }
-      if (chunk === "october-30d-v1") metadata = octoberMetadata(metadata);
+      if (candidateAdmission(chunk))
+        metadata = fullCandidate(chunk)
+          ? fullMetadata(metadata)
+          : octoberMetadata(metadata);
       await store.initialize(owner, bounds, metadata);
     }
     const selected = await activeDataset(table, db);
     const staging =
-      chunk === "october-30d-v1" && selected.scope.id === launchScope().id
+      candidateAdmission(chunk) &&
+      selected.scope.id === candidateSpec(candidatePrevious(chunk)!).scopeId
         ? { sourceScopeId: selected.scope.id, targetScopeId: scope.id }
         : undefined;
     if (selected.scope.id !== scope.id && !staging)
@@ -144,7 +145,7 @@ export async function handler(
         db,
         table,
         Date.now,
-        "september-30d-v1",
+        candidatePrevious(chunk)!,
       ).read();
       if (!previous?.completed || !previous.bounds)
         throw new Error("Incomplete staging source");
@@ -173,7 +174,7 @@ export async function handler(
       await sampled.seedOpening(mapped);
       if (!(await canContinue())) result = { phase: "yielded" };
       else {
-        await store.activateOctober(owner);
+        await store.activateAdmission(owner);
         result = { phase: "candidate-activated" };
       }
     } else {

@@ -10,7 +10,7 @@ import {
   type Transport,
 } from "viem";
 import { base } from "viem/chains";
-import { poolBorn } from "./pool-lifecycle.ts";
+import { poolBorn, originsFor } from "./pool-lifecycle.ts";
 import { historyScope } from "./model.ts";
 import type { Scope, Header } from "./model.ts";
 import {
@@ -98,11 +98,13 @@ export function sampledCallsAtBlock(scope: Scope, block: number) {
   const active = historyScope({
     ...scope.registry,
     pools: scope.registry.pools.filter(
-      (p) => !scope.pools.some((d) => d.id === p.id) || poolBorn(p.id, block),
+      (p) =>
+        !scope.pools.some((d) => d.id === p.id) ||
+        poolBorn(p.id, block, originsFor(scope)),
     ),
   });
   const policy = sampledPolicy(active);
-  if (policy.sources.some((p) => !poolBorn(p.id, block)))
+  if (policy.sources.some((p) => !poolBorn(p.id, block, originsFor(scope))))
     throw new Error("Conversion route predates its deployment");
   return sampledCalls(active);
 }

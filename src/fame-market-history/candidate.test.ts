@@ -146,7 +146,7 @@ test("reviewed chunks are contiguous, keep the deployed first hash, and isolate 
   );
   const specs = candidateChunks.map(candidateSpec);
   expect(specs.map((s) => s.to - s.from)).toEqual([
-    2592000, 2592000, 2592000, 2592000, 2592000,
+    2592000, 2592000, 2592000, 2592000,
   ]);
   expect(specs[1].from).toBe(specs[0].to);
   expect(specs[2].from).toBe(specs[1].to);
@@ -289,9 +289,9 @@ test("November continues the four-pool dataset without changing deployed job ide
     "db998fa0bfb2ee1db2ac05e78d638c82a27615572bfdbb5119834952f4fd9a5e",
   ]);
   const october = candidateSpec("october-30d-v1"),
-    november = candidateSpec("november-30d-v1");
-  expect(november.scopeId).toBe(october.scopeId);
-  expect(november.policyRevision).toBe(october.policyRevision);
+    november = candidateSpec("catchup-4-1733788800");
+  expect(november.scopeId).not.toBe(october.scopeId);
+  expect(november.policyRevision).not.toBe(october.policyRevision);
   expect(november.from).toBe(october.to);
   expect(new Date(november.to * 1000).toISOString()).toBe(
     "2024-12-10T00:00:00.000Z",

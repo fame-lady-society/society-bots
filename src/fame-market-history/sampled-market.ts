@@ -1,4 +1,4 @@
-import { admissionOrigins, poolBorn } from "./pool-lifecycle.ts";
+import { originsFor, poolBorn } from "./pool-lifecycle.ts";
 import type { NativeActivityEvent } from "./activity-events.ts";
 import {
   parse,
@@ -36,6 +36,7 @@ const sampledRoutes: Record<string, string[]> = {
 };
 const ethUsdcPool = "uniswap-v3-usdc-weth-5bps";
 export function sampledPolicy(scope: Scope) {
+  const admissionOrigins = originsFor(scope);
   const routes: Record<string, Record<Currency, string[]>> = {};
   for (const direct of scope.pools) {
     const token =
@@ -220,12 +221,13 @@ export function sampledMarketBucket(
         )
       : null,
   });
+  const admissionOrigins = originsFor(scope);
   const notYetCreatedPoolIds = scope.pools
     .filter(
       (p) =>
         admissionOrigins[p.id] &&
         (observation
-          ? !poolBorn(p.id, observation.block.number)
+          ? !poolBorn(p.id, observation.block.number, admissionOrigins)
           : admissionOrigins[p.id].timestamp >= timestamp + 300),
     )
     .map((p) => p.id);

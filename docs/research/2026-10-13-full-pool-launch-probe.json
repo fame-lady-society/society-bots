@@ -1,0 +1,256 @@
+{
+  "proof": [
+    {
+      "id": "scale-equalizer-weth-fame",
+      "creationBlock": 22613864,
+      "bucket": 1732017000,
+      "sampleBlock": 22613976,
+      "prices": {
+        "ETH": "0.000000155464332220",
+        "USDC": "0.000486237191684792"
+      },
+      "rates": {
+        "aerodrome-cbbtc-fame": {
+          "numerator": "12146920652981423339923",
+          "denominator": "65484125000000"
+        },
+        "aerodrome-spx-fame": {
+          "numerator": "3931841275874694935746477",
+          "denominator": "3802495302850000000000"
+        },
+        "scale-equalizer-frxusd-fame": null,
+        "scale-equalizer-scale-fame": null,
+        "scale-equalizer-usdc-frxusd": null,
+        "scale-equalizer-usdc-scale": null,
+        "scale-equalizer-weth-fame": {
+          "numerator": "727935458786936236391913",
+          "denominator": "113168000000000000"
+        },
+        "slipstream-basedflick-fame": null,
+        "slipstream-spx-weth": {
+          "numerator": "9384973646242405833247742017325083693634515386355087890625",
+          "denominator": "1532495540865888858358347027150309183618739122183602176"
+        },
+        "uniswap-v2-fame-direct": {
+          "numerator": "38753196540197768305760949",
+          "denominator": "6127516812963877009"
+        },
+        "uniswap-v3-usdc-cbbtc-5bps": {
+          "numerator": "427648463453192151190119322273540625108259963513153529",
+          "denominator": "39231885846166754773973683895047915100639721527900215705600"
+        },
+        "uniswap-v3-usdc-weth-5bps": {
+          "numerator": "1198275381588469388654111027494398459591529022314697265625",
+          "denominator": "383123885216472214589586756787577295904684780545900544"
+        },
+        "uniswap-v3-weth-fame-30bps": {
+          "numerator": "39920036144883829509981441664293555375251174801998737404478090889",
+          "denominator": "6277101735386680763835789423207666416102355444464034512896"
+        },
+        "uniswap-v3-zora-weth": null,
+        "uniswap-v4-basedflick-zora": null
+      }
+    },
+    {
+      "id": "scale-equalizer-scale-fame",
+      "creationBlock": 22614190,
+      "bucket": 1732017600,
+      "sampleBlock": 22614276,
+      "prices": {
+        "ETH": "0.000000157728215465",
+        "USDC": "0.000494497302805653"
+      },
+      "rates": {
+        "aerodrome-cbbtc-fame": {
+          "numerator": "12146920652981423339923",
+          "denominator": "65484125000000"
+        },
+        "aerodrome-spx-fame": {
+          "numerator": "3931841275874694935746477",
+          "denominator": "3802495302850000000000"
+        },
+        "scale-equalizer-frxusd-fame": null,
+        "scale-equalizer-scale-fame": {
+          "numerator": "4697421",
+          "denominator": "9400"
+        },
+        "scale-equalizer-usdc-frxusd": null,
+        "scale-equalizer-usdc-scale": {
+          "numerator": "1098534003000000000000",
+          "denominator": "4445472681160813071139"
+        },
+        "scale-equalizer-weth-fame": {
+          "numerator": "727935458786936236391913",
+          "denominator": "113168000000000000"
+        },
+        "slipstream-basedflick-fame": null,
+        "slipstream-spx-weth": {
+          "numerator": "36678656083728067208520029847179016164804389141494140625",
+          "denominator": "5986310706507378352962293074805895248510699696029696"
+        },
+        "uniswap-v2-fame-direct": {
+          "numerator": "77507341797078425827360918",
+          "denominator": "12254884070087718353"
+        },
+        "uniswap-v3-usdc-cbbtc-5bps": {
+          "numerator": "6829401183791953097380108895423817808564624813079823369",
+          "denominator": "627710173538668076383578942320766641610235544446403451289600"
+        },
+        "uniswap-v3-usdc-weth-5bps": {
+          "numerator": "4804561500199738802988106915064976318260996853439697265625",
+          "denominator": "1532495540865888858358347027150309183618739122183602176"
+        },
+        "uniswap-v3-weth-fame-30bps": {
+          "numerator": "39920036144883829509981441664293555375251174801998737404478090889",
+          "denominator": "6277101735386680763835789423207666416102355444464034512896"
+        },
+        "uniswap-v3-zora-weth": null,
+        "uniswap-v4-basedflick-zora": null
+      }
+    },
+    {
+      "id": "slipstream-basedflick-fame",
+      "creationBlock": 34552255,
+      "bucket": 1755893700,
+      "sampleBlock": 34552326,
+      "prices": {
+        "ETH": null,
+        "USDC": null
+      },
+      "rates": {
+        "aerodrome-cbbtc-fame": {
+          "numerator": "748601170195726041689099",
+          "denominator": "3666815000000000"
+        },
+        "aerodrome-spx-fame": {
+          "numerator": "444059986058982600232337",
+          "denominator": "170175690348750000000"
+        },
+        "scale-equalizer-frxusd-fame": null,
+        "scale-equalizer-scale-fame": {
+          "numerator": "779212090508786695150451",
+          "denominator": "14613589136755393896031"
+        },
+        "scale-equalizer-usdc-frxusd": null,
+        "scale-equalizer-usdc-scale": {
+          "numerator": "40068548000000000000",
+          "denominator": "1345693081706813390663"
+        },
+        "scale-equalizer-weth-fame": {
+          "numerator": "40178731408594090793908853",
+          "denominator": "4798714611669361297"
+        },
+        "slipstream-basedflick-fame": null,
+        "slipstream-spx-weth": {
+          "numerator": "19732200768859970757762017696913929126481986517063759765625",
+          "denominator": "6129982163463555433433388108601236734474956488734408704"
+        },
+        "uniswap-v2-fame-direct": {
+          "numerator": "9075847710884258548922959",
+          "denominator": "1071940303278320468"
+        },
+        "uniswap-v3-usdc-cbbtc-5bps": {
+          "numerator": "214827350930471853524175530774456851242758391232223809",
+          "denominator": "25108406941546723055343157692830665664409421777856138051584"
+        },
+        "uniswap-v3-usdc-weth-5bps": {
+          "numerator": "7391168868531147444509850568841316791620935683935791015625",
+          "denominator": "1532495540865888858358347027150309183618739122183602176"
+        },
+        "uniswap-v3-weth-fame-30bps": {
+          "numerator": "13307452939011733979356541301928528558057464080364569646217764025",
+          "denominator": "1569275433846670190958947355801916604025588861116008628224"
+        },
+        "uniswap-v3-zora-weth": {
+          "numerator": "32640649848920860687925405897025637714285362429659025",
+          "denominator": "1569275433846670190958947355801916604025588861116008628224"
+        },
+        "uniswap-v4-basedflick-zora": {
+          "numerator": "9049657305587431416549064805771600597747529090021669264670609",
+          "denominator": "1569275433846670190958947355801916604025588861116008628224"
+        }
+      }
+    },
+    {
+      "id": "scale-equalizer-frxusd-fame",
+      "creationBlock": 43282547,
+      "bucket": 1773354300,
+      "sampleBlock": 43282626,
+      "prices": {
+        "ETH": "0.000000118106097814",
+        "USDC": "0.000243841692497866"
+      },
+      "rates": {
+        "aerodrome-cbbtc-fame": {
+          "numerator": "1791853160212658646115381",
+          "denominator": "6129695000000000"
+        },
+        "aerodrome-spx-fame": {
+          "numerator": "1498200917747239238955479",
+          "denominator": "1162193401418000000000"
+        },
+        "scale-equalizer-frxusd-fame": {
+          "numerator": "99125000000000000000000",
+          "denominator": "24168930360654842759"
+        },
+        "scale-equalizer-scale-fame": {
+          "numerator": "1868907173178334951861865",
+          "denominator": "8327157098725685032807"
+        },
+        "scale-equalizer-usdc-frxusd": {
+          "numerator": "7812556307456852324488815053438407766027296917332440189473864189",
+          "denominator": "7813163175738799445439437168571384550275512042921586625000000000"
+        },
+        "scale-equalizer-usdc-scale": {
+          "numerator": "1094057534000000000000",
+          "denominator": "20551526021424251045701"
+        },
+        "scale-equalizer-weth-fame": {
+          "numerator": "73844284842487053441930161",
+          "denominator": "8561814788958414762"
+        },
+        "slipstream-basedflick-fame": {
+          "numerator": "78313205540320982696177479299827173348258092174538646281",
+          "denominator": "1569275433846670190958947355801916604025588861116008628224"
+        },
+        "slipstream-spx-weth": {
+          "numerator": "2559202031867358789294669744625136427519037585260009765625",
+          "denominator": "383123885216472214589586756787577295904684780545900544"
+        },
+        "uniswap-v2-fame-direct": {
+          "numerator": "11457994954056004415066997",
+          "denominator": "1333023894942963017"
+        },
+        "uniswap-v3-usdc-cbbtc-5bps": {
+          "numerator": "8939500323393534868627710600798826783315456742139962809",
+          "denominator": "627710173538668076383578942320766641610235544446403451289600"
+        },
+        "uniswap-v3-usdc-weth-5bps": {
+          "numerator": "197749265991748463614684710956414231849212308967041015625",
+          "denominator": "95780971304118053647396689196894323976171195136475136"
+        },
+        "uniswap-v3-weth-fame-30bps": {
+          "numerator": "53940906521623168798107836912421724345907083761501468867531515361",
+          "denominator": "6277101735386680763835789423207666416102355444464034512896"
+        },
+        "uniswap-v3-zora-weth": {
+          "numerator": "13281946068566713353738217923035853773745238235295729",
+          "denominator": "1569275433846670190958947355801916604025588861116008628224"
+        },
+        "uniswap-v4-basedflick-zora": {
+          "numerator": "148840666158770833174958997936633443367392629789298202402361",
+          "denominator": "98079714615416886934934209737619787751599303819750539264"
+        }
+      }
+    }
+  ],
+  "metrics": {
+    "requests": 45,
+    "responseBytes": 664714,
+    "methods": {
+      "eth_getBlockByNumber": 41,
+      "eth_call": 4
+    }
+  },
+  "awsWrites": 0
+}
