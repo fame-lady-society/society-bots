@@ -16,6 +16,14 @@ export interface RpcMetrics {
   requests: number;
   responseBytes: number;
   methods: Record<string, number>;
+  /** Fixed labels/numbers only. Never retain provider text, URLs or request params. */
+  lastFailure?: {
+    method: string;
+    kind: "timeout" | "network" | "http" | "provider" | "invalid-response";
+    durationMs: number;
+    httpStatus?: number;
+    rpcCode?: number;
+  };
 }
 
 /** viem's installed HTTP transport cannot cap streamed response bytes. Keep this
@@ -71,6 +79,10 @@ export function boundedTransport({
               ? Math.max(maxResponseBytes, 4 * 1024 * 1024)
               : maxResponseBytes;
           const controller = new AbortController();
+          const started = now();
+          let kind: NonNullable<RpcMetrics["lastFailure"]>["kind"] = "network";
+          let httpStatus: number | undefined;
+          let rpcCode: number | undefined;
           const timeout = setTimeout(
             () => controller.abort(),
             Math.min(10_000, deadline - now()),
@@ -88,6 +100,8 @@ export function boundedTransport({
               throw new RangeLimit("RPC range response too large");
             }
             if (!response.ok) {
+              kind = "http";
+              httpStatus = response.status;
               await response.body?.cancel();
               throw new Error(`RPC HTTP status ${response.status}`);
             }
@@ -110,6 +124,7 @@ export function boundedTransport({
               }
               chunks.push(value);
             }
+            kind = "invalid-response";
             const body = record(
               JSON.parse(Buffer.concat(chunks).toString("utf8")),
             );
@@ -119,6 +134,12 @@ export function boundedTransport({
               const error = record(body.error);
               if (error.code === -32005)
                 throw new RangeLimit("RPC range limit");
+              kind = "provider";
+              if (
+                typeof error.code === "number" &&
+                Number.isSafeInteger(error.code)
+              )
+                rpcCode = error.code;
               // Provider messages can include credentials/URLs. Never propagate them.
               throw new Error(`RPC rejected ${method}`);
             }
@@ -127,7 +148,25 @@ export function boundedTransport({
           } catch (error) {
             if (error instanceof RangeLimit || error instanceof WorkLimit)
               throw error;
-            throw new Error(`History RPC ${method} failed`);
+            const safeMethod = [
+              "eth_call",
+              "eth_chainId",
+              "eth_getLogs",
+              "eth_getBlockByNumber",
+              "eth_getBlockByHash",
+            ].includes(method)
+              ? method
+              : "other";
+            metrics.lastFailure = {
+              method: safeMethod,
+              kind: controller.signal.aborted ? "timeout" : kind,
+              durationMs: Math.max(0, now() - started),
+              ...(httpStatus === undefined ? {} : { httpStatus }),
+              ...(rpcCode === undefined ? {} : { rpcCode }),
+            };
+            throw new Error(
+              `History RPC ${safeMethod} failed (${metrics.lastFailure.kind})`,
+            );
           } finally {
             clearTimeout(timeout);
           }

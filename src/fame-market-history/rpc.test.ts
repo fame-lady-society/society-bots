@@ -2,6 +2,7 @@ import { boundedTransport, chainReader } from "./rpc.ts";
 import { historyScope } from "./model.ts";
 import { fameHistoryRegistry } from "./registry.ts";
 import { createPublicClient } from "viem";
+import { jest } from "@jest/globals";
 
 const scope = historyScope(fameHistoryRegistry);
 function fixture(respond: (body: Record<string, unknown>) => Response) {
@@ -77,6 +78,80 @@ test("provider failures do not retry invisibly or expose credentials", async () 
     expect(String(error)).not.toContain("private-key");
   }
   expect(f.requests).toHaveLength(1);
+  expect(f.rpc.metrics.lastFailure).toMatchObject({
+    method: "eth_chainId",
+    kind: "network",
+  });
+  expect(JSON.stringify(f.rpc.metrics)).not.toContain("private-key");
+});
+
+test.each([401, 429, 503])(
+  "records HTTP %i without response text",
+  async (status) => {
+    const f = fixture(() => new Response("private-key", { status }));
+    await expect(f.client.getChainId()).rejects.toThrow("http");
+    expect(f.rpc.metrics.lastFailure).toMatchObject({
+      kind: "http",
+      httpStatus: status,
+    });
+    expect(JSON.stringify(f.rpc.metrics)).not.toContain("private-key");
+    expect(f.requests).toHaveLength(1);
+  },
+);
+
+test("records only numeric provider codes, including through viem wrapping", async () => {
+  const f = fixture(
+    (body) =>
+      new Response(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: body.id,
+          error: { code: -32000, message: "private-key", data: "private-key" },
+        }),
+      ),
+  );
+  await expect(f.client.getChainId()).rejects.toThrow("provider");
+  expect(f.rpc.metrics.lastFailure).toMatchObject({
+    kind: "provider",
+    rpcCode: -32000,
+  });
+  expect(JSON.stringify(f.rpc.metrics)).not.toContain("private-key");
+});
+
+test("malformed response is distinct from provider and network errors", async () => {
+  const f = fixture(() => new Response("private-key"));
+  await expect(f.client.getChainId()).rejects.toThrow("invalid-response");
+  expect(f.rpc.metrics.lastFailure?.kind).toBe("invalid-response");
+});
+
+test("timeout is recorded without propagating fetch errors", async () => {
+  jest.useFakeTimers();
+  try {
+    const rpc = boundedTransport({
+      url: "https://example.test/private-key",
+      maxRequests: 2,
+      maxResponseBytes: 1024,
+      deadline: Date.now() + 60000,
+      fetcher: async (_input, init) =>
+        new Promise((_resolve, reject) =>
+          init?.signal?.addEventListener("abort", () =>
+            reject(new Error("private-key")),
+          ),
+        ),
+    });
+    const failure = expect(
+      createPublicClient({ transport: rpc.transport }).getChainId(),
+    ).rejects.toThrow("timeout");
+    await jest.advanceTimersByTimeAsync(10000);
+    await failure;
+    expect(rpc.metrics.lastFailure).toMatchObject({
+      kind: "timeout",
+      durationMs: 10000,
+    });
+    expect(JSON.stringify(rpc.metrics)).not.toContain("private-key");
+  } finally {
+    jest.useRealTimers();
+  }
 });
 
 test("per-run request limit prevents additional outbound calls", async () => {

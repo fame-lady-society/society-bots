@@ -252,3 +252,30 @@ automatic successor creation, original dataset starts, a one-day final chunk,
 run-wide pause at handoff, retry-stable cutoff and no work beyond it. It preserves
 prior definitions and October's completed receipt. This local fixture makes no
 AWS writes or chain RPC requests and does not claim a full-month local capture.
+
+### RPC failure diagnosis (2026-10-13)
+
+The full candidate run advanced despite multiple invocations ending with
+`rpc-failure`. The deployed transport discarded the underlying category, so
+those existing logs cannot establish whether the provider timed out, throttled,
+rejected a historical read, or returned malformed data. A local read-only probe
+of 24 November 10 historical samples succeeded (72 requests, 938,699 response
+bytes); this does not establish AWS/provider reliability.
+
+Transport metrics now retain `lastFailure` with a fixed failure kind (`timeout`,
+`network`, `http`, `provider`, or `invalid-response`), an allowlisted method,
+duration in milliseconds, and optional numeric HTTP status/RPC error code.
+Candidate logs and `candidate-control.ts status fls-power full` expose it under
+`lastMetrics`. No provider text, request parameters, URLs, response bodies, or
+exception causes are retained. This is the last failure within that invocation,
+not a cumulative history; CloudWatch retains previous invocation records.
+
+Request/byte/deadline limits still yield normally, range limits still split,
+and checkpoints still resume on the next run. No in-request retries were added
+without evidence of the failure category. After operator merge, deploy only
+the **History candidate** workflow, then inspect `lastMetrics.lastFailure` on
+the next failed invocation: HTTP 401/403 requires credential/access checks;
+429 requires provider rate-limit investigation; timeout/network/5xx warrants
+bounded retry consideration; provider codes need a targeted historical-read
+probe. Repeated failure at the same checkpoint must not be treated as progress.
+This change does not switch datasets, restart jobs, or deploy production.
