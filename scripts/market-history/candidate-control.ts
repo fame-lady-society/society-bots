@@ -7,22 +7,20 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { candidateStore } from "../../src/fame-market-history/candidate-storage.ts";
 import {
-  candidateChunks,
+  candidateSpec,
   type CandidateChunk,
 } from "../../src/fame-market-history/candidate.ts";
+import { candidateRun } from "../../src/fame-market-history/candidate-run.ts";
 const [command, profile, query] = process.argv.slice(2);
 if (
   !["start", "pause", "resume", "status", "query"].includes(command) ||
   !profile ||
   (command === "query"
     ? process.argv.length !== 5
-    : process.argv.length < 4 ||
-      process.argv.length > 5 ||
-      (query !== undefined &&
-        !candidateChunks.includes(query as CandidateChunk)))
+    : process.argv.length < 4 || process.argv.length > 5)
 )
   throw new Error(
-    "Usage: candidate-control.ts start|pause|resume|status <AWS profile> [launch-30d-v1|august-30d-v1|september-30d-v1|october-30d-v1]; query <AWS profile> <query string>",
+    "Usage: candidate-control.ts start|pause|resume|status <AWS profile> [launch-30d-v1|august-30d-v1|september-30d-v1|october-30d-v1|full|catchup-<index>-<endTimestamp>]; query <AWS profile> <query string>",
   );
 const aws = (args: string[]) =>
   JSON.parse(
@@ -72,11 +70,15 @@ const db = DynamoDBDocumentClient.from(
     },
   }),
 );
+if (command !== "query" && query && query !== "full")
+  candidateSpec(query as CandidateChunk);
 const store = candidateStore(
   db,
   table,
   Date.now,
-  (command === "query" ? undefined : query) as CandidateChunk | undefined,
+  (command === "query" || query === "full" ? undefined : query) as
+    | CandidateChunk
+    | undefined,
 );
 if (command === "query") {
   const reader = stacks[0].Outputs.find(
@@ -108,6 +110,11 @@ if (command === "query") {
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+} else if (query === "full") {
+  const run = candidateRun(db, table);
+  if (command !== "status")
+    await run.control(command as "start" | "pause" | "resume");
+  console.log(JSON.stringify(await run.status(), null, 2));
 } else {
   if (command !== "status")
     await store.control(command as "start" | "pause" | "resume");

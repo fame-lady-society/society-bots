@@ -1,0 +1,110 @@
+{
+  "intervalUtc": ["2024-10-11T00:00:00Z", "2024-11-10T00:00:00Z"],
+  "endExclusive": true,
+  "source": "private candidate reader",
+  "currencies": {
+    "ETH": {
+      "days": 30,
+      "buckets": 8640,
+      "priced": 8640,
+      "pools": {
+        "uniswap-v2-fame-direct": {
+          "buckets": 8640,
+          "priced": 8640,
+          "trades": 957
+        },
+        "uniswap-v3-weth-fame-30bps": {
+          "buckets": 8640,
+          "priced": 8640,
+          "trades": 1071
+        },
+        "aerodrome-spx-fame": {
+          "buckets": 6730,
+          "priced": 6730,
+          "trades": 1464
+        },
+        "aerodrome-cbbtc-fame": {
+          "buckets": 5528,
+          "priced": 5528,
+          "trades": 243
+        }
+      }
+    },
+    "USDC": {
+      "days": 30,
+      "buckets": 8640,
+      "priced": 8640,
+      "pools": {
+        "uniswap-v2-fame-direct": {
+          "buckets": 8640,
+          "priced": 8640,
+          "trades": 957
+        },
+        "uniswap-v3-weth-fame-30bps": {
+          "buckets": 8640,
+          "priced": 8640,
+          "trades": 1071
+        },
+        "aerodrome-spx-fame": {
+          "buckets": 6730,
+          "priced": 6730,
+          "trades": 1464
+        },
+        "aerodrome-cbbtc-fame": {
+          "buckets": 5528,
+          "priced": 5528,
+          "trades": 243
+        }
+      }
+    }
+  },
+  "availability": {
+    "version": "fame-history-availability-v1",
+    "policyRevision": "0cbf2b5e24a7dad150cd8e25918909b51d25bd28612d356566c03e35bd3984b2",
+    "earliestAvailableTimestamp": 1720828800,
+    "latestAvailableTimestamp": 1731196500,
+    "resolution": 300,
+    "maxWindowSeconds": 86400,
+    "before": 1720828800,
+    "hasEarlier": false
+  },
+  "activitySamples": [
+    {
+      "currency": "ETH",
+      "timestamp": 1728604800,
+      "rows": 5,
+      "pages": 7
+    },
+    {
+      "currency": "ETH",
+      "timestamp": 1729900800,
+      "rows": 5,
+      "pages": 2
+    },
+    {
+      "currency": "ETH",
+      "timestamp": 1731110400,
+      "rows": 5,
+      "pages": 1
+    },
+    {
+      "currency": "USDC",
+      "timestamp": 1728604800,
+      "rows": 5,
+      "pages": 7
+    },
+    {
+      "currency": "USDC",
+      "timestamp": 1729900800,
+      "rows": 5,
+      "pages": 2
+    },
+    {
+      "currency": "USDC",
+      "timestamp": 1731110400,
+      "rows": 5,
+      "pages": 1
+    }
+  ],
+  "limitations": "All daily chart pages checked; activity pagination sampled at beginning, middle and end. No new chain reconciliation or production writes."
+}

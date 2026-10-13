@@ -1,6 +1,6 @@
 /** Reuse only the last pre-admission observation for opening index weights. */
 import { expansionPools } from "./scope-expansion.ts";
-import { admissionOrigins } from "./pool-lifecycle.ts";
+import { originsFor } from "./pool-lifecycle.ts";
 import { digest, type Scope } from "./model.ts";
 import {
   sampledCalls,
@@ -15,6 +15,7 @@ export function reusePreAdmissionSample(
   e: SampledEvidence,
 ): SampledEvidence {
   const added = expansionPools(source, target);
+  const admissionOrigins = originsFor(target);
   if (
     added.pools.some(
       (p) =>

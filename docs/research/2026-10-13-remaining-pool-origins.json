@@ -1,0 +1,34 @@
+[
+  {
+    "id": "scale-equalizer-scale-fame",
+    "address": "0xbbf6e67f14ed21884d9e12505a9b979fc42808be",
+    "creationTransaction": "0xbff542bf4017bd33db2b9a9e70c45c18408d963b257188ef9353e1604283c605",
+    "block": 22614190,
+    "timestamp": "2024-11-19T12:02:07.000000Z",
+    "source": "Blockscout creation transaction (not first_transaction_details)"
+  },
+  {
+    "id": "scale-equalizer-weth-fame",
+    "address": "0x0db3a3228520fc31162c24f1b47177255cc1b82e",
+    "creationTransaction": "0x1ba44f547a477aa049a32a06d74f90039a9f36dd621287195a9344a2249d68df",
+    "block": 22613864,
+    "timestamp": "2024-11-19T11:51:15.000000Z",
+    "source": "Blockscout creation transaction (not first_transaction_details)"
+  },
+  {
+    "id": "slipstream-basedflick-fame",
+    "address": "0xbd7e5bb5a6251f6dde2cf56afa50ed0c8b4c2cdb",
+    "creationTransaction": "0x19572790ca90942a0d76dc6d55623ac062f5a0610512499b0ee2161285a8d256",
+    "block": 34552255,
+    "timestamp": "2025-08-22T20:17:37.000000Z",
+    "source": "Blockscout creation transaction (not first_transaction_details)"
+  },
+  {
+    "address": "0xeded4e8790e01199da13dfec93bf5432f1980489",
+    "block": 43282547,
+    "timestamp": 1773354441,
+    "hash": "0x5c5aea41212acf6d2e019fa1bb981cff4973d685a565fdd97671533f6ecd0bd5",
+    "proof": "historical eth_getCode absent at block-1 and present at block",
+    "id": "scale-equalizer-frxusd-fame"
+  }
+]

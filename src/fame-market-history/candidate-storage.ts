@@ -8,7 +8,10 @@ import {
 import {
   candidateScope,
   candidateJobKey,
-  candidateChunks,
+  candidatePrevious,
+  candidateAdmission,
+  candidatePlan,
+  fullCandidate,
   type CandidateChunk,
   candidateHash,
   candidateSpec,
@@ -44,8 +47,7 @@ export function candidateStore(
       (row.specHash !== candidateHash(chunk) ||
         row.spec !== JSON.stringify(spec) ||
         (chunk !== "launch-30d-v1" &&
-          row.predecessor !==
-            candidateChunks[candidateChunks.indexOf(chunk) - 1]) ||
+          row.predecessor !== candidatePrevious(chunk)!) ||
         !["running", "paused"].includes(row.desired) ||
         typeof row.completed !== "boolean")
     )
@@ -69,8 +71,7 @@ export function candidateStore(
           createdAt: now(),
         };
         if (chunk !== "launch-30d-v1") {
-          const previousChunk =
-            candidateChunks[candidateChunks.indexOf(chunk) - 1];
+          const previousChunk = candidatePrevious(chunk)!;
           const previous = await candidateStore(
             db,
             table,
@@ -84,7 +85,29 @@ export function candidateStore(
           validateCandidateBounds(previous.bounds, previousChunk);
           const source = candidateSpec(previousChunk);
           const nextBlock = previous.bounds.end.number + 1;
+          const runKey = { pk: "candidate:full-v1", sk: "run" };
+          const run = fullCandidate(chunk) ? await get(runKey) : null;
+          if (
+            fullCandidate(chunk) &&
+            (!run || !candidatePlan(run.to).includes(chunk))
+          )
+            throw new Error("Chunk is outside the frozen candidate run");
           const checks = [
+            ...(run
+              ? [
+                  {
+                    Key: runKey,
+                    ConditionExpression:
+                      "desired = :running AND #to = :to AND planHash = :hash",
+                    ExpressionAttributeNames: { "#to": "to" },
+                    ExpressionAttributeValues: {
+                      ":running": "running",
+                      ":to": run.to,
+                      ":hash": run.planHash,
+                    },
+                  },
+                ]
+              : []),
             {
               Key: candidateJobKey(previousChunk),
               ConditionExpression:
@@ -99,7 +122,8 @@ export function candidateStore(
               ConditionExpression: "nextBlock = :block AND startBlock = :start",
               ExpressionAttributeValues: {
                 ":block": nextBlock,
-                ":start": spec.startBlock,
+                ":start":
+                  previous.bounds.captureStart?.number ?? source.startBlock,
               },
             },
             {
@@ -184,6 +208,12 @@ export function candidateStore(
       return read();
     },
     acquire: async (owner: string) => {
+      if (
+        fullCandidate(chunk) &&
+        (await get({ pk: "candidate:full-v1", sk: "run" }))?.desired !==
+          "running"
+      )
+        return null;
       try {
         const r = await db.send(
           new UpdateCommand({
@@ -215,6 +245,9 @@ export function candidateStore(
     canContinue: async (owner: string) => {
       const r = await read();
       return (
+        (!fullCandidate(chunk) ||
+          (await get({ pk: "candidate:full-v1", sk: "run" }))?.desired ===
+            "running") &&
         r?.desired === "running" &&
         r.leaseOwner === owner &&
         r.leaseUntil > now()
@@ -227,19 +260,20 @@ export function candidateStore(
     ) => {
       validateCandidateBounds(bounds, chunk);
       const scope = candidateScope(chunk);
-      const source =
-        chunk === "october-30d-v1"
-          ? await get(datasetKey(candidateSpec("september-30d-v1").scopeId))
-          : null;
+      const source = candidateAdmission(chunk)
+        ? await get(
+            datasetKey(candidateSpec(candidatePrevious(chunk)!).scopeId),
+          )
+        : null;
       const history = source
         ? closeHistory(decodeDataset(source), spec.from)
         : [];
-      if (chunk === "october-30d-v1") {
+      if (candidateAdmission(chunk)) {
         const previous = await candidateStore(
           db,
           table,
           now,
-          "september-30d-v1",
+          candidatePrevious(chunk)!,
         ).read();
         if (
           !source ||
@@ -249,6 +283,23 @@ export function candidateStore(
           )
         )
           throw new Error("Admission boundary does not match retained history");
+      }
+      if (!candidateAdmission(chunk) && candidatePrevious(chunk)) {
+        const previous = await candidateStore(
+          db,
+          table,
+          now,
+          candidatePrevious(chunk)!,
+        ).read();
+        if (
+          !previous?.completed ||
+          previous.leaseOwner ||
+          !(["number", "hash", "parentHash", "timestamp"] as const).every(
+            (k) =>
+              bounds.captureStart?.[k] === previous.bounds?.captureStart?.[k],
+          )
+        )
+          throw new Error("Continuation dataset boundary changed");
       }
       await db.send(
         new TransactWriteCommand({
@@ -278,7 +329,7 @@ export function candidateStore(
                   },
                 ]
               : []),
-            ...(["launch-30d-v1", "october-30d-v1"].includes(chunk)
+            ...(chunk === "launch-30d-v1" || candidateAdmission(chunk)
               ? [
                   {
                     Put: {
@@ -296,18 +347,18 @@ export function candidateStore(
         }),
       );
     },
-    activateOctober: async (owner: string) => {
-      if (chunk !== "october-30d-v1") throw new Error("Not an admission job");
-      const source = candidateSpec("september-30d-v1");
+    activateAdmission: async (owner: string) => {
+      if (!candidateAdmission(chunk)) throw new Error("Not an admission job");
+      const source = candidateSpec(candidatePrevious(chunk)!);
       const previous = await candidateStore(
         db,
         table,
         now,
-        "september-30d-v1",
+        candidatePrevious(chunk)!,
       ).read();
       if (!previous?.completed || !previous.bounds)
         throw new Error("Missing completed predecessor");
-      validateCandidateBounds(previous.bounds, "september-30d-v1");
+      validateCandidateBounds(previous.bounds, candidatePrevious(chunk)!);
       const nextBlock = previous.bounds.end.number + 1;
       const job = await read();
       if (
@@ -335,6 +386,18 @@ export function candidateStore(
       await db.send(
         new TransactWriteCommand({
           TransactItems: [
+            ...(fullCandidate(chunk)
+              ? [
+                  {
+                    ConditionCheck: {
+                      TableName: table,
+                      Key: { pk: "candidate:full-v1", sk: "run" },
+                      ConditionExpression: "desired = :running",
+                      ExpressionAttributeValues: { ":running": "running" },
+                    },
+                  },
+                ]
+              : []),
             {
               ConditionCheck: {
                 TableName: table,
@@ -362,12 +425,12 @@ export function candidateStore(
             {
               ConditionCheck: {
                 TableName: table,
-                Key: candidateJobKey("september-30d-v1"),
+                Key: candidateJobKey(candidatePrevious(chunk)!),
                 ConditionExpression:
                   "completed = :yes AND specHash = :hash AND attribute_not_exists(leaseOwner)",
                 ExpressionAttributeValues: {
                   ":yes": true,
-                  ":hash": candidateHash("september-30d-v1"),
+                  ":hash": candidateHash(candidatePrevious(chunk)!),
                 },
               },
             },

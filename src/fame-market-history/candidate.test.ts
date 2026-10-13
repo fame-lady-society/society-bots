@@ -280,3 +280,20 @@ test("invalid end boundary cannot expand the approved time interval", async () =
     }),
   ).rejects.toThrow("Invalid candidate boundaries");
 });
+
+test("November continues the four-pool dataset without changing deployed job identities", () => {
+  expect(candidateChunks.slice(0, 4).map(candidateHash)).toEqual([
+    "42692d8932e5245782cda6fe0c0401cbd37cd815b58cc7c70552681d63511ded",
+    "ae1305f3410c1131761e17b5282ff5e7ae7e5dc8271285fff8bd6baa12671b8f",
+    "f4870c9e20374307373939011f9a55042273d36bc681283cf2d0d1f6957d8ff3",
+    "db998fa0bfb2ee1db2ac05e78d638c82a27615572bfdbb5119834952f4fd9a5e",
+  ]);
+  const october = candidateSpec("october-30d-v1"),
+    november = candidateSpec("catchup-4-1733788800");
+  expect(november.scopeId).not.toBe(october.scopeId);
+  expect(november.policyRevision).not.toBe(october.policyRevision);
+  expect(november.from).toBe(october.to);
+  expect(new Date(november.to * 1000).toISOString()).toBe(
+    "2024-12-10T00:00:00.000Z",
+  );
+});

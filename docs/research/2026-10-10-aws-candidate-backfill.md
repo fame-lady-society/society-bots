@@ -3,8 +3,7 @@
 The first milestone collected `[2024-07-13 00:00, 2024-08-12 00:00)` UTC, starting with
 Base launch block 17,019,741. It contains only Uniswap V2 and V3 FAME/WETH. The
 reviewed WETH/USDC pool supplies bucket-end conversion samples. The other current
-FAME pools launched later; cbBTC/SPX remain excluded until a separately planned
-chunk. There is no production dataset promotion operation in this implementation.
+FAME pools launched later and enter through the dated admissions below. There is no production dataset promotion operation in this implementation.
 
 ## Reviewed continuation jobs
 
@@ -21,9 +20,65 @@ The fourth job, October 11–November 10, adds a dated four-pool definition whil
 [October candidate admission](2026-10-11-october-candidate-admission.md). The original job key/specification
 and completed receipt are preserved; no migration or progress reset is needed.
 
-The worker selects the earliest incomplete reviewed job. Missing or paused jobs
-stop selection, so deployment/completion never automatically queues another
-month. Starting a successor transactionally requires its predecessor to be
+## Full catch-up run
+
+After the four completed jobs, `full` captures November 10, 2024 through the
+latest completed UTC day at **explicit start time**. The cutoff is persisted
+once with a hash of every chunk specification. Repeating start or resuming later
+never moves it. The final interval may be shorter than 30 days; completion stops
+collection instead of turning this into a live collector.
+
+The first catch-up chunk admits all eight known direct pools. Besides the four
+already present, it includes Equalizer FAME/WETH and FAME/SCALE (November 19,
+2024), Slipstream FAME/BASED FLICK (August 22, 2025), and Equalizer FAME/frxUSD
+(March 12, 2026). Creation blocks gate price sampling and index membership;
+raw logs retain events from each creation transaction. Conversion pools are
+sampled at bucket end, not indexed trade by trade. The existing reviewed routes
+are retained. Missing historical state or zero active liquidity remains a gap;
+no price is fabricated. The BASED FLICK launch probe has such a gap in the direct
+pool rate although both conversion legs are available.
+
+The candidate reader receives a dated eight-pool definition at November 10.
+July–November pages remain under their original definitions and stay readable;
+only the final October observation is remapped for opening weights. Nothing is
+replayed, rewritten or promoted to production. All later chunks reuse this
+scope and its original capture/sample starts. The four deployed job hashes stay
+unchanged. A changed future plan fails closed rather than silently changing the run.
+
+Operator rollout: merge PR #66 and deploy **History candidate** on main. Verify
+the revision, then explicitly start the run:
+
+```sh
+yarn nodets scripts/market-history/candidate-control.ts start fls-power full
+yarn nodets scripts/market-history/candidate-control.ts status fls-power full
+yarn nodets scripts/market-history/candidate-control.ts pause fls-power full
+yarn nodets scripts/market-history/candidate-control.ts resume fls-power full
+```
+
+The five-minute worker automatically creates each successor only after its
+predecessor is complete, unleased and all four checkpoints align. Run-wide pause
+blocks work and successor admission, including at a chunk boundary; a request
+already in flight may finish before the worker checks pause again. Individual
+chunk pause is also retained and requires its own explicit resume. Deployment
+alone never starts `full`. Status reports the fixed cutoff, completed chunk
+count, active chunk, frontiers and per-job usage. There is no daily spending
+cutoff, new paid monitoring, parallel capture or increased request pace.
+
+Eight-pool capture uses at most 1,200 Base blocks per range (previously 2,000)
+so pool and market candles fit the existing atomic publication limit. This
+assumes Base's two-second block cadence, with two extra buckets reserved for
+boundary context; a larger timestamp gap still fails explicitly for repair.
+
+Evidence: [October coverage](2026-10-12-october-candidate-verification.json),
+[remaining pool origins](2026-10-13-remaining-pool-origins.json), and
+[historical launch probes](2026-10-13-full-pool-launch-probe.json). The read-only
+launch probe used 45 RPC requests and 664,714 response bytes per execution.
+The frxUSD origin was separately verified by binary search over historical
+`eth_getCode` because Blockscout did not expose its creation receipt. Blockscout
+first-transaction dates are not used as creation dates.
+
+The worker selects the earliest incomplete reviewed job. Missing or paused legacy jobs stop selection. After an explicit `full` start,
+missing catch-up jobs are created automatically within the frozen plan. Starting a successor transactionally requires its predecessor to be
 complete and unleased, the expected active candidate scope, raw and Parquet at
 the predecessor's end block plus one, and collected/published samples at the
 new interval start. Misaligned checkpoints fail with an actionable error.
@@ -170,10 +225,9 @@ Before declaring the AWS trial verified:
 - Pause/resume in AWS and reconcile the first day with the local reference receipt.
 - At completion, verify all 8,640 buckets, event identity/counts, price gaps and
   dated API pagination; record actual RPC traffic, invocation time and storage.
-- Keep production on its existing dataset. Further date chunks, later pool lifecycle
-  admission, and any production promotion require their own reviewed operation.
+- Keep production on its existing dataset. Any production promotion requires its own reviewed operation.
 
-The reviewed chunk list deliberately has no arbitrary extension or activation command.
+The full run has a fixed cutoff and no production activation command.
 Existing local artifacts remain a comparison corpus; this AWS rehearsal captures its
 own evidence to validate the real credential/storage path after deployment.
 
@@ -190,3 +244,11 @@ tests passed. The real DynamoDB Local/DuckDB rehearsal passed for both successor
 admissions and the retained chart/activity API; it made no AWS writes or RPC
 calls. The candidate Linux image imported its handler and executed native DuckDB
 with networking disabled. No candidate job was started during implementation.
+
+Full-run validation: TypeScript and 275 history/operator tests pass. The real
+DynamoDB Local/DuckDB rehearsal executes capture, Parquet, sampling and
+publication after eight-pool admission. Seeded month-end checkpoints then verify
+automatic successor creation, original dataset starts, a one-day final chunk,
+run-wide pause at handoff, retry-stable cutoff and no work beyond it. It preserves
+prior definitions and October's completed receipt. This local fixture makes no
+AWS writes or chain RPC requests and does not claim a full-month local capture.
