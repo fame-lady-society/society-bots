@@ -267,7 +267,9 @@ Transport metrics now retain `lastFailure` with a fixed failure kind (`timeout`,
 duration in milliseconds, and optional numeric HTTP status/RPC error code.
 Candidate logs and `candidate-control.ts status fls-power full` expose it under
 `lastMetrics`. No provider text, request parameters, URLs, response bodies, or
-exception causes are retained. This is the last failure within that invocation,
+exception causes are retained. The only request-derived diagnostics are validated
+numeric `fromBlock` and `toBlock` for failed `eth_getLogs` requests; tags, reversed
+ranges and unsafe integers are omitted. This is the last failure within that invocation,
 not a cumulative history; CloudWatch retains previous invocation records.
 
 Request/byte/deadline limits still yield normally, range limits still split,
@@ -282,9 +284,10 @@ This change does not switch datasets, restart jobs, or deploy production.
 
 ### Candidate timeout recovery and grouped publication
 
-Candidate RPC requests may retry a timeout once, after 250 ms, only if another
-10-second attempt fits with a one-second reserve and request/response allowances
-remain. Both attempts count against the same invocation limits. The diagnostic
+Candidate RPC requests may retry a timeout once, after 250 ms, only if the
+backoff plus another full attempt fits with a one-second reserve and
+request/response allowances remain. Candidate `eth_getLogs` attempts have a
+20-second timeout; all other methods and the live worker retain 10 seconds. Both attempts count against the same invocation limits. The diagnostic
 retains the timeout and increments `timeoutRetries`, even if the retry succeeds.
 Other failures and exhausted retries still surface normally. The live worker does
 not enable this option.
@@ -316,3 +319,13 @@ promise of production savings. No active candidate or production data is used.
 Rollout: merge, then run **History candidate** only. Existing candidate checkpoints
 resume automatically. Inspect `timeoutRetries` with `lastFailure` and continued
 publication progress; a recovered timeout should no longer end the invocation.
+
+
+Candidate log timeout follow-up: read-only probes at the failed checkpoint
+36212528 compared 1,200-block reads with 600- and 300-block splits. Across three
+rounds all returned zero events; full-range reads took 0.69–1.38 seconds, versus
+1.04–1.94 and 1.81–2.15 seconds total for splits. This local evidence does not
+reproduce AWS tail latency or prove that 20 seconds resolves every timeout.
+Keep the 1,200-block cap; after candidate deployment, use numeric failed ranges,
+`durationMs`, `timeoutRetries`, phase and checkpoint movement to assess recovery.
+A failed final retry remains an error; no gaps are silently skipped.

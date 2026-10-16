@@ -16,7 +16,7 @@ export interface RpcMetrics {
   requests: number;
   responseBytes: number;
   methods: Record<string, number>;
-  /** Fixed labels/numbers only. Never retain provider text, URLs or request params. */
+  /** Fixed labels/numbers only; range diagnostics retain only validated block numbers. */
   timeoutRetries?: number;
   lastFailure?: {
     method: string;
@@ -24,7 +24,24 @@ export interface RpcMetrics {
     durationMs: number;
     httpStatus?: number;
     rpcCode?: number;
+    fromBlock?: number;
+    toBlock?: number;
   };
+}
+
+function logRange(params: unknown): { fromBlock?: number; toBlock?: number } {
+  const filter = Array.isArray(params) ? params[0] : null;
+  const block = (value: unknown) => {
+    if (typeof value !== "string" || !/^0x[0-9a-fA-F]{1,14}$/.test(value))
+      return null;
+    const n = Number(value);
+    return Number.isSafeInteger(n) && n >= 0 ? n : null;
+  };
+  const fromBlock = block(filter?.fromBlock),
+    toBlock = block(filter?.toBlock);
+  return fromBlock !== null && toBlock !== null && fromBlock <= toBlock
+    ? { fromBlock, toBlock }
+    : {};
 }
 
 /** viem's installed HTTP transport cannot cap streamed response bytes. Keep this
@@ -38,6 +55,7 @@ export function boundedTransport({
   fetcher = fetch,
   now = Date.now,
   retryTimeout = false,
+  getLogsTimeoutMs = 10000,
 }: {
   url: string;
   maxRequests: number;
@@ -48,6 +66,8 @@ export function boundedTransport({
   now?: () => number;
   /** Candidate historical reads only: one retry, charged to the same limits. */
   retryTimeout?: boolean;
+  /** Only the candidate worker selects the longer historical log timeout. */
+  getLogsTimeoutMs?: 10000 | 20000;
 }) {
   const endpoint = new URL(url);
   if (endpoint.protocol !== "https:")
@@ -71,6 +91,8 @@ export function boundedTransport({
     transport: custom(
       {
         request: async ({ method, params }) => {
+          const requestTimeoutMs =
+            method === "eth_getLogs" ? getLogsTimeoutMs : 10000;
           for (let attempt = 0; ; attempt++) {
             if (metrics.requests >= maxRequests || now() >= deadline - 1000)
               throw new WorkLimit("RPC work allowance exhausted");
@@ -92,7 +114,7 @@ export function boundedTransport({
             let rpcCode: number | undefined;
             const timeout = setTimeout(
               () => controller.abort(),
-              Math.min(10_000, deadline - now()),
+              Math.min(requestTimeoutMs, deadline - now()),
             );
             try {
               const response = await fetcher(endpoint, {
@@ -170,13 +192,14 @@ export function boundedTransport({
                 durationMs: Math.max(0, now() - started),
                 ...(httpStatus === undefined ? {} : { httpStatus }),
                 ...(rpcCode === undefined ? {} : { rpcCode }),
+                ...(method === "eth_getLogs" ? logRange(params) : {}),
               };
               if (
                 retryTimeout &&
                 attempt === 0 &&
                 controller.signal.aborted &&
                 metrics.requests < maxRequests &&
-                now() + 11000 < deadline &&
+                now() + 250 + requestTimeoutMs + 1000 < deadline &&
                 metrics.responseBytes < maxTotalResponseBytes
               ) {
                 metrics.timeoutRetries = (metrics.timeoutRetries ?? 0) + 1;
