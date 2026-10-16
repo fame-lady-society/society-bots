@@ -58,6 +58,7 @@ export async function handler(
     let lastRequest = 0;
     const rpc = boundedTransport({
       url: secret.Parameter.Value,
+      retryTimeout: true,
       maxRequests: 2000,
       maxResponseBytes: 8 * 1024 * 1024,
       maxTotalResponseBytes: 64 * 1024 * 1024,

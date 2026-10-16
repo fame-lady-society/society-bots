@@ -232,3 +232,129 @@ test("busy block hash lists have a bounded header allowance independent of call/
     }),
   ).rejects.toThrow();
 });
+
+test.each([false, true])(
+  "candidate retries one timeout; second timeout remains visible (%s)",
+  async (failAgain) => {
+    jest.useFakeTimers();
+    let calls = 0;
+    try {
+      const rpc = boundedTransport({
+        url: "https://example.test/private-key",
+        maxRequests: 3,
+        maxResponseBytes: 1024,
+        deadline: Date.now() + 60000,
+        retryTimeout: true,
+        fetcher: async (_input, init) => {
+          calls++;
+          if (calls === 1 || failAgain)
+            return new Promise((_resolve, reject) =>
+              init?.signal?.addEventListener("abort", () =>
+                reject(new Error("private-key")),
+              ),
+            );
+          return response(JSON.parse(String(init?.body)), "0x2105");
+        },
+      });
+      const promise = createPublicClient({
+        transport: rpc.transport,
+      }).getChainId();
+      const check = failAgain
+        ? expect(promise).rejects.toThrow("timeout")
+        : expect(promise).resolves.toBe(8453);
+      await jest.advanceTimersByTimeAsync(20500);
+      await check;
+      expect(calls).toBe(2);
+      expect(rpc.metrics.requests).toBe(2);
+      expect(rpc.metrics.timeoutRetries).toBe(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  },
+);
+
+test.each(["requests", "deadline"])(
+  "timeout retry respects %s allowance",
+  async (limit) => {
+    jest.useFakeTimers();
+    try {
+      const rpc = boundedTransport({
+        url: "https://example.test",
+        maxRequests: limit === "requests" ? 1 : 3,
+        maxResponseBytes: 1024,
+        deadline: Date.now() + (limit === "deadline" ? 15000 : 60000),
+        retryTimeout: true,
+        fetcher: async (_input, init) =>
+          new Promise((_resolve, reject) =>
+            init?.signal?.addEventListener("abort", () =>
+              reject(new Error("timeout")),
+            ),
+          ),
+      });
+      const check = expect(
+        createPublicClient({ transport: rpc.transport }).getChainId(),
+      ).rejects.toThrow("timeout");
+      await jest.advanceTimersByTimeAsync(10000);
+      await check;
+      expect(rpc.metrics.requests).toBe(1);
+      expect(rpc.metrics.timeoutRetries).toBeUndefined();
+    } finally {
+      jest.useRealTimers();
+    }
+  },
+);
+
+test("candidate retry option does not retry HTTP throttling", async () => {
+  const rpc = boundedTransport({
+    url: "https://example.test",
+    maxRequests: 3,
+    maxResponseBytes: 1024,
+    deadline: Date.now() + 60000,
+    retryTimeout: true,
+    fetcher: async () => new Response("provider secret", { status: 429 }),
+  });
+  await expect(
+    createPublicClient({ transport: rpc.transport }).getChainId(),
+  ).rejects.toThrow("http");
+  expect(rpc.metrics.requests).toBe(1);
+  expect(rpc.metrics.timeoutRetries).toBeUndefined();
+});
+
+test("timeout retry retains bytes spent on the interrupted response", async () => {
+  jest.useFakeTimers();
+  let calls = 0;
+  try {
+    const rpc = boundedTransport({
+      url: "https://example.test",
+      maxRequests: 3,
+      maxResponseBytes: 1024,
+      maxTotalResponseBytes: 80,
+      deadline: Date.now() + 60000,
+      retryTimeout: true,
+      fetcher: async (_input, init) => {
+        if (++calls === 1)
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(new Uint8Array(60));
+                init?.signal?.addEventListener("abort", () =>
+                  controller.error(new Error("aborted")),
+                );
+              },
+            }),
+          );
+        return response(JSON.parse(String(init?.body)), "0x2105");
+      },
+    });
+    const check = expect(
+      createPublicClient({ transport: rpc.transport }).getChainId(),
+    ).rejects.toThrow("Total RPC response allowance");
+    await jest.advanceTimersByTimeAsync(10500);
+    await check;
+    expect(rpc.metrics.requests).toBe(2);
+    expect(rpc.metrics.responseBytes).toBeGreaterThan(80);
+    expect(rpc.metrics.timeoutRetries).toBe(1);
+  } finally {
+    jest.useRealTimers();
+  }
+});

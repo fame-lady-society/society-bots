@@ -639,6 +639,108 @@ export function awsSampled({
         }),
       );
     },
+    publishGroup: async (previous, entries) => {
+      if (
+        !entries.length ||
+        entries.length > 12 ||
+        entries.some((e) => e.evidence.policyRevision !== revision)
+      )
+        throw new Error("Invalid candidate publication group");
+      // Validate the whole contiguous group before staging anything.
+      let next = previous;
+      const refs = entries.map(({ evidence, buckets }) => {
+        next = nextSampledPublication(next, evidence, buckets);
+        return next.pages.at(-1)!;
+      });
+      const final = next!;
+      const days = new Map<
+        number,
+        {
+          previous: ReturnType<typeof validateDay> | null;
+          next: ReturnType<typeof validateDay>;
+        }
+      >();
+      for (const ref of refs) {
+        const day = utcDay(ref.timestamp);
+        let entry = days.get(day);
+        if (!entry) {
+          const row = await get(sampledKey(revision, `day:${day}`));
+          const prior = row
+            ? validateDay(JSON.parse(row.body), revision, day)
+            : null;
+          entry = { previous: prior, next: updateDay(prior, revision, ref) };
+        } else entry.next = updateDay(entry.next, revision, ref);
+        days.set(day, entry);
+      }
+      // Immutable pages and activity are safe to stage before the reader pointers.
+      for (const [i, { evidence, buckets }] of entries.entries()) {
+        await indexActivity(evidence, buckets);
+        for (const b of buckets) {
+          const body = JSON.stringify(b);
+          await db.send(
+            new PutCommand({
+              TableName: table,
+              Item: {
+                ...sampledPageKey(
+                  revision,
+                  b.currency,
+                  evidence.timestamp,
+                  refs[i][b.currency],
+                ),
+                body,
+              },
+              ConditionExpression: "attribute_not_exists(pk) OR body = :body",
+              ExpressionAttributeValues: { ":body": body },
+            }),
+          );
+        }
+      }
+      const dated = [...days.values()].flatMap((d) =>
+        dayWrites(table, d.previous, d.next),
+      );
+      const pointers = dated.filter(
+        (w) => w.Put && String(w.Put.Item?.sk).startsWith("day:"),
+      );
+      const snapshots = dated.filter((w) => !pointers.includes(w));
+      for (const w of [...manifests(previous, final), ...snapshots]) {
+        if (!w.Put) throw new Error("Invalid staged manifest write");
+        await db.send(new PutCommand(w.Put));
+      }
+      // A single CAS exposes all staged pages, day indexes and the checkpoint.
+      await db.send(
+        new TransactWriteCommand({
+          TransactItems: [
+            ...pointers,
+            ...entries.map(({ evidence }) => ({
+              ConditionCheck: {
+                TableName: table,
+                Key: sampledKey(revision, `observation:${evidence.timestamp}`),
+                ConditionExpression: "sha256 = :sha",
+                ExpressionAttributeValues: {
+                  ":sha": digest(JSON.stringify(evidence)),
+                },
+              },
+            })),
+            {
+              Put: {
+                TableName: table,
+                Item: { ...sampledKey(revision, "published"), ...final },
+                ConditionExpression: previous
+                  ? "generation = :previous"
+                  : "attribute_not_exists(pk)",
+                ...(previous
+                  ? {
+                      ExpressionAttributeValues: {
+                        ":previous": previous.generation,
+                      },
+                    }
+                  : {}),
+              },
+            },
+          ],
+        }),
+      );
+    },
     publish: async (previous, e, buckets) => {
       const next = nextSampledPublication(previous, e, buckets);
       await indexActivity(e, buckets);

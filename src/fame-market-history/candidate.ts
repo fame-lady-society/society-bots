@@ -273,10 +273,22 @@ export async function advanceCandidate(args: {
       throw new Error("Missing predecessor publication");
     if ((published?.nextTimestamp ?? spec.from) > cursor.nextTimestamp)
       throw new Error("Candidate publication exceeds samples");
-    if ((published?.nextTimestamp ?? spec.from) < cursor.nextTimestamp) {
-      const result = await publishSampled(scope, sampled, () => true, 1);
+    const pending =
+      (cursor.nextTimestamp - (published?.nextTimestamp ?? spec.from)) / 300;
+    const groupSize = sampled.publishGroup ? 12 : 1;
+    if (
+      pending > 0 &&
+      (steps === 0 || pending >= groupSize || cursor.nextTimestamp === spec.to)
+    ) {
+      const result = await publishSampled(
+        scope,
+        sampled,
+        () => true,
+        groupSize,
+        !!sampled.publishGroup,
+      );
       steps++;
-      if (result.published !== 1)
+      if (result.published < 1)
         throw new Error("Candidate publication made no progress");
       continue;
     }
@@ -332,5 +344,7 @@ export async function advanceCandidate(args: {
     cursor = { ...cursor, nextTimestamp: t + 300, anchor: e.block };
     steps++;
   }
+  if (sampled.publishGroup)
+    await publishSampled(scope, sampled, () => true, 12, true);
   return { phase: "yielded", steps };
 }

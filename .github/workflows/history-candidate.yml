@@ -32,6 +32,7 @@ jobs:
         working-directory: deploy
       - run: yarn types && yarn test --runInBand src/fame-market-history scripts/market-history
       - run: yarn nodets scripts/market-history/candidate-rehearse.ts
+      - run: yarn nodets scripts/market-history/publication-benchmark.ts
       - run: yarn build && yarn test --runInBand test/fame-history-candidate.test.ts
         working-directory: deploy
       - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a
