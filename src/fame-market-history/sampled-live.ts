@@ -76,6 +76,10 @@ export interface SampledStore {
   previous(timestamp: number): Promise<SampledEvidence | null>;
   publication(): Promise<SampledPublication | null>;
   activity(evidence: SampledEvidence): Promise<PoolActivity[] | null>;
+  publishGroup?(
+    previous: SampledPublication | null,
+    entries: { evidence: SampledEvidence; buckets: SampledBucket[] }[],
+  ): Promise<void>;
   publish(
     previous: SampledPublication | null,
     evidence: SampledEvidence,
@@ -215,12 +219,20 @@ export async function publishSampled(
   store: SampledStore,
   canContinue = () => true,
   maxBuckets = 4,
+  grouped = false,
 ) {
+  if (grouped && (!store.publishGroup || maxBuckets > 12))
+    throw new Error("Invalid grouped publication");
+  const entries: { evidence: SampledEvidence; buckets: SampledBucket[] }[] = [];
   const collected = await store.collected();
   if (!collected) return { published: 0 };
   let prior = await store.publication(),
     next = prior?.nextTimestamp ?? collected.startTimestamp,
     published = 0;
+  const initial = prior;
+  const flush = async () => {
+    if (grouped && entries.length) await store.publishGroup!(initial, entries);
+  };
   if (next > collected.nextTimestamp)
     throw new Error("Sampled publication exceeds collection");
   while (
@@ -230,12 +242,14 @@ export async function publishSampled(
   ) {
     const e = await store.read(next),
       activity = await store.activity(e);
-    if (!activity)
+    if (!activity) {
+      await flush();
       return {
         published,
         nextTimestamp: next,
         waitingFor: "execution-archive",
       };
+    }
     const priorEvidence = await store.previous(next);
     const opening = priorEvidence
       ? deriveSampledObservation(scope, priorEvidence)
@@ -244,11 +258,13 @@ export async function publishSampled(
       buckets = (["ETH", "USDC"] as const).map((c) =>
         sampledMarketBucket(scope, c, next, o, activity, opening),
       );
-    await store.publish(prior, e, buckets);
+    if (grouped) entries.push({ evidence: e, buckets });
+    else await store.publish(prior, e, buckets);
     prior = nextSampledPublication(prior, e, buckets);
     next += 300;
     published++;
   }
+  await flush();
   return {
     published,
     nextTimestamp: next,

@@ -279,3 +279,40 @@ the next failed invocation: HTTP 401/403 requires credential/access checks;
 bounded retry consideration; provider codes need a targeted historical-read
 probe. Repeated failure at the same checkpoint must not be treated as progress.
 This change does not switch datasets, restart jobs, or deploy production.
+
+### Candidate timeout recovery and grouped publication
+
+Candidate RPC requests may retry a timeout once, after 250 ms, only if another
+10-second attempt fits with a one-second reserve and request/response allowances
+remain. Both attempts count against the same invocation limits. The diagnostic
+retains the timeout and increments `timeoutRetries`, even if the retry succeeds.
+Other failures and exhausted retries still surface normally. The live worker does
+not enable this option.
+
+Candidate publication collects up to 12 five-minute buckets, stages immutable
+currency pages/activity indexes and retained generation manifests, then switches
+the affected day pointers and rolling publication/checkpoint in one conditional
+transaction. Every observation checksum remains guarded by that transaction.
+Previous/new generation manifests retain their existing expiry semantics, but are
+ordinary staged writes instead of large transactional writes. A group may span
+midnight; both day pointers move together. The reader contract is unchanged.
+Publication lag is drained on resume, at the chunk boundary and at normal bounded
+invocation completion; an exception leaves collected samples available to the
+next invocation. Staging may leave unreachable immutable artifacts on failure;
+no reader pointer exposes them. There is no history rebuild or dataset switch.
+
+`yarn nodets scripts/market-history/publication-benchmark.ts` verifies real
+DynamoDB Local transactions, including interrupted staging, checksum rejection,
+lost commit response, stale-writer rejection and cross-midnight equivalence.
+Local capacity reporting is not billing evidence. With `--aws-profile fls-power`,
+it creates and deletes disposable `FameHistoryCandidate-benchmark-*` tables and
+compares the existing single-bucket publisher to groups of 12 using DynamoDB's
+returned consumed capacity. It seeds the same 288 synthetic eight-pool buckets
+for each path; raw capture, sampling and activity-index creation are excluded.
+The comparison uses [AWS item-size and transactional write accounting](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/read-write-operations.html).
+This isolates publication cost per indexed day, not total backfill cost or a
+promise of production savings. No active candidate or production data is used.
+
+Rollout: merge, then run **History candidate** only. Existing candidate checkpoints
+resume automatically. Inspect `timeoutRetries` with `lastFailure` and continued
+publication progress; a recovered timeout should no longer end the invocation.

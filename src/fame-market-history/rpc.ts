@@ -17,6 +17,7 @@ export interface RpcMetrics {
   responseBytes: number;
   methods: Record<string, number>;
   /** Fixed labels/numbers only. Never retain provider text, URLs or request params. */
+  timeoutRetries?: number;
   lastFailure?: {
     method: string;
     kind: "timeout" | "network" | "http" | "provider" | "invalid-response";
@@ -36,6 +37,7 @@ export function boundedTransport({
   deadline,
   fetcher = fetch,
   now = Date.now,
+  retryTimeout = false,
 }: {
   url: string;
   maxRequests: number;
@@ -44,6 +46,8 @@ export function boundedTransport({
   deadline: number;
   fetcher?: typeof fetch;
   now?: () => number;
+  /** Candidate historical reads only: one retry, charged to the same limits. */
+  retryTimeout?: boolean;
 }) {
   const endpoint = new URL(url);
   if (endpoint.protocol !== "https:")
@@ -67,108 +71,124 @@ export function boundedTransport({
     transport: custom(
       {
         request: async ({ method, params }) => {
-          if (metrics.requests >= maxRequests || now() >= deadline - 1000)
-            throw new WorkLimit("RPC work allowance exhausted");
-          metrics.requests++;
-          metrics.methods[method] = (metrics.methods[method] ?? 0) + 1;
-          const id = metrics.requests;
-          // eth_getBlockByNumber(false) still includes every transaction hash.
-          // Busy Base blocks can exceed the small contract-call response allowance.
-          const responseLimit =
-            method === "eth_getBlockByNumber" || method === "eth_getBlockByHash"
-              ? Math.max(maxResponseBytes, 4 * 1024 * 1024)
-              : maxResponseBytes;
-          const controller = new AbortController();
-          const started = now();
-          let kind: NonNullable<RpcMetrics["lastFailure"]>["kind"] = "network";
-          let httpStatus: number | undefined;
-          let rpcCode: number | undefined;
-          const timeout = setTimeout(
-            () => controller.abort(),
-            Math.min(10_000, deadline - now()),
-          );
-          try {
-            const response = await fetcher(endpoint, {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
-              signal: controller.signal,
-              redirect: "error",
-            });
-            if (response.status === 413) {
-              await response.body?.cancel();
-              throw new RangeLimit("RPC range response too large");
-            }
-            if (!response.ok) {
-              kind = "http";
-              httpStatus = response.status;
-              await response.body?.cancel();
-              throw new Error(`RPC HTTP status ${response.status}`);
-            }
-            const reader = response.body?.getReader();
-            if (!reader) throw new Error("RPC returned no body");
-            const chunks: Uint8Array[] = [];
-            let size = 0;
-            while (true) {
-              const { value, done } = await reader.read();
-              if (done) break;
-              size += value.byteLength;
-              metrics.responseBytes += value.byteLength;
-              if (metrics.responseBytes > maxTotalResponseBytes) {
-                await reader.cancel();
-                throw new WorkLimit("Total RPC response allowance exhausted");
-              }
-              if (size > responseLimit) {
-                await reader.cancel();
-                throw new RangeLimit("RPC response byte limit exceeded");
-              }
-              chunks.push(value);
-            }
-            kind = "invalid-response";
-            const body = record(
-              JSON.parse(Buffer.concat(chunks).toString("utf8")),
+          for (let attempt = 0; ; attempt++) {
+            if (metrics.requests >= maxRequests || now() >= deadline - 1000)
+              throw new WorkLimit("RPC work allowance exhausted");
+            metrics.requests++;
+            metrics.methods[method] = (metrics.methods[method] ?? 0) + 1;
+            const id = metrics.requests;
+            // eth_getBlockByNumber(false) still includes every transaction hash.
+            // Busy Base blocks can exceed the small contract-call response allowance.
+            const responseLimit =
+              method === "eth_getBlockByNumber" ||
+              method === "eth_getBlockByHash"
+                ? Math.max(maxResponseBytes, 4 * 1024 * 1024)
+                : maxResponseBytes;
+            const controller = new AbortController();
+            const started = now();
+            let kind: NonNullable<RpcMetrics["lastFailure"]>["kind"] =
+              "network";
+            let httpStatus: number | undefined;
+            let rpcCode: number | undefined;
+            const timeout = setTimeout(
+              () => controller.abort(),
+              Math.min(10_000, deadline - now()),
             );
-            if (body.id !== id || body.jsonrpc !== "2.0")
-              throw new Error("RPC response identity mismatch");
-            if (body.error) {
-              const error = record(body.error);
-              if (error.code === -32005)
-                throw new RangeLimit("RPC range limit");
-              kind = "provider";
+            try {
+              const response = await fetcher(endpoint, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
+                signal: controller.signal,
+                redirect: "error",
+              });
+              if (response.status === 413) {
+                await response.body?.cancel();
+                throw new RangeLimit("RPC range response too large");
+              }
+              if (!response.ok) {
+                kind = "http";
+                httpStatus = response.status;
+                await response.body?.cancel();
+                throw new Error(`RPC HTTP status ${response.status}`);
+              }
+              const reader = response.body?.getReader();
+              if (!reader) throw new Error("RPC returned no body");
+              const chunks: Uint8Array[] = [];
+              let size = 0;
+              while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+                size += value.byteLength;
+                metrics.responseBytes += value.byteLength;
+                if (metrics.responseBytes > maxTotalResponseBytes) {
+                  await reader.cancel();
+                  throw new WorkLimit("Total RPC response allowance exhausted");
+                }
+                if (size > responseLimit) {
+                  await reader.cancel();
+                  throw new RangeLimit("RPC response byte limit exceeded");
+                }
+                chunks.push(value);
+              }
+              kind = "invalid-response";
+              const body = record(
+                JSON.parse(Buffer.concat(chunks).toString("utf8")),
+              );
+              if (body.id !== id || body.jsonrpc !== "2.0")
+                throw new Error("RPC response identity mismatch");
+              if (body.error) {
+                const error = record(body.error);
+                if (error.code === -32005)
+                  throw new RangeLimit("RPC range limit");
+                kind = "provider";
+                if (
+                  typeof error.code === "number" &&
+                  Number.isSafeInteger(error.code)
+                )
+                  rpcCode = error.code;
+                // Provider messages can include credentials/URLs. Never propagate them.
+                throw new Error(`RPC rejected ${method}`);
+              }
+              if (!("result" in body)) throw new Error("RPC result missing");
+              return body.result;
+            } catch (error) {
+              if (error instanceof RangeLimit || error instanceof WorkLimit)
+                throw error;
+              const safeMethod = [
+                "eth_call",
+                "eth_chainId",
+                "eth_getLogs",
+                "eth_getBlockByNumber",
+                "eth_getBlockByHash",
+              ].includes(method)
+                ? method
+                : "other";
+              metrics.lastFailure = {
+                method: safeMethod,
+                kind: controller.signal.aborted ? "timeout" : kind,
+                durationMs: Math.max(0, now() - started),
+                ...(httpStatus === undefined ? {} : { httpStatus }),
+                ...(rpcCode === undefined ? {} : { rpcCode }),
+              };
               if (
-                typeof error.code === "number" &&
-                Number.isSafeInteger(error.code)
-              )
-                rpcCode = error.code;
-              // Provider messages can include credentials/URLs. Never propagate them.
-              throw new Error(`RPC rejected ${method}`);
+                retryTimeout &&
+                attempt === 0 &&
+                controller.signal.aborted &&
+                metrics.requests < maxRequests &&
+                now() + 11000 < deadline &&
+                metrics.responseBytes < maxTotalResponseBytes
+              ) {
+                metrics.timeoutRetries = (metrics.timeoutRetries ?? 0) + 1;
+                await new Promise((resolve) => setTimeout(resolve, 250));
+                continue;
+              }
+              throw new Error(
+                `History RPC ${safeMethod} failed (${metrics.lastFailure.kind})`,
+              );
+            } finally {
+              clearTimeout(timeout);
             }
-            if (!("result" in body)) throw new Error("RPC result missing");
-            return body.result;
-          } catch (error) {
-            if (error instanceof RangeLimit || error instanceof WorkLimit)
-              throw error;
-            const safeMethod = [
-              "eth_call",
-              "eth_chainId",
-              "eth_getLogs",
-              "eth_getBlockByNumber",
-              "eth_getBlockByHash",
-            ].includes(method)
-              ? method
-              : "other";
-            metrics.lastFailure = {
-              method: safeMethod,
-              kind: controller.signal.aborted ? "timeout" : kind,
-              durationMs: Math.max(0, now() - started),
-              ...(httpStatus === undefined ? {} : { httpStatus }),
-              ...(rpcCode === undefined ? {} : { rpcCode }),
-            };
-            throw new Error(
-              `History RPC ${safeMethod} failed (${metrics.lastFailure.kind})`,
-            );
-          } finally {
-            clearTimeout(timeout);
           }
         },
       },
