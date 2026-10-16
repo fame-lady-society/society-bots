@@ -358,3 +358,113 @@ test("timeout retry retains bytes spent on the interrupted response", async () =
     jest.useRealTimers();
   }
 });
+
+test.each([
+  ["eth_getLogs", 20000, 60000, 2, 40250],
+  ["eth_getLogs", 20000, 30000, 1, 20000],
+  ["eth_getLogs", 20000, 5000, 1, 5000],
+  ["eth_getLogs", 10000, 60000, 2, 20250],
+  ["eth_call", 20000, 60000, 2, 20250],
+] as const)(
+  "%s timeout %i honors deadline %i",
+  async (method, timeout, allowance, attempts, elapsed) => {
+    jest.useFakeTimers();
+    const started = Date.now();
+    try {
+      const rpc = boundedTransport({
+        url: "https://example.test/private-key",
+        maxRequests: 10,
+        maxResponseBytes: 1024,
+        deadline: started + allowance,
+        retryTimeout: true,
+        getLogsTimeoutMs: timeout,
+        fetcher: async (_input, init) =>
+          new Promise((_resolve, reject) =>
+            init?.signal?.addEventListener("abort", () =>
+              reject(new Error("private-key")),
+            ),
+          ),
+      });
+      const promise = createPublicClient({ transport: rpc.transport }).request({
+        method,
+        params: [{ fromBlock: "0x64", toBlock: "0x6f" }],
+      } as never);
+      const check = expect(promise).rejects.toThrow("timeout");
+      await jest.advanceTimersByTimeAsync(elapsed - 1);
+      expect(Date.now() - started).toBe(elapsed - 1);
+      await jest.advanceTimersByTimeAsync(1);
+      await check;
+      expect(rpc.metrics.requests).toBe(attempts);
+      expect(rpc.metrics.timeoutRetries ?? 0).toBe(attempts - 1);
+      expect(rpc.metrics.lastFailure?.durationMs).toBe(
+        Math.min(method === "eth_getLogs" ? timeout : 10000, allowance),
+      );
+      if (method === "eth_getLogs")
+        expect(rpc.metrics.lastFailure).toMatchObject({
+          fromBlock: 100,
+          toBlock: 111,
+        });
+      else expect(rpc.metrics.lastFailure?.fromBlock).toBeUndefined();
+      expect(JSON.stringify(rpc.metrics)).not.toContain("private-key");
+    } finally {
+      jest.useRealTimers();
+    }
+  },
+);
+
+test("candidate log read completing after 15 seconds does not retry", async () => {
+  jest.useFakeTimers();
+  try {
+    const rpc = boundedTransport({
+      url: "https://example.test",
+      maxRequests: 2,
+      maxResponseBytes: 1024,
+      deadline: Date.now() + 60000,
+      retryTimeout: true,
+      getLogsTimeoutMs: 20000,
+      fetcher: async (_input, init) =>
+        new Promise((resolve) =>
+          setTimeout(
+            () => resolve(response(JSON.parse(String(init?.body)), [])),
+            15000,
+          ),
+        ),
+    });
+    const check = expect(
+      createPublicClient({ transport: rpc.transport }).getLogs({
+        fromBlock: 100n,
+        toBlock: 111n,
+      }),
+    ).resolves.toEqual([]);
+    await jest.advanceTimersByTimeAsync(15000);
+    await check;
+    expect(rpc.metrics.requests).toBe(1);
+    expect(rpc.metrics.lastFailure).toBeUndefined();
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
+test.each([
+  { fromBlock: "latest", toBlock: "0x6f" },
+  { fromBlock: "0x70", toBlock: "0x6f" },
+  { fromBlock: "0x20000000000000", toBlock: "0x20000000000001" },
+  { fromBlock: "private-key", toBlock: "0x6f" },
+])("failure diagnostics omit invalid range %j", async (filter) => {
+  const rpc = boundedTransport({
+    url: "https://example.test",
+    maxRequests: 2,
+    maxResponseBytes: 1024,
+    deadline: Date.now() + 60000,
+    fetcher: async () => new Response("private-key", { status: 503 }),
+  });
+  await expect(
+    createPublicClient({ transport: rpc.transport }).request({
+      method: "eth_getLogs",
+      params: [{ ...filter, address: "private-key", topics: ["private-key"] }],
+    } as never),
+  ).rejects.toThrow();
+  expect(rpc.metrics.lastFailure?.fromBlock).toBeUndefined();
+  expect(rpc.metrics.lastFailure?.toBlock).toBeUndefined();
+  expect(JSON.stringify(rpc.metrics)).not.toContain("private-key");
+});
